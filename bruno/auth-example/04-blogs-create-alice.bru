@@ -1,0 +1,33 @@
+meta {
+  name: Blogs - Create Blog (Alice)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/blogs
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "name": "Alice's Blog",
+    "description": "Blog owned by Alice"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.author_id: eq alice
+  res.body.name: eq Alice's Blog
+}
+
+script:post-response {
+  bru.setVar("aliceBlogId", res.body.id);
+}

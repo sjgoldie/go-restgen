@@ -8,6 +8,11 @@
 *.so
 *.dylib
 
+# Example binaries (exclude *.go, *.md, etc.)
+simple
+nested_routes
+auth
+
 # Test binary, built with `go test -c`
 *.test
 
@@ -27,6 +32,14 @@ go.work.sum
 # env file
 .env
 
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# macOS
+.DS_Store
+
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/

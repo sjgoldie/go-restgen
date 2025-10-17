@@ -1,0 +1,21 @@
+meta {
+  name: Verify Comment Deleted
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/users/{{aliceId}}/posts/{{alicePostId}}/comments/{{comment1Id}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+}
+
+tests {
+  test("Deleted comment should return 404", function() {
+    expect(res.status).to.equal(404);
+  });
+}

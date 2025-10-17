@@ -1,0 +1,106 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run unit tests with coverage
+        run: |
+          go test ./metadata ./datastore ./router ./service ./handler ./errors -race -coverprofile=coverage.out -covermode=atomic
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Coverage: $COVERAGE%"
+          if (( $(echo "$COVERAGE < 70.0" | bc -l) )); then
+            echo "Coverage is below 70%"
+            exit 1
+          fi
+
+  integration-tests:
+    name: API Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Start Simple Example Server
+        run: |
+          cd examples/simple
+          go run main.go &
+          echo $! > /tmp/simple.pid
+          sleep 3
+
+      - name: Run Simple Example Tests
+        run: bru run bruno/simple-example --env local --reporter json
+
+      - name: Stop Simple Server
+        if: always()
+        run: kill $(cat /tmp/simple.pid) || true
+
+      - name: Start Nested Routes Example Server
+        run: |
+          cd examples/nested_routes
+          go run main.go &
+          echo $! > /tmp/nested.pid
+          sleep 3
+
+      - name: Run Nested Routes Tests
+        run: bru run bruno/nested-example --env local --reporter json
+
+      - name: Stop Nested Server
+        if: always()
+        run: kill $(cat /tmp/nested.pid) || true
+
+      - name: Start Auth Example Server
+        run: |
+          cd examples/auth
+          go run main.go &
+          echo $! > /tmp/auth.pid
+          sleep 3
+
+      - name: Run Auth Example Tests
+        run: bru run bruno/auth-example --env local --reporter json
+
+      - name: Stop Auth Server
+        if: always()
+        run: kill $(cat /tmp/auth.pid) || true

@@ -1,0 +1,24 @@
+meta {
+  name: Update Comment
+  type: http
+  seq: 13
+}
+
+put {
+  url: {{baseUrl}}/users/{{aliceId}}/posts/{{alicePostId}}/comments/{{comment1Id}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "text": "Great post, Alice! (edited)",
+    "author": "Bob"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{comment1Id}}
+  res.body.text: eq Great post, Alice! (edited)
+}

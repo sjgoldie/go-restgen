@@ -1,0 +1,22 @@
+meta {
+  name: Articles - Public Read
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/articles
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Public access allowed without auth", function() {
+    expect(res.status).to.equal(200);
+  });
+}

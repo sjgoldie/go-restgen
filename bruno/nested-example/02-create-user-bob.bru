@@ -1,0 +1,28 @@
+meta {
+  name: Create User - Bob
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/users
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Bob",
+    "email": "bob@example.com"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.name: eq Bob
+}
+
+script:post-response {
+  bru.setVar("bobId", res.body.id);
+}

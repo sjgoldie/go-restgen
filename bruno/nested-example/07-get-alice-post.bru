@@ -1,0 +1,25 @@
+meta {
+  name: Get Alice's Post (Valid Parent)
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/users/{{aliceId}}/posts/{{alicePostId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{alicePostId}}
+  res.body.user_id: eq {{aliceId}}
+  res.body.title: eq Alice's First Post
+}
+
+tests {
+  test("Post should be accessible under correct user ID", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.user_id).to.equal(parseInt(bru.getVar("aliceId")));
+  });
+}

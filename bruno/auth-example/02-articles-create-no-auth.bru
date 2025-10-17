@@ -1,0 +1,28 @@
+meta {
+  name: Articles - Create Without Auth (Should Fail)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/articles
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "Test Article",
+    "content": "This should fail"
+  }
+}
+
+assert {
+  res.status: eq 401
+}
+
+tests {
+  test("Creating article without auth should be forbidden", function() {
+    expect(res.status).to.equal(401);
+  });
+}

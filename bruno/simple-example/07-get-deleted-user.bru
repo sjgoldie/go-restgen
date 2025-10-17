@@ -1,0 +1,15 @@
+meta {
+  name: Verify User Deleted
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/users/{{userId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+}

@@ -1,0 +1,23 @@
+meta {
+  name: Get All Comments for Post
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/users/{{aliceId}}/posts/{{alicePostId}}/comments
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Post should have 2 comments", function() {
+    expect(res.body).to.be.an('array');
+    expect(res.body.length).to.equal(2);
+  });
+}

@@ -1,0 +1,27 @@
+meta {
+  name: Blogs - Get All (Alice sees only hers)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/blogs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Alice should only see her own blog due to ownership filtering", function() {
+    expect(res.body).to.be.an('array');
+    expect(res.body.every(blog => blog.author_id === "alice")).to.be.true;
+  });
+}

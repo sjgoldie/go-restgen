@@ -1,0 +1,28 @@
+meta {
+  name: Comments - Create Without Auth (Should Fail)
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/blogs/{{aliceBlogId}}/posts/{{alicePostId}}/comments
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "author_name": "Anonymous",
+    "text": "This should fail - no auth"
+  }
+}
+
+assert {
+  res.status: eq 401
+}
+
+tests {
+  test("Creating comment without auth should fail (auth required)", function() {
+    expect(res.status).to.equal(401);
+  });
+}

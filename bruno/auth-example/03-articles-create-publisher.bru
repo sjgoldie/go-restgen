@@ -1,0 +1,32 @@
+meta {
+  name: Articles - Create With Publisher Scope
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/articles
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:charlie:user,publisher
+}
+
+body:json {
+  {
+    "title": "Published Article",
+    "content": "Created by publisher"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.title: eq Published Article
+}
+
+script:post-response {
+  bru.setVar("articleId", res.body.id);
+}

@@ -1,0 +1,23 @@
+meta {
+  name: Comments - Get All (Public)
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{aliceBlogId}}/posts/{{alicePostId}}/comments
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Getting comments is public (no auth required)", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body).to.be.an('array');
+  });
+}

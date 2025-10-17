@@ -1,0 +1,32 @@
+meta {
+  name: Comments - Create With Auth
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/blogs/{{aliceBlogId}}/posts/{{alicePostId}}/comments
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:charlie:user
+}
+
+body:json {
+  {
+    "author_name": "Charlie",
+    "text": "Great post!"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.author_name: eq Charlie
+}
+
+script:post-response {
+  bru.setVar("commentId", res.body.id);
+}

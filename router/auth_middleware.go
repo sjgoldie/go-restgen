@@ -59,18 +59,16 @@ func blockUnauthorized(next http.Handler) http.Handler {
 	})
 }
 
-// applyOwnershipContext checks bypass scopes and sets ownership context flags
-// The datastore layer will use these flags to enforce ownership filtering
+// applyOwnershipContext sets ownership context flags for all authenticated users
+// The datastore layer will use these flags to:
+// - Always populate ownership fields on create (even for admins)
+// - Apply ownership filtering on reads (unless user has bypass scope)
 func applyOwnershipContext(ctx context.Context, authInfo *AuthInfo, ownership *OwnershipConfig) context.Context {
-	// Check if user has bypass scope (e.g., admin)
-	if hasAnyScope(authInfo.Scopes, ownership.BypassScopes) {
-		// User bypasses ownership - don't enforce
-		return ctx
-	}
-
-	// Enforce ownership by setting context flags
+	// Always set ownership context - this ensures ownership fields are populated on create
+	// The datastore layer will check bypass scopes to skip filtering on reads
 	ctx = context.WithValue(ctx, ownershipEnforcedKey, true)           //nolint:staticcheck // Using string keys for simplicity
 	ctx = context.WithValue(ctx, ownershipUserIDKey, authInfo.UserID)  //nolint:staticcheck // Using string keys for simplicity
 	ctx = context.WithValue(ctx, ownershipFieldsKey, ownership.Fields) //nolint:staticcheck // Using string keys for simplicity
+
 	return ctx
 }

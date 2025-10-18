@@ -481,6 +481,8 @@ func (w *Wrapper[T]) applyOwnershipFilter(ctx context.Context, query *bun.Select
 
 // setOwnershipField sets the ownership field on an item if enforced in context
 // Uses metadata to determine which field to set
+// Always sets the field when ownership is configured, regardless of bypass scopes
+// (Bypass scopes only affect filtering on reads, not field population on creates)
 func (w *Wrapper[T]) setOwnershipField(ctx context.Context, item *T) error {
 	// Check if ownership is enforced
 	enforced, ok := ctx.Value("ownershipEnforced").(bool)
@@ -507,7 +509,9 @@ func (w *Wrapper[T]) setOwnershipField(ctx context.Context, item *T) error {
 		return nil
 	}
 
-	// Set the first ownership field (on create, we set one owner field)
+	// Always set the ownership field when creating, even if user has bypass scope
+	// Bypass scopes only affect read filtering, not field population on create
+	// This ensures admins still "own" resources they create by default
 	itemValue := reflect.ValueOf(item).Elem()
 	field := itemValue.FieldByName(meta.OwnershipFields[0])
 	if !field.IsValid() || !field.CanSet() {

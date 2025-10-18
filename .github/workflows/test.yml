@@ -72,7 +72,9 @@ jobs:
           sleep 3
 
       - name: Run Simple Example Tests
-        run: bru run bruno/simple-example --env local --format json
+        run: |
+          cd bruno
+          bru run simple-example --env local --format json
 
       - name: Stop Simple Server
         if: always()
@@ -86,7 +88,9 @@ jobs:
           sleep 3
 
       - name: Run Nested Routes Tests
-        run: bru run bruno/nested-example --env local --format json
+        run: |
+          cd bruno
+          bru run nested-example --env local --format json
 
       - name: Stop Nested Server
         if: always()
@@ -100,7 +104,9 @@ jobs:
           sleep 3
 
       - name: Run Auth Example Tests
-        run: bru run bruno/auth-example --env local --format json
+        run: |
+          cd bruno
+          bru run auth-example --env local --format json
 
       - name: Stop Auth Server
         if: always()

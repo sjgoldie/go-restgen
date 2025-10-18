@@ -67,8 +67,9 @@ jobs:
       - name: Start Simple Example Server
         run: |
           cd examples/simple
-          go run main.go &
+          go run main.go > /tmp/simple.log 2>&1 &
           echo $! > /tmp/simple.pid
+          echo "Started server with PID $(cat /tmp/simple.pid)"
 
       - name: Wait for Simple Server
         run: |
@@ -82,6 +83,8 @@ jobs:
             sleep 1
           done
           echo "Server failed to start within 30 seconds"
+          echo "Server logs:"
+          cat /tmp/simple.log || echo "No logs available"
           exit 1
 
       - name: Run Simple Example Tests
@@ -96,8 +99,9 @@ jobs:
       - name: Start Nested Routes Example Server
         run: |
           cd examples/nested_routes
-          go run main.go &
+          go run main.go > /tmp/nested.log 2>&1 &
           echo $! > /tmp/nested.pid
+          echo "Started server with PID $(cat /tmp/nested.pid)"
 
       - name: Wait for Nested Server
         run: |
@@ -111,6 +115,8 @@ jobs:
             sleep 1
           done
           echo "Server failed to start within 30 seconds"
+          echo "Server logs:"
+          cat /tmp/nested.log || echo "No logs available"
           exit 1
 
       - name: Run Nested Routes Tests
@@ -125,8 +131,9 @@ jobs:
       - name: Start Auth Example Server
         run: |
           cd examples/auth
-          go run main.go &
+          go run main.go > /tmp/auth.log 2>&1 &
           echo $! > /tmp/auth.pid
+          echo "Started server with PID $(cat /tmp/auth.pid)"
 
       - name: Wait for Auth Server
         run: |
@@ -140,6 +147,8 @@ jobs:
             sleep 1
           done
           echo "Server failed to start within 30 seconds"
+          echo "Server logs:"
+          cat /tmp/auth.log || echo "No logs available"
           exit 1
 
       - name: Run Auth Example Tests

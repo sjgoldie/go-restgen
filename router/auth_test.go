@@ -1,3 +1,4 @@
+//nolint:goconst,gocyclo,staticcheck // Test code - test data strings, complex test functions, and string context keys are acceptable
 package router_test
 
 import (

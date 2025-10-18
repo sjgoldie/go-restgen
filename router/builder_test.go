@@ -1,3 +1,4 @@
+//nolint:dupl,errcheck,gosec // Test code - duplicate test patterns and unchecked test cleanup are acceptable
 package router_test
 
 import (

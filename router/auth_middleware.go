@@ -6,7 +6,6 @@ import (
 )
 
 // Context keys for ownership enforcement
-// nolint:staticcheck // Using string keys for simplicity; considered safe in this context
 const (
 	ownershipEnforcedKey = "ownershipEnforced"
 	ownershipUserIDKey   = "ownershipUserID"
@@ -70,8 +69,8 @@ func applyOwnershipContext(ctx context.Context, authInfo *AuthInfo, ownership *O
 	}
 
 	// Enforce ownership by setting context flags
-	ctx = context.WithValue(ctx, ownershipEnforcedKey, true)
-	ctx = context.WithValue(ctx, ownershipUserIDKey, authInfo.UserID)
-	ctx = context.WithValue(ctx, ownershipFieldsKey, ownership.Fields)
+	ctx = context.WithValue(ctx, ownershipEnforcedKey, true)           //nolint:staticcheck // Using string keys for simplicity
+	ctx = context.WithValue(ctx, ownershipUserIDKey, authInfo.UserID)  //nolint:staticcheck // Using string keys for simplicity
+	ctx = context.WithValue(ctx, ownershipFieldsKey, ownership.Fields) //nolint:staticcheck // Using string keys for simplicity
 	return ctx
 }

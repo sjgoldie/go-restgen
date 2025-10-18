@@ -35,35 +35,33 @@ func init() {
 }
 
 // handleMutationError handles errors from Create/Update operations
-// Returns true if error was handled (response sent), false otherwise
-func handleMutationError(w http.ResponseWriter, err error, operation string) bool {
+func handleMutationError(w http.ResponseWriter, err error, operation string) {
 	if errors.Is(err, context.Canceled) {
-		return true // Client disconnected, no response needed
+		return // Client disconnected, no response needed
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		http.Error(w, "request timeout", http.StatusGatewayTimeout)
-		return true
+		return
 	}
 	if errors.Is(err, apperrors.ErrDuplicate) {
 		http.Error(w, "resource already exists", http.StatusBadRequest)
-		return true
+		return
 	}
 	if errors.Is(err, apperrors.ErrInvalidReference) {
 		http.Error(w, "invalid reference to related resource", http.StatusBadRequest)
-		return true
+		return
 	}
 	if errors.Is(err, apperrors.ErrNotFound) {
 		http.Error(w, "not found", http.StatusNotFound)
-		return true
+		return
 	}
 	if errors.Is(err, apperrors.ErrUnavailable) {
 		w.Header().Set("Retry-After", "5")
 		http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
-		return true
+		return
 	}
 	slog.Warn("failed to "+operation+" item", "error", err)
 	http.Error(w, "internal server error", http.StatusInternalServerError)
-	return true
 }
 
 // GetAll handles GET requests to retrieve all items of type T

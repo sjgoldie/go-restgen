@@ -1,3 +1,5 @@
+version: 2
+
 linters-settings:
   dupl:
     threshold: 100
@@ -24,8 +26,6 @@ linters-settings:
     min-confidence: 0
   govet:
     check-shadowing: true
-  lll:
-    line-length: 140
   maligned:
     suggest-new: true
   misspell:
@@ -37,22 +37,16 @@ linters:
     - bodyclose
     - dupl
     - errcheck
-    - exportloopref
     - goconst
     - gocritic
     - gocyclo
-    - gofmt
-    - goimports
     - gosec
-    - gosimple
     - govet
     - ineffassign
-    - lll
+    # - lll  # Disabled - line length limits are too restrictive
     - misspell
     - nakedret
-    - staticcheck
-    - stylecheck
-    - typecheck
+    - staticcheck  # Includes gosimple and stylecheck in newer versions
     - unconvert
     - unparam
     - unused
@@ -60,15 +54,11 @@ linters:
 
 issues:
   exclude-rules:
+    # Only exclude govet shadow checking in tests (err variable reuse is common pattern)
     - path: _test\.go
       linters:
-        - dupl
-        - gosec
-        - goconst
-    - path: examples/
-      linters:
-        - gosec
-        - errcheck
+        - govet
+      text: "shadow"
 
 run:
   timeout: 5m

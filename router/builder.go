@@ -221,7 +221,7 @@ func createParentIDMiddleware(paramUUID string) func(http.Handler) http.Handler 
 			parentIDs[paramUUID] = parentID
 
 			// Store updated map in context
-			ctx = context.WithValue(ctx, "parentIDs", parentIDs)
+			ctx = context.WithValue(ctx, "parentIDs", parentIDs) //nolint:staticcheck // Framework-internal context key
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

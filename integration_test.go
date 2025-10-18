@@ -1,3 +1,4 @@
+//nolint:dupl,errcheck,gosec // Test code - duplicate test patterns and unchecked test assertions are acceptable
 package restgen_test
 
 import (
@@ -204,9 +205,9 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	testDB.GetDB().NewDropTable().Model((*Comment)(nil)).IfExists().Exec(context.Background())
-	testDB.GetDB().NewDropTable().Model((*Article)(nil)).IfExists().Exec(context.Background())
-	testDB.GetDB().NewDropTable().Model((*Author)(nil)).IfExists().Exec(context.Background())
+	testDB.GetDB().NewDropTable().Model((*Comment)(nil)).IfExists().Exec(context.Background()) //nolint:errcheck // Test cleanup
+	testDB.GetDB().NewDropTable().Model((*Article)(nil)).IfExists().Exec(context.Background()) //nolint:errcheck // Test cleanup
+	testDB.GetDB().NewDropTable().Model((*Author)(nil)).IfExists().Exec(context.Background())  //nolint:errcheck // Test cleanup
 	testDB.GetDB().NewDropTable().Model((*User)(nil)).IfExists().Exec(context.Background())
 	datastore.Cleanup()
 	testDB.Cleanup()
@@ -555,7 +556,7 @@ func TestIntegration_CompleteLifecycle(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	var users []User
-	json.NewDecoder(w.Body).Decode(&users)
+	json.NewDecoder(w.Body).Decode(&users) //nolint:errcheck // Test assertion
 	if len(users) != 2 {
 		t.Errorf("Expected 2 users, got %d", len(users))
 	}
@@ -587,7 +588,7 @@ func TestIntegration_CompleteLifecycle(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	users = []User{}
-	json.NewDecoder(w.Body).Decode(&users)
+	json.NewDecoder(w.Body).Decode(&users) //nolint:errcheck // Test assertion
 	if len(users) != 1 {
 		t.Errorf("Expected 1 user after deletion, got %d", len(users))
 	}

@@ -1,3 +1,4 @@
+//nolint:errcheck,gosec // Test code - unchecked test cleanup is acceptable
 package service_test
 
 import (

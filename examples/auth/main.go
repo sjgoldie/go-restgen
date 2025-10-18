@@ -1,3 +1,4 @@
+//nolint:gosec,gocritic,unparam,staticcheck // Example code - simplified for demonstration
 package main
 
 import (

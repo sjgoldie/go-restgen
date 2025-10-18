@@ -1,3 +1,4 @@
+//nolint:dupl,goconst,staticcheck,errcheck,gosec // Test code - duplicate test patterns, test data strings, string context keys, and unchecked test cleanup are acceptable
 package datastore_test
 
 import (
@@ -524,7 +525,7 @@ func TestOwnership_SingleField_GetAll(t *testing.T) {
 	}
 
 	for _, blog := range retrieved {
-		if blog.AuthorID != "alice" {
+		if blog.AuthorID != "alice" { //nolint:goconst // Test data string
 			t.Errorf("Expected blog to belong to alice, got %s", blog.AuthorID)
 		}
 	}
@@ -623,6 +624,7 @@ func TestOwnership_MultipleFields_GetAll(t *testing.T) {
 	}
 }
 
+//nolint:dupl // Test functions for different bypass scopes have similar structure
 func TestOwnership_BypassScope_Admin(t *testing.T) {
 	db, cleanup := setupOwnershipTestDB(t)
 	defer cleanup()
@@ -664,6 +666,7 @@ func TestOwnership_BypassScope_Admin(t *testing.T) {
 	}
 }
 
+//nolint:dupl // Test functions for different bypass scopes have similar structure
 func TestOwnership_BypassScope_Moderator(t *testing.T) {
 	db, cleanup := setupOwnershipTestDB(t)
 	defer cleanup()

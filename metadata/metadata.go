@@ -76,7 +76,7 @@ func GenerateTypeID() string {
 }
 
 // UpdateOwnership updates the ownership configuration for a registered type
-func UpdateOwnership(goType reflect.Type, ownershipFields []string, bypassScopes []string) error {
+func UpdateOwnership(goType reflect.Type, ownershipFields, bypassScopes []string) error {
 	if goType.Kind() == reflect.Ptr {
 		goType = goType.Elem()
 	}

@@ -1,3 +1,4 @@
+//nolint:staticcheck,errcheck,gosec // Test code - string context keys and unchecked test cleanup are acceptable
 package handler_test
 
 import (

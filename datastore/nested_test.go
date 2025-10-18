@@ -1,3 +1,4 @@
+//nolint:staticcheck // Test code - string context keys are acceptable
 package datastore_test
 
 import (

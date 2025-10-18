@@ -36,6 +36,13 @@ repos:
         files: \.go$
         pass_filenames: false
 
+      - id: golangci-lint
+        name: golangci-lint
+        entry: bash -c '$(go env GOPATH)/bin/golangci-lint run --fix'
+        language: system
+        files: \.go$
+        pass_filenames: false
+
       - id: go-test
         name: go test (core packages)
         entry: bash -c 'go test ./metadata ./datastore ./router ./service ./handler ./errors'

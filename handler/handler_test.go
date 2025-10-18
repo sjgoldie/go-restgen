@@ -122,15 +122,9 @@ func cleanTable(t *testing.T) {
 		t.Fatal("Failed to clean users table:", err)
 	}
 
-	// Reset SQLite auto-increment sequences
-	_, err = db.GetDB().Exec("DELETE FROM sqlite_sequence WHERE name = 'posts'")
-	if err != nil {
-		// Ignore error - sequence table might not exist yet
-	}
-	_, err = db.GetDB().Exec("DELETE FROM sqlite_sequence WHERE name = 'users'")
-	if err != nil {
-		// Ignore error - sequence table might not exist yet
-	}
+	// Reset SQLite auto-increment sequences (ignore errors if sequence table doesn't exist)
+	_, _ = db.GetDB().Exec("DELETE FROM sqlite_sequence WHERE name = 'posts'")
+	_, _ = db.GetDB().Exec("DELETE FROM sqlite_sequence WHERE name = 'users'")
 }
 
 func TestHandler_GetAll(t *testing.T) {
@@ -539,33 +533,33 @@ func TestHandler_ContextCancellation(t *testing.T) {
 		body    []byte
 	}{
 		{
-			name:    "GetAll with cancelled context",
+			name:    "GetAll with canceled context",
 			handler: handler.GetAll[TestUser](),
 			method:  http.MethodGet,
 			path:    "/users",
 		},
 		{
-			name:    "Get with cancelled context",
+			name:    "Get with canceled context",
 			handler: handler.Get[TestUser](),
 			method:  http.MethodGet,
 			path:    "/users/1",
 		},
 		{
-			name:    "Create with cancelled context",
+			name:    "Create with canceled context",
 			handler: handler.Create[TestUser](),
 			method:  http.MethodPost,
 			path:    "/users",
 			body:    []byte(`{"name":"New User","email":"new@example.com"}`),
 		},
 		{
-			name:    "Update with cancelled context",
+			name:    "Update with canceled context",
 			handler: handler.Update[TestUser](),
 			method:  http.MethodPut,
 			path:    "/users/1",
 			body:    []byte(`{"name":"Updated","email":"updated@example.com"}`),
 		},
 		{
-			name:    "Delete with cancelled context",
+			name:    "Delete with canceled context",
 			handler: handler.Delete[TestUser](),
 			method:  http.MethodDelete,
 			path:    "/users/1",
@@ -574,7 +568,7 @@ func TestHandler_ContextCancellation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a cancelled context
+			// Create a canceled context
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel() // Cancel immediately
 
@@ -599,7 +593,7 @@ func TestHandler_ContextCancellation(t *testing.T) {
 
 			// Context cancellation should not write any response
 			if w.Code != 0 && w.Code != http.StatusOK {
-				t.Errorf("Expected no response or 200 for cancelled context, got %d", w.Code)
+				t.Errorf("Expected no response or 200 for canceled context, got %d", w.Code)
 			}
 		})
 	}

@@ -95,6 +95,8 @@ func setupBuilderTestTables() {
 var builderTablesOnce sync.Once
 
 func setupBuilderTest(t *testing.T) (*chi.Mux, *bun.DB) {
+	t.Helper()
+
 	// Create tables once
 	builderTablesOnce.Do(setupBuilderTestTables)
 

@@ -6,6 +6,7 @@ import (
 )
 
 // Context keys for ownership enforcement
+// nolint:staticcheck // Using string keys for simplicity; considered safe in this context
 const (
 	ownershipEnforcedKey = "ownershipEnforced"
 	ownershipUserIDKey   = "ownershipUserID"

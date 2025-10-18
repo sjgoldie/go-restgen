@@ -38,9 +38,9 @@ func (p *PostgreSQL) GetTimeout() time.Duration {
 
 func (p *PostgreSQL) Cleanup() {
 	if p.db != nil {
-		p.db.Close()
+		_ = p.db.Close()
 	}
 	if p.sqlDB != nil {
-		p.sqlDB.Close()
+		_ = p.sqlDB.Close()
 	}
 }

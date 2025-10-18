@@ -41,9 +41,9 @@ func (s *SQLite) GetTimeout() time.Duration {
 
 func (s *SQLite) Cleanup() {
 	if s.db != nil {
-		s.db.Close()
+		_ = s.db.Close()
 	}
 	if s.sqlDB != nil {
-		s.sqlDB.Close()
+		_ = s.sqlDB.Close()
 	}
 }

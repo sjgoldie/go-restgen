@@ -64,6 +64,12 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
+      - name: Test Simple Example Build
+        run: |
+          cd examples/simple
+          go build -o /tmp/simple-server .
+          echo "Build successful"
+
       - name: Start Simple Example Server
         run: |
           cd examples/simple
@@ -74,10 +80,23 @@ jobs:
       - name: Wait for Simple Server
         run: |
           echo "Waiting for server to be ready..."
+          sleep 2
+          if ! ps -p $(cat /tmp/simple.pid) > /dev/null 2>&1; then
+            echo "Server process died immediately!"
+            echo "Server logs:"
+            cat /tmp/simple.log || echo "No logs available"
+            exit 1
+          fi
           for i in {1..30}; do
             if curl -f http://localhost:8080/health > /dev/null 2>&1; then
               echo "Server is ready!"
               exit 0
+            fi
+            if ! ps -p $(cat /tmp/simple.pid) > /dev/null 2>&1; then
+              echo "Server process died during startup!"
+              echo "Server logs:"
+              cat /tmp/simple.log || echo "No logs available"
+              exit 1
             fi
             echo "Attempt $i: Server not ready yet..."
             sleep 1
@@ -85,6 +104,8 @@ jobs:
           echo "Server failed to start within 30 seconds"
           echo "Server logs:"
           cat /tmp/simple.log || echo "No logs available"
+          echo "Process status:"
+          ps -p $(cat /tmp/simple.pid) || echo "Process not running"
           exit 1
 
       - name: Run Simple Example Tests

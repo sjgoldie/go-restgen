@@ -8,10 +8,13 @@
 *.so
 *.dylib
 
-# Example binaries (exclude *.go, *.md, etc.)
-simple
-nested_routes
-auth
+# Example binaries (built with go build/run)
+examples/simple/simple
+examples/nested_routes/nested_routes
+examples/auth/auth
+/simple
+/nested_routes
+/auth
 
 # Test binary, built with `go test -c`
 *.test

@@ -117,6 +117,11 @@ jobs:
         if: always()
         run: kill $(cat /tmp/simple.pid) || true
 
+      - name: Debug - List examples directory
+        run: |
+          echo "Contents of examples directory:"
+          ls -la examples/ || echo "examples directory not found"
+
       - name: Start Nested Routes Example Server
         run: |
           cd examples/nested_routes

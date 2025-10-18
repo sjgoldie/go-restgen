@@ -47,9 +47,9 @@ func setupAuthTest(t *testing.T, registerFunc func(*router.Builder)) *chi.Mux {
 	}
 
 	// Clean tables
-	db.NewDelete().Model((*AuthTestPost)(nil)).Where("1=1").Exec(ctx)
-	db.NewDelete().Model((*AuthTestUser)(nil)).Where("1=1").Exec(ctx)
-	db.Exec("DELETE FROM sqlite_sequence WHERE name IN ('auth_test_users', 'auth_test_posts')")
+	_, _ = db.NewDelete().Model((*AuthTestPost)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.NewDelete().Model((*AuthTestUser)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.Exec("DELETE FROM sqlite_sequence WHERE name IN ('auth_test_users', 'auth_test_posts')")
 
 	// Create router
 	r := chi.NewRouter()
@@ -326,12 +326,12 @@ func TestAuth_Ownership_List(t *testing.T) {
 	ctx := context.Background()
 
 	// Clean and create test data
-	db.NewDelete().Model((*AuthTestPost)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.NewDelete().Model((*AuthTestPost)(nil)).Where("1=1").Exec(ctx)
 
 	post1 := &AuthTestPost{UserID: "user1", Title: "User 1 Post"}
 	post2 := &AuthTestPost{UserID: "user2", Title: "User 2 Post"}
-	db.NewInsert().Model(post1).Returning("*").Exec(ctx)
-	db.NewInsert().Model(post2).Returning("*").Exec(ctx)
+	_, _ = db.NewInsert().Model(post1).Returning("*").Exec(ctx)
+	_, _ = db.NewInsert().Model(post2).Returning("*").Exec(ctx)
 
 	// User1 should only see their post
 	r := addAuthMiddleware(chi.NewRouter(), "user1", []string{"user"})
@@ -373,12 +373,12 @@ func TestAuth_Ownership_BypassScope(t *testing.T) {
 	db := ds.GetDB()
 	ctx := context.Background()
 
-	db.NewDelete().Model((*AuthTestPost)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.NewDelete().Model((*AuthTestPost)(nil)).Where("1=1").Exec(ctx)
 
 	post1 := &AuthTestPost{UserID: "user1", Title: "User 1 Post"}
 	post2 := &AuthTestPost{UserID: "user2", Title: "User 2 Post"}
-	db.NewInsert().Model(post1).Returning("*").Exec(ctx)
-	db.NewInsert().Model(post2).Returning("*").Exec(ctx)
+	_, _ = db.NewInsert().Model(post1).Returning("*").Exec(ctx)
+	_, _ = db.NewInsert().Model(post2).Returning("*").Exec(ctx)
 
 	// Admin with bypass scope should see all posts
 	r := addAuthMiddleware(chi.NewRouter(), "admin_user", []string{"admin"})
@@ -417,10 +417,10 @@ func TestAuth_Ownership_Get404(t *testing.T) {
 	db := ds.GetDB()
 	ctx := context.Background()
 
-	db.NewDelete().Model((*AuthTestPost)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.NewDelete().Model((*AuthTestPost)(nil)).Where("1=1").Exec(ctx)
 
 	post := &AuthTestPost{UserID: "user1", Title: "User 1 Post"}
-	db.NewInsert().Model(post).Returning("*").Exec(ctx)
+	_, _ = db.NewInsert().Model(post).Returning("*").Exec(ctx)
 
 	// User2 tries to access user1's post - should get 404
 	r := addAuthMiddleware(chi.NewRouter(), "user2", []string{"user"})

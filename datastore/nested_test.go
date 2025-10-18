@@ -106,9 +106,9 @@ func setupNestedTestDB(t *testing.T) (*datastore.SQLite, func()) {
 	}
 
 	cleanup := func() {
-		db.GetDB().NewDropTable().Model((*TestComment)(nil)).IfExists().Exec(ctx)
-		db.GetDB().NewDropTable().Model((*TestArticle)(nil)).IfExists().Exec(ctx)
-		db.GetDB().NewDropTable().Model((*TestAuthor)(nil)).IfExists().Exec(ctx)
+		_, _ = db.GetDB().NewDropTable().Model((*TestComment)(nil)).IfExists().Exec(ctx)
+		_, _ = db.GetDB().NewDropTable().Model((*TestArticle)(nil)).IfExists().Exec(ctx)
+		_, _ = db.GetDB().NewDropTable().Model((*TestAuthor)(nil)).IfExists().Exec(ctx)
 		datastore.Cleanup()
 		db.Cleanup()
 	}
@@ -180,9 +180,9 @@ func TestWrapper_Nested_GetAll(t *testing.T) {
 	articleWrapper := &datastore.Wrapper[TestArticle]{Store: db}
 	ctx1Create := context.WithValue(context.Background(), "parentIDs", map[string]int{"authorId": author1.ID})
 	ctx2Create := context.WithValue(context.Background(), "parentIDs", map[string]int{"authorId": author2.ID})
-	articleWrapper.Create(ctx1Create, TestArticle{Title: "Article 1-1", Content: "Content"})
-	articleWrapper.Create(ctx1Create, TestArticle{Title: "Article 1-2", Content: "Content"})
-	articleWrapper.Create(ctx2Create, TestArticle{Title: "Article 2-1", Content: "Content"})
+	_, _ = articleWrapper.Create(ctx1Create, TestArticle{Title: "Article 1-1", Content: "Content"})
+	_, _ = articleWrapper.Create(ctx1Create, TestArticle{Title: "Article 1-2", Content: "Content"})
+	_, _ = articleWrapper.Create(ctx2Create, TestArticle{Title: "Article 2-1", Content: "Content"})
 
 	// Test: GetAll articles for author1 - should return 2
 	ctx1 := context.WithValue(context.Background(), "parentIDs", map[string]int{

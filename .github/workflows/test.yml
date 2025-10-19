@@ -65,10 +65,8 @@ jobs:
         run: go mod download
 
       - name: Start Server
-        run: |
-          cd examples/simple
-          go run main.go > /tmp/server.log 2>&1 &
-          echo $! > /tmp/server.pid
+        working-directory: examples/simple
+        run: go run main.go > /tmp/server.log 2>&1 &
 
       - name: Wait for Server
         run: |
@@ -110,10 +108,8 @@ jobs:
         run: go mod download
 
       - name: Start Server
-        run: |
-          cd examples/nested_routes
-          go run main.go > /tmp/server.log 2>&1 &
-          echo $! > /tmp/server.pid
+        working-directory: examples/nested_routes
+        run: go run main.go > /tmp/server.log 2>&1 &
 
       - name: Wait for Server
         run: |
@@ -155,10 +151,8 @@ jobs:
         run: go mod download
 
       - name: Start Server
-        run: |
-          cd examples/auth
-          go run main.go > /tmp/server.log 2>&1 &
-          echo $! > /tmp/server.pid
+        working-directory: examples/auth
+        run: go run main.go > /tmp/server.log 2>&1 &
 
       - name: Wait for Server
         run: |

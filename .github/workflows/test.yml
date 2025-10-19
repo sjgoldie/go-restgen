@@ -66,7 +66,8 @@ jobs:
 
       - name: Start Server
         run: |
-          go run ./examples/simple/main.go > /tmp/server.log 2>&1 &
+          go build -o /tmp/simple-server ./examples/simple
+          /tmp/simple-server > /tmp/server.log 2>&1 &
           echo $! > /tmp/server.pid
           echo "Started server with PID $(cat /tmp/server.pid)"
 
@@ -111,7 +112,8 @@ jobs:
 
       - name: Start Server
         run: |
-          go run ./examples/nested_routes/main.go > /tmp/server.log 2>&1 &
+          go build -o /tmp/nested-server ./examples/nested_routes
+          /tmp/nested-server > /tmp/server.log 2>&1 &
           echo $! > /tmp/server.pid
           echo "Started server with PID $(cat /tmp/server.pid)"
 
@@ -156,7 +158,8 @@ jobs:
 
       - name: Start Server
         run: |
-          go run ./examples/auth/main.go > /tmp/server.log 2>&1 &
+          go build -o /tmp/auth-server ./examples/auth
+          /tmp/auth-server > /tmp/server.log 2>&1 &
           echo $! > /tmp/server.pid
           echo "Started server with PID $(cat /tmp/server.pid)"
 

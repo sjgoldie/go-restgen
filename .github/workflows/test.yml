@@ -109,9 +109,8 @@ jobs:
           exit 1
 
       - name: Run Simple Example Tests
-        run: |
-          cd bruno
-          bru run simple-example --env local --format json
+        working-directory: bruno
+        run: bru run simple-example --env local --format json
 
       - name: Stop Simple Server
         if: always()
@@ -121,6 +120,14 @@ jobs:
         run: |
           echo "Contents of examples directory:"
           ls -la examples/ || echo "examples directory not found"
+          echo "Bruno version:"
+          bru --version
+          echo "Node version:"
+          node --version
+          echo "Current directory:"
+          pwd
+          echo "Bruno directory contents:"
+          ls -la bruno/
 
       - name: Start Nested Routes Example Server
         run: |
@@ -146,9 +153,8 @@ jobs:
           exit 1
 
       - name: Run Nested Routes Tests
-        run: |
-          cd bruno
-          bru run nested-example --env local --format json || (echo "Tests failed, showing server logs:" && cat /tmp/nested.log && exit 1)
+        working-directory: bruno
+        run: bru run nested-example --env local --format json || (echo "Tests failed, showing server logs:" && cat /tmp/nested.log && exit 1)
 
       - name: Stop Nested Server
         if: always()
@@ -178,9 +184,8 @@ jobs:
           exit 1
 
       - name: Run Auth Example Tests
-        run: |
-          cd bruno
-          bru run auth-example --env local --format json
+        working-directory: bruno
+        run: bru run auth-example --env local --format json
 
       - name: Stop Auth Server
         if: always()

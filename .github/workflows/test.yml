@@ -58,18 +58,14 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
-
       - name: Install dependencies
         run: go mod download
 
+      - name: Build Server
+        run: go build -o /tmp/simple-server ./examples/simple
+
       - name: Start Server
-        run: |
-          go build -o /tmp/simple-server ./examples/simple
-          /tmp/simple-server > /tmp/server.log 2>&1 &
-          echo $! > /tmp/server.pid
-          echo "Started server with PID $(cat /tmp/server.pid)"
+        run: /tmp/simple-server &
 
       - name: Wait for Server
         run: |
@@ -81,8 +77,10 @@ jobs:
             sleep 1
           done
           echo "Server failed to start"
-          cat /tmp/server.log
           exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
 
       - name: Run Tests
         working-directory: bruno
@@ -104,18 +102,14 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
-
       - name: Install dependencies
         run: go mod download
 
+      - name: Build Server
+        run: go build -o /tmp/nested-server ./examples/nested_routes
+
       - name: Start Server
-        run: |
-          go build -o /tmp/nested-server ./examples/nested_routes
-          /tmp/nested-server > /tmp/server.log 2>&1 &
-          echo $! > /tmp/server.pid
-          echo "Started server with PID $(cat /tmp/server.pid)"
+        run: /tmp/nested-server &
 
       - name: Wait for Server
         run: |
@@ -127,8 +121,10 @@ jobs:
             sleep 1
           done
           echo "Server failed to start"
-          cat /tmp/server.log
           exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
 
       - name: Run Tests
         working-directory: bruno
@@ -150,18 +146,14 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
-
       - name: Install dependencies
         run: go mod download
 
+      - name: Build Server
+        run: go build -o /tmp/auth-server ./examples/auth
+
       - name: Start Server
-        run: |
-          go build -o /tmp/auth-server ./examples/auth
-          /tmp/auth-server > /tmp/server.log 2>&1 &
-          echo $! > /tmp/server.pid
-          echo "Started server with PID $(cat /tmp/server.pid)"
+        run: /tmp/auth-server &
 
       - name: Wait for Server
         run: |
@@ -173,8 +165,10 @@ jobs:
             sleep 1
           done
           echo "Server failed to start"
-          cat /tmp/server.log
           exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
 
       - name: Run Tests
         working-directory: bruno

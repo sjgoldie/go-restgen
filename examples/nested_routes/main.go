@@ -126,6 +126,12 @@ func main() {
 	// Create router
 	r := chi.NewRouter()
 
+	// Health check
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+
 	// Register nested routes using the Builder API
 	b := router.NewBuilder(r)
 	router.RegisterRoutes[User](b, "/users", router.AllPublic(), func(b *router.Builder) {

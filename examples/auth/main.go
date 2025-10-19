@@ -245,6 +245,12 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(authMiddleware)
 
+	// Health check
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+
 	b := router.NewBuilder(r)
 
 	// Article - public reads, requires "publisher" scope for writes

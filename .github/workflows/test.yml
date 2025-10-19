@@ -42,8 +42,8 @@ jobs:
             exit 1
           fi
 
-  integration-tests:
-    name: API Integration Tests
+  simple-example-test:
+    name: Simple Example Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,129 +64,115 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Test Simple Example Build
+      - name: Start Server
         run: |
           cd examples/simple
-          go build -o /tmp/simple-server .
-          echo "Build successful"
+          go run main.go > /tmp/server.log 2>&1 &
+          echo $! > /tmp/server.pid
 
-      - name: Start Simple Example Server
+      - name: Wait for Server
         run: |
-          cd examples/simple
-          go run main.go > /tmp/simple.log 2>&1 &
-          echo $! > /tmp/simple.pid
-          echo "Started server with PID $(cat /tmp/simple.pid)"
-
-      - name: Wait for Simple Server
-        run: |
-          echo "Waiting for server to be ready..."
-          sleep 2
-          if ! ps -p $(cat /tmp/simple.pid) > /dev/null 2>&1; then
-            echo "Server process died immediately!"
-            echo "Server logs:"
-            cat /tmp/simple.log || echo "No logs available"
-            exit 1
-          fi
           for i in {1..30}; do
             if curl -f http://localhost:8080/health > /dev/null 2>&1; then
               echo "Server is ready!"
               exit 0
             fi
-            if ! ps -p $(cat /tmp/simple.pid) > /dev/null 2>&1; then
-              echo "Server process died during startup!"
-              echo "Server logs:"
-              cat /tmp/simple.log || echo "No logs available"
-              exit 1
-            fi
-            echo "Attempt $i: Server not ready yet..."
             sleep 1
           done
-          echo "Server failed to start within 30 seconds"
-          echo "Server logs:"
-          cat /tmp/simple.log || echo "No logs available"
-          echo "Process status:"
-          ps -p $(cat /tmp/simple.pid) || echo "Process not running"
+          echo "Server failed to start"
+          cat /tmp/server.log
           exit 1
 
-      - name: Run Simple Example Tests
+      - name: Run Tests
         working-directory: bruno
         run: bru run simple-example --env local --format json
 
-      - name: Stop Simple Server
-        if: always()
-        run: kill $(cat /tmp/simple.pid) || true
+  nested-example-test:
+    name: Nested Routes Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Debug - List examples directory
-        run: |
-          echo "Contents of examples directory:"
-          ls -la examples/ || echo "examples directory not found"
-          echo "Bruno version:"
-          bru --version
-          echo "Node version:"
-          node --version
-          echo "Current directory:"
-          pwd
-          echo "Bruno directory contents:"
-          ls -la bruno/
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.4'
 
-      - name: Start Nested Routes Example Server
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Start Server
         run: |
           cd examples/nested_routes
-          go run main.go > /tmp/nested.log 2>&1 &
-          echo $! > /tmp/nested.pid
-          echo "Started server with PID $(cat /tmp/nested.pid)"
+          go run main.go > /tmp/server.log 2>&1 &
+          echo $! > /tmp/server.pid
 
-      - name: Wait for Nested Server
+      - name: Wait for Server
         run: |
-          echo "Waiting for server to be ready..."
           for i in {1..30}; do
             if curl -f http://localhost:8080/health > /dev/null 2>&1; then
               echo "Server is ready!"
               exit 0
             fi
-            echo "Attempt $i: Server not ready yet..."
             sleep 1
           done
-          echo "Server failed to start within 30 seconds"
-          echo "Server logs:"
-          cat /tmp/nested.log || echo "No logs available"
+          echo "Server failed to start"
+          cat /tmp/server.log
           exit 1
 
-      - name: Run Nested Routes Tests
+      - name: Run Tests
         working-directory: bruno
-        run: bru run nested-example --env local --format json || (echo "Tests failed, showing server logs:" && cat /tmp/nested.log && exit 1)
+        run: bru run nested-example --env local --format json
 
-      - name: Stop Nested Server
-        if: always()
-        run: kill $(cat /tmp/nested.pid) || true
+  auth-example-test:
+    name: Auth Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Start Auth Example Server
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.4'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Start Server
         run: |
           cd examples/auth
-          go run main.go > /tmp/auth.log 2>&1 &
-          echo $! > /tmp/auth.pid
-          echo "Started server with PID $(cat /tmp/auth.pid)"
+          go run main.go > /tmp/server.log 2>&1 &
+          echo $! > /tmp/server.pid
 
-      - name: Wait for Auth Server
+      - name: Wait for Server
         run: |
-          echo "Waiting for server to be ready..."
           for i in {1..30}; do
             if curl -f http://localhost:8080/health > /dev/null 2>&1; then
               echo "Server is ready!"
               exit 0
             fi
-            echo "Attempt $i: Server not ready yet..."
             sleep 1
           done
-          echo "Server failed to start within 30 seconds"
-          echo "Server logs:"
-          cat /tmp/auth.log || echo "No logs available"
+          echo "Server failed to start"
+          cat /tmp/server.log
           exit 1
 
-      - name: Run Auth Example Tests
+      - name: Run Tests
         working-directory: bruno
         run: bru run auth-example --env local --format json
-
-      - name: Stop Auth Server
-        if: always()
-        run: kill $(cat /tmp/auth.pid) || true

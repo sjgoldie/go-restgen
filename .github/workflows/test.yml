@@ -148,7 +148,7 @@ jobs:
       - name: Run Nested Routes Tests
         run: |
           cd bruno
-          bru run nested-example --env local --format json
+          bru run nested-example --env local --format json || (echo "Tests failed, showing server logs:" && cat /tmp/nested.log && exit 1)
 
       - name: Stop Nested Server
         if: always()

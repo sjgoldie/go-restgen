@@ -7,6 +7,10 @@
 
 A lightweight, type-safe REST API framework for Go that leverages generics to automatically generate CRUD endpoints. Build production-ready REST APIs with minimal boilerplate while maintaining full type safety.
 
+## Disclosure
+
+I have leaned heavily on Claude Code (https://www.claude.com/product/claude-code) to build out this package, especially to do test and document generation, though the concept, architecture, and design are my own. If you are morally against AI assistance in coding and thus do not want to use this package, no problems.
+
 ## Features
 
 - 🚀 **Zero boilerplate** - Generate full CRUD APIs with minimal code
@@ -27,67 +31,7 @@ go get github.com/sjgoldie/go-restgen
 
 ## Quick Start
 
-```go
-package main
-
-import (
-    "context"
-    "log"
-    "net/http"
-    "time"
-
-    "github.com/go-chi/chi/v5"
-    "github.com/sjgoldie/go-restgen/datastore"
-    "github.com/sjgoldie/go-restgen/router"
-    "github.com/uptrace/bun"
-)
-
-// Define your model with proper timestamp handling
-type User struct {
-    bun.BaseModel `bun:"table:users"`
-    ID            int       `bun:"id,pk,autoincrement" json:"id"`
-    Name          string    `bun:"name,notnull" json:"name"`
-    Email         string    `bun:"email,notnull" json:"email"`
-    CreatedAt     time.Time `bun:"created_at,notnull,skipupdate" json:"created_at,omitempty"`
-    UpdatedAt     time.Time `bun:"updated_at,notnull" json:"updated_at,omitempty"`
-}
-
-// BeforeAppendModel hook for timestamps
-func (u *User) BeforeAppendModel(ctx context.Context, query bun.Query) error {
-    now := time.Now()
-    switch query.(type) {
-    case *bun.InsertQuery:
-        u.CreatedAt = now
-        u.UpdatedAt = now
-    case *bun.UpdateQuery:
-        u.UpdatedAt = now
-    }
-    return nil
-}
-
-func main() {
-    // Create and initialize datastore
-    db, err := datastore.NewSQLite(":memory:")
-    if err != nil {
-        log.Fatal(err)
-    }
-    datastore.Initialize(db)
-    defer datastore.Cleanup()
-
-    r := chi.NewRouter()
-
-    // Register routes using the Builder API with public access
-    b := router.NewBuilder(r)
-    router.RegisterRoutes[User](b, "/users", router.AuthConfig{
-        Methods: []string{router.MethodAll},
-        Scopes:  []string{router.ScopePublic},  // Public for this example
-    })
-
-    http.ListenAndServe(":8080", r)
-}
-```
-
-**Note**: By default, routes are **blocked unless explicitly configured**. This example uses public routes for simplicity. See the [Authentication & Authorization](#authentication--authorization) section for production usage.
+See the [simple example](./examples/simple) for a simple working example to get started.
 
 ## Database Setup
 
@@ -125,39 +69,8 @@ db, err := datastore.NewSQLite("./data.db")
 
 go-restgen automatically handles parent-child relationships with full chain validation:
 
-```go
-type User struct {
-    bun.BaseModel `bun:"table:users"`
-    ID            int       `bun:"id,pk,autoincrement" json:"id"`
-    Name          string    `bun:"name,notnull" json:"name"`
-    CreatedAt     time.Time `bun:"created_at,notnull,skipupdate" json:"created_at,omitempty"`
-    UpdatedAt     time.Time `bun:"updated_at,notnull" json:"updated_at,omitempty"`
-}
-
-type Post struct {
-    bun.BaseModel `bun:"table:posts"`
-    ID            int       `bun:"id,pk,autoincrement" json:"id"`
-    UserID        int       `bun:"user_id,notnull,skipupdate" json:"user_id"`
-    User          *User     `bun:"rel:belongs-to,join:user_id=id" json:"-"`  // Parent relation
-    Title         string    `bun:"title,notnull" json:"title"`
-    CreatedAt     time.Time `bun:"created_at,notnull,skipupdate" json:"created_at,omitempty"`
-    UpdatedAt     time.Time `bun:"updated_at,notnull" json:"updated_at,omitempty"`
-}
-
-// Register nested routes
-b := router.NewBuilder(r)
-router.RegisterRoutes[User](b, "/users", func(b *router.Builder) {
-    router.RegisterRoutes[Post](b, "/posts")
-})
-```
-
-This automatically creates routes with parent validation:
-- `GET /users/{userId}/posts` - List posts for specific user
-- `POST /users/{userId}/posts` - Create post (user_id auto-set from path)
-- `GET /users/{userId}/posts/{postId}` - Get post (validates it belongs to user)
-
 **Security Features:**
-- Foreign keys (`user_id`) are automatically set from the URL path
+- Foreign keys are automatically set from the URL path
 - Foreign keys in JSON body are ignored (path takes precedence)
 - IDs in JSON body are ignored (path takes precedence)
 - Parent chain is validated at database level with JOINs
@@ -396,7 +309,6 @@ Database (PostgreSQL via Bun ORM)
 - **`handler`** - HTTP handlers for CRUD operations
 - **`service`** - Business logic and CRUD services
 - **`datastore`** - Generic database operations
-- **`testutil`** - Testing utilities
 
 ## Custom Database Implementation
 
@@ -495,7 +407,7 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[Nested Routes](./examples/nested_routes)** - 3-level nesting (Users → Posts → Comments) with automatic parent validation
 - **[Authentication & Authorization](./examples/auth)** - Comprehensive auth patterns including scopes, ownership, admin bypass, and multi-ownership
 
-All examples include comprehensive Bruno API tests (35 end-to-end tests). See [`bruno/README.md`](./bruno/README.md) for details.
+All examples include comprehensive Bruno API tests. See [`bruno/README.md`](./bruno/README.md) for details.
 
 ## Testing
 
@@ -538,8 +450,6 @@ Run tests (excluding examples):
 go test ./metadata ./datastore ./router ./service ./handler ./errors -coverprofile=/tmp/coverage.out
 go tool cover -func=/tmp/coverage.out
 ```
-
-**Test Coverage: 75.3%** (core framework)
 
 For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 35 comprehensive API tests.
 
@@ -592,7 +502,7 @@ MIT License - see [LICENSE](LICENSE) for details
 
 ## Acknowledgments
 
-This project was inspired by the need for a simple, type-safe REST framework that doesn't sacrifice flexibility for convenience. Special thanks to the Go team for generics support and the maintainers of Chi and Bun for their excellent libraries.
+Special thanks to the Go team for generics support and the maintainers of Chi and Bun for their excellent libraries.
 
 ## Author
 

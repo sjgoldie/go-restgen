@@ -47,9 +47,6 @@ cd examples/simple && go run main.go
 
 # Run tests in another terminal
 bru run bruno/simple-example --env local
-
-# Or run all examples (requires all servers running)
-bru run bruno --env local
 ```
 
 **CI/CD Integration:**
@@ -148,96 +145,9 @@ These Bruno tests provide **end-to-end API coverage** for the example applicatio
 - Testing the full HTTP request/response cycle
 - Validating authentication and authorization
 - Ensuring proper error responses
-- Verifying the framework works correctly in real applications
+- Verifying the framework works correctly in example applications
 
-Combined with unit tests (75.3% code coverage), these integration tests ensure the framework functions correctly in production scenarios.
-
-## Coverage Summary
-
-**Unit Test Coverage (Core Framework):**
-- metadata: 100.0%
-- router: 90.1%
-- service: 88.9%
-- datastore: 71.6%
-- handler: 62.7%
-- **Total: 75.3%**
-
-**Integration Test Coverage (Bruno):**
-- Simple example: 7 tests (full CRUD lifecycle)
-- Nested routes example: 16 tests (nested resources, parent validation)
-- Auth example: 12 tests (auth patterns, ownership, scopes)
-- **Total: 35 end-to-end API tests**
-
-## Continuous Integration
-
-Bruno CLI can be easily integrated into CI/CD pipelines:
-
-### GitHub Actions Example
-
-```yaml
-name: API Tests
-
-on: [push, pull_request]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-
-      - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
-
-      - name: Start Simple Example Server
-        run: |
-          cd examples/simple
-          go run main.go &
-          sleep 2  # Wait for server to start
-
-      - name: Run Simple Example Tests
-        run: bru run bruno/simple-example --env local --reporter json
-
-      - name: Run All Tests
-        run: |
-          # Start all servers and run tests
-          # Add similar steps for other examples
-```
-
-### Local Testing Script
-
-Create a `test-api.sh` script for running all API tests:
-
-```bash
-#!/bin/bash
-set -e
-
-echo "Starting servers..."
-cd examples/simple && go run main.go &
-SIMPLE_PID=$!
-cd ../..
-
-cd examples/nested_routes && go run main.go &
-NESTED_PID=$!
-cd ../..
-
-cd examples/auth && go run main.go &
-AUTH_PID=$!
-cd ../..
-
-sleep 3  # Wait for servers to start
-
-echo "Running Bruno tests..."
-bru run bruno --env local --reporter json
-
-# Cleanup
-kill $SIMPLE_PID $NESTED_PID $AUTH_PID
-echo "Tests complete!"
-```
+Combined with unit tests, these integration tests ensure the framework functions correctly in various scenarios.
 
 ## Adding More Tests
 

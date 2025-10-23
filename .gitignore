@@ -25,6 +25,10 @@ coverage.*
 *.coverprofile
 profile.cov
 
+# Benchmark artifacts
+bench-results/
+*.prof
+
 # Dependency directories (remove the comment below to include it)
 # vendor/
 

@@ -464,6 +464,7 @@ go-restgen builds on these excellent projects:
 
 - [x] SQLite support
 - [x] Nested resource support with automatic parent validation
+- [ ] Optionallly retrieve an objects relations when retriving the object itself
 - [ ] MySQL support
 - [ ] Query parameter filtering and sorting
 - [ ] Pagination helpers

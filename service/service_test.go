@@ -1,4 +1,4 @@
-//nolint:errcheck,gosec // Test code - unchecked test cleanup is acceptable
+//nolint:errcheck,gosec,staticcheck // Test code - unchecked test cleanup and string context keys are acceptable
 package service_test
 
 import (
@@ -22,6 +22,23 @@ type TestModel struct {
 	Email         string `bun:"email,unique"`
 }
 
+// testModelMeta is the metadata for TestModel
+var testModelMeta = &metadata.TypeMetadata{
+	TypeID:        "test_model_id",
+	TypeName:      "TestModel",
+	TableName:     "test_models",
+	URLParamUUID:  "id",
+	ModelType:     reflect.TypeOf(TestModel{}),
+	ParentType:    nil,
+	ParentMeta:    nil,
+	ForeignKeyCol: "",
+}
+
+// ctxWithMeta creates a context with the given metadata
+func ctxWithMeta(meta *metadata.TypeMetadata) context.Context {
+	return context.WithValue(context.Background(), metadata.MetadataKey, meta)
+}
+
 var testDB *datastore.SQLite
 
 func TestMain(m *testing.M) {
@@ -36,17 +53,6 @@ func TestMain(m *testing.M) {
 		testDB.Cleanup()
 		panic("Failed to initialize datastore: " + err.Error())
 	}
-
-	// Register metadata for TestModel
-	meta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "TestModel",
-		TableName:     "test_models",
-		URLParamUUID:  "id",
-		ParentType:    nil,
-		ForeignKeyCol: "",
-	}
-	metadata.Register(meta, reflect.TypeOf(TestModel{}))
 
 	_, err = testDB.GetDB().NewCreateTable().Model((*TestModel)(nil)).IfNotExists().Exec(context.Background())
 	if err != nil {
@@ -141,7 +147,7 @@ func TestService_GetAll(t *testing.T) {
 				t.Fatal("Failed to create service:", err)
 			}
 
-			items, err := svc.GetAll(context.Background(), []string{})
+			items, err := svc.GetAll(ctxWithMeta(testModelMeta), []string{})
 			if err != nil {
 				t.Fatal("GetAll failed:", err)
 			}
@@ -195,7 +201,7 @@ func TestService_Get(t *testing.T) {
 				t.Fatal("Failed to create service:", err)
 			}
 
-			item, err := svc.Get(context.Background(), tt.getID, []string{})
+			item, err := svc.Get(ctxWithMeta(testModelMeta), tt.getID, []string{})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Get() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -232,7 +238,7 @@ func TestService_Create(t *testing.T) {
 				t.Fatal("Failed to create service:", err)
 			}
 
-			created, err := svc.Create(context.Background(), tt.item)
+			created, err := svc.Create(ctxWithMeta(testModelMeta), tt.item)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Create() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -292,7 +298,7 @@ func TestService_Update(t *testing.T) {
 				t.Fatal("Failed to create service:", err)
 			}
 
-			updated, err := svc.Update(context.Background(), tt.updateItem.ID, tt.updateItem)
+			updated, err := svc.Update(ctxWithMeta(testModelMeta), tt.updateItem.ID, tt.updateItem)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Update() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -345,7 +351,7 @@ func TestService_Delete(t *testing.T) {
 				t.Fatal("Failed to create service:", err)
 			}
 
-			err = svc.Delete(context.Background(), tt.deleteID)
+			err = svc.Delete(ctxWithMeta(testModelMeta), tt.deleteID)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Delete() error = %v, wantErr %v", err, tt.wantErr)
 			}

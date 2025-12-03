@@ -125,10 +125,10 @@ func Get[T any]() http.HandlerFunc {
 			relations = []string{}
 		}
 
-		// Get metadata to find the correct URL parameter UUID
-		meta, err := metadata.Get[T]()
+		// Get metadata from context
+		meta, err := metadata.FromContext(ctx)
 		if err != nil {
-			slog.Warn("metadata not found for type", "error", err)
+			slog.Warn("metadata not found in context", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -213,10 +213,11 @@ func Update[T any]() http.HandlerFunc {
 			return
 		}
 
-		// Get metadata to find the correct URL parameter UUID
-		meta, err := metadata.Get[T]()
+		// Get metadata from context
+		ctx := r.Context()
+		meta, err := metadata.FromContext(ctx)
 		if err != nil {
-			slog.Warn("metadata not found for type", "error", err)
+			slog.Warn("metadata not found in context", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -263,10 +264,11 @@ func Delete[T any]() http.HandlerFunc {
 			return
 		}
 
-		// Get metadata to find the correct URL parameter UUID
-		meta, err := metadata.Get[T]()
+		// Get metadata from context
+		ctx := r.Context()
+		meta, err := metadata.FromContext(ctx)
 		if err != nil {
-			slog.Warn("metadata not found for type", "error", err)
+			slog.Warn("metadata not found in context", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}

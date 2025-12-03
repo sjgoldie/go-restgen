@@ -289,6 +289,74 @@ router.ScopeAuthOnly  // "__restgen_auth_only__" - Auth required, no scope check
 router.AuthInfoKey  // "authInfo" - Key for AuthInfo in context
 ```
 
+## Multi-Registration
+
+go-restgen supports registering the same model type at multiple routes with different configurations. This is useful when:
+- You need different auth/ownership rules for the same resource at different endpoints
+- A resource should appear both as a root resource and nested under a parent
+
+### Same Model at Root and Nested
+
+```go
+// Item can be accessed at both /items (root) and /projects/{id}/items (nested)
+type Item struct {
+    bun.BaseModel `bun:"table:items"`
+    ID            int    `bun:"id,pk,autoincrement" json:"id"`
+    ProjectID     int    `bun:"project_id" json:"project_id"`
+    Project       *Project `bun:"rel:belongs-to,join:project_id=id" json:"-"`
+    Name          string `bun:"name" json:"name"`
+}
+
+b := router.NewBuilder(r)
+
+// Root registration - public read, admin write
+router.RegisterRoutes[Item](b, "/items",
+    router.PublicReadOnly(),
+    router.AllScoped("admin"),
+)
+
+// Nested registration - filtered by project with ownership
+router.RegisterRoutes[Project](b, "/projects",
+    router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+    func(b *router.Builder) {
+        router.RegisterRoutes[Item](b, "/items",
+            router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+        )
+    },
+)
+```
+
+### Different Ownership per Registration
+
+```go
+// Same Item model with different ownership rules per parent
+router.RegisterRoutes[User](b, "/users",
+    router.IsAuthenticated(),
+    func(b *router.Builder) {
+        // User's items - ownership filtered by user
+        router.RegisterRoutes[Item](b, "/items",
+            router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+        )
+    },
+)
+
+router.RegisterRoutes[Project](b, "/projects",
+    router.IsAuthenticated(),
+    func(b *router.Builder) {
+        // Project's items - different ownership, moderator bypass
+        router.RegisterRoutes[Item](b, "/items",
+            router.AllWithOwnershipUnless([]string{"OwnerID"}, "moderator"),
+        )
+    },
+)
+```
+
+**How It Works:**
+- Each registration creates independent metadata stored in request context
+- Parent filtering is based on the URL path, not a global registry
+- Ownership and auth configs are per-registration
+- No conflicts between registrations of the same type
+
 ## Architecture
 
 go-restgen follows a clean layered architecture:
@@ -464,7 +532,8 @@ go-restgen builds on these excellent projects:
 
 - [x] SQLite support
 - [x] Nested resource support with automatic parent validation
-- [ ] Optionallly retrieve an objects relations when retriving the object itself
+- [x] Multi-registration support (same model at different routes with different configs)
+- [ ] Optionally retrieve an object's relations when retrieving the object itself
 - [ ] MySQL support
 - [ ] Query parameter filtering and sorting
 - [ ] Pagination helpers

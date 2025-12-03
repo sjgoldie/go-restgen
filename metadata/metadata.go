@@ -1,10 +1,11 @@
 package metadata
 
 import (
-	"fmt"
+	"context"
 	"reflect"
 	"strings"
-	"sync"
+
+	apperrors "github.com/sjgoldie/go-restgen/errors"
 
 	"github.com/google/uuid"
 )
@@ -18,78 +19,35 @@ type AuthInfo struct {
 
 // TypeMetadata contains all metadata for a registered type
 type TypeMetadata struct {
-	TypeID          string       // Unique UUID for this type
-	TypeName        string       // Go type name (e.g., "User")
-	TableName       string       // Database table name
-	URLParamUUID    string       // UUID used as chi URL parameter name (e.g., "abc-123")
-	ParentType      reflect.Type // Go type of parent (nil if root)
-	ForeignKeyCol   string       // Column in THIS table that references parent (e.g., "user_id")
-	OwnershipFields []string     // Model field names for ownership validation (OR logic)
-	BypassScopes    []string     // Scopes that bypass ownership validation (e.g., "admin")
+	TypeID          string        // Unique UUID for this type
+	TypeName        string        // Go type name (e.g., "User")
+	TableName       string        // Database table name
+	URLParamUUID    string        // UUID used as chi URL parameter name (e.g., "abc-123")
+	ModelType       reflect.Type  // Go type of this model
+	ParentType      reflect.Type  // Go type of parent (nil if root)
+	ParentMeta      *TypeMetadata // Direct pointer to parent metadata (nil if root)
+	ForeignKeyCol   string        // Column in THIS table that references parent (e.g., "user_id")
+	OwnershipFields []string      // Model field names for ownership validation (OR logic)
+	BypassScopes    []string      // Scopes that bypass ownership validation (e.g., "admin")
 }
 
-var (
-	registry     = make(map[reflect.Type]*TypeMetadata) // Go type -> metadata
-	registryLock sync.RWMutex
-)
+// metadataKeyType is the context key type for storing TypeMetadata
+type metadataKeyType string
 
-// Register stores metadata for a type
-func Register(metadata *TypeMetadata, goType reflect.Type) {
-	registryLock.Lock()
-	defer registryLock.Unlock()
+// MetadataKey is the context key for storing TypeMetadata
+const MetadataKey metadataKeyType = "restgen_metadata"
 
-	registry[goType] = metadata
-}
-
-// Get retrieves metadata for a type T
-func Get[T any]() (*TypeMetadata, error) {
-	var t T
-	tType := reflect.TypeOf(t)
-	if tType.Kind() == reflect.Ptr {
-		tType = tType.Elem()
+// FromContext retrieves TypeMetadata from context
+func FromContext(ctx context.Context) (*TypeMetadata, error) {
+	meta, ok := ctx.Value(MetadataKey).(*TypeMetadata)
+	if !ok || meta == nil {
+		return nil, apperrors.ErrMetadataNotFound
 	}
-
-	return GetByType(tType)
-}
-
-// GetByType retrieves metadata for a reflect.Type
-func GetByType(t reflect.Type) (*TypeMetadata, error) {
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-
-	registryLock.RLock()
-	defer registryLock.RUnlock()
-
-	metadata, exists := registry[t]
-	if !exists {
-		return nil, fmt.Errorf("type %s not registered", t.Name())
-	}
-
-	return metadata, nil
+	return meta, nil
 }
 
 // GenerateTypeID creates a unique ID for a type registration
 // Returns a UUID with hyphens replaced by underscores to be compatible with chi URL parameters
 func GenerateTypeID() string {
 	return strings.ReplaceAll(uuid.New().String(), "-", "_")
-}
-
-// UpdateOwnership updates the ownership configuration for a registered type
-func UpdateOwnership(goType reflect.Type, ownershipFields, bypassScopes []string) error {
-	if goType.Kind() == reflect.Ptr {
-		goType = goType.Elem()
-	}
-
-	registryLock.Lock()
-	defer registryLock.Unlock()
-
-	metadata, exists := registry[goType]
-	if !exists {
-		return fmt.Errorf("type %s not registered", goType.Name())
-	}
-
-	metadata.OwnershipFields = ownershipFields
-	metadata.BypassScopes = bypassScopes
-	return nil
 }

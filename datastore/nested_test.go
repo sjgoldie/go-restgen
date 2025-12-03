@@ -39,6 +39,45 @@ type TestComment struct {
 	CreatedAt     time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
 }
 
+// Nested test metadata with parent chain
+var testAuthorMeta = &metadata.TypeMetadata{
+	TypeID:        "test_author_id",
+	TypeName:      "TestAuthor",
+	TableName:     "authors",
+	URLParamUUID:  "authorId",
+	ModelType:     reflect.TypeOf(TestAuthor{}),
+	ParentType:    nil,
+	ParentMeta:    nil,
+	ForeignKeyCol: "",
+}
+
+var testArticleMeta = &metadata.TypeMetadata{
+	TypeID:        "test_article_id",
+	TypeName:      "TestArticle",
+	TableName:     "articles",
+	URLParamUUID:  "articleId",
+	ModelType:     reflect.TypeOf(TestArticle{}),
+	ParentType:    reflect.TypeOf(TestAuthor{}),
+	ParentMeta:    testAuthorMeta,
+	ForeignKeyCol: "author_id",
+}
+
+var testCommentMeta = &metadata.TypeMetadata{
+	TypeID:        "test_comment_id",
+	TypeName:      "TestComment",
+	TableName:     "comments",
+	URLParamUUID:  "commentId",
+	ModelType:     reflect.TypeOf(TestComment{}),
+	ParentType:    reflect.TypeOf(TestArticle{}),
+	ParentMeta:    testArticleMeta,
+	ForeignKeyCol: "article_id",
+}
+
+// ctxWithNestedMeta creates a context with the given metadata
+func ctxWithNestedMeta(meta *metadata.TypeMetadata) context.Context {
+	return context.WithValue(context.Background(), metadata.MetadataKey, meta)
+}
+
 func setupNestedTestDB(t *testing.T) (*datastore.SQLite, func()) {
 	t.Helper()
 
@@ -46,39 +85,6 @@ func setupNestedTestDB(t *testing.T) (*datastore.SQLite, func()) {
 	if err != nil {
 		t.Fatal("Failed to create test database:", err)
 	}
-
-	// Register metadata for TestAuthor (root)
-	authorMeta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "TestAuthor",
-		TableName:     "authors",
-		URLParamUUID:  "authorId",
-		ParentType:    nil,
-		ForeignKeyCol: "",
-	}
-	metadata.Register(authorMeta, reflect.TypeOf(TestAuthor{}))
-
-	// Register metadata for TestArticle (child of Author)
-	articleMeta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "TestArticle",
-		TableName:     "articles",
-		URLParamUUID:  "articleId",
-		ParentType:    reflect.TypeOf(TestAuthor{}),
-		ForeignKeyCol: "author_id",
-	}
-	metadata.Register(articleMeta, reflect.TypeOf(TestArticle{}))
-
-	// Register metadata for TestComment (grandchild - child of Article)
-	commentMeta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "TestComment",
-		TableName:     "comments",
-		URLParamUUID:  "commentId",
-		ParentType:    reflect.TypeOf(TestArticle{}),
-		ForeignKeyCol: "article_id",
-	}
-	metadata.Register(commentMeta, reflect.TypeOf(TestComment{}))
 
 	// Initialize datastore
 	if err := datastore.Initialize(db); err != nil {
@@ -123,17 +129,19 @@ func TestWrapper_Nested_Get(t *testing.T) {
 
 	// Create author
 	authorWrapper := &datastore.Wrapper[TestAuthor]{Store: db}
+	ctxAuthor := ctxWithNestedMeta(testAuthorMeta)
 	author := TestAuthor{
 		Name:  "John Doe",
 		Email: "john@example.com",
 	}
-	createdAuthor, err := authorWrapper.Create(context.Background(), author)
+	createdAuthor, err := authorWrapper.Create(ctxAuthor, author)
 	if err != nil {
 		t.Fatal("Failed to create author:", err)
 	}
 
 	// Create article with parent context
-	ctx := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctxArticle := ctxWithNestedMeta(testArticleMeta)
+	ctxArticle = context.WithValue(ctxArticle, "parentIDs", map[string]int{
 		"authorId": createdAuthor.ID,
 	})
 	articleWrapper := &datastore.Wrapper[TestArticle]{Store: db}
@@ -141,13 +149,14 @@ func TestWrapper_Nested_Get(t *testing.T) {
 		Title:   "Test Article",
 		Content: "Content here",
 	}
-	createdArticle, err := articleWrapper.Create(ctx, article)
+	createdArticle, err := articleWrapper.Create(ctxArticle, article)
 	if err != nil {
 		t.Fatal("Failed to create article:", err)
 	}
 
 	// Test: Get article WITH parent context - should succeed
-	ctxGet := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctxGet := ctxWithNestedMeta(testArticleMeta)
+	ctxGet = context.WithValue(ctxGet, "parentIDs", map[string]int{
 		"authorId": createdAuthor.ID,
 	})
 	retrieved, err := articleWrapper.Get(ctxGet, createdArticle.ID, []string{})
@@ -159,7 +168,8 @@ func TestWrapper_Nested_Get(t *testing.T) {
 	}
 
 	// Test: Get article with WRONG parent context - should fail (404)
-	ctxWrong := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctxWrong := ctxWithNestedMeta(testArticleMeta)
+	ctxWrong = context.WithValue(ctxWrong, "parentIDs", map[string]int{
 		"authorId": 999, // non-existent author
 	})
 	_, err = articleWrapper.Get(ctxWrong, createdArticle.ID, []string{})
@@ -174,19 +184,23 @@ func TestWrapper_Nested_GetAll(t *testing.T) {
 
 	// Create two authors
 	authorWrapper := &datastore.Wrapper[TestAuthor]{Store: db}
-	author1, _ := authorWrapper.Create(context.Background(), TestAuthor{Name: "Author 1", Email: "a1@example.com"})
-	author2, _ := authorWrapper.Create(context.Background(), TestAuthor{Name: "Author 2", Email: "a2@example.com"})
+	ctxAuthor := ctxWithNestedMeta(testAuthorMeta)
+	author1, _ := authorWrapper.Create(ctxAuthor, TestAuthor{Name: "Author 1", Email: "a1@example.com"})
+	author2, _ := authorWrapper.Create(ctxAuthor, TestAuthor{Name: "Author 2", Email: "a2@example.com"})
 
 	// Create articles for both authors
 	articleWrapper := &datastore.Wrapper[TestArticle]{Store: db}
-	ctx1Create := context.WithValue(context.Background(), "parentIDs", map[string]int{"authorId": author1.ID})
-	ctx2Create := context.WithValue(context.Background(), "parentIDs", map[string]int{"authorId": author2.ID})
+	ctx1Create := ctxWithNestedMeta(testArticleMeta)
+	ctx1Create = context.WithValue(ctx1Create, "parentIDs", map[string]int{"authorId": author1.ID})
+	ctx2Create := ctxWithNestedMeta(testArticleMeta)
+	ctx2Create = context.WithValue(ctx2Create, "parentIDs", map[string]int{"authorId": author2.ID})
 	_, _ = articleWrapper.Create(ctx1Create, TestArticle{Title: "Article 1-1", Content: "Content"})
 	_, _ = articleWrapper.Create(ctx1Create, TestArticle{Title: "Article 1-2", Content: "Content"})
 	_, _ = articleWrapper.Create(ctx2Create, TestArticle{Title: "Article 2-1", Content: "Content"})
 
 	// Test: GetAll articles for author1 - should return 2
-	ctx1 := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctx1 := ctxWithNestedMeta(testArticleMeta)
+	ctx1 = context.WithValue(ctx1, "parentIDs", map[string]int{
 		"authorId": author1.ID,
 	})
 	articles1, err := articleWrapper.GetAll(ctx1, []string{})
@@ -198,7 +212,8 @@ func TestWrapper_Nested_GetAll(t *testing.T) {
 	}
 
 	// Test: GetAll articles for author2 - should return 1
-	ctx2 := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctx2 := ctxWithNestedMeta(testArticleMeta)
+	ctx2 = context.WithValue(ctx2, "parentIDs", map[string]int{
 		"authorId": author2.ID,
 	})
 	articles2, err := articleWrapper.GetAll(ctx2, []string{})
@@ -216,20 +231,23 @@ func TestWrapper_Nested_ThreeLevels_Get(t *testing.T) {
 
 	// Create author -> article -> comment chain
 	authorWrapper := &datastore.Wrapper[TestAuthor]{Store: db}
-	author, _ := authorWrapper.Create(context.Background(), TestAuthor{Name: "Author", Email: "a@example.com"})
+	ctxAuthorMeta := ctxWithNestedMeta(testAuthorMeta)
+	author, _ := authorWrapper.Create(ctxAuthorMeta, TestAuthor{Name: "Author", Email: "a@example.com"})
 
 	// Create article with author context
-	ctxAuthor := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctxArticleMeta := ctxWithNestedMeta(testArticleMeta)
+	ctxArticleMeta = context.WithValue(ctxArticleMeta, "parentIDs", map[string]int{
 		"authorId": author.ID,
 	})
 	articleWrapper := &datastore.Wrapper[TestArticle]{Store: db}
-	article, err := articleWrapper.Create(ctxAuthor, TestArticle{Title: "Article", Content: "Content"})
+	article, err := articleWrapper.Create(ctxArticleMeta, TestArticle{Title: "Article", Content: "Content"})
 	if err != nil {
 		t.Fatal("Failed to create article:", err)
 	}
 
 	// Create comment with full parent chain context
-	ctxArticle := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctxCommentMeta := ctxWithNestedMeta(testCommentMeta)
+	ctxCommentMeta = context.WithValue(ctxCommentMeta, "parentIDs", map[string]int{
 		"authorId":  author.ID,
 		"articleId": article.ID,
 	})
@@ -238,13 +256,14 @@ func TestWrapper_Nested_ThreeLevels_Get(t *testing.T) {
 		Text:   "Great article!",
 		Author: "Reader",
 	}
-	createdComment, err := commentWrapper.Create(ctxArticle, comment)
+	createdComment, err := commentWrapper.Create(ctxCommentMeta, comment)
 	if err != nil {
 		t.Fatal("Failed to create comment:", err)
 	}
 
 	// Test: Get comment with full parent chain - should succeed
-	ctx := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctx := ctxWithNestedMeta(testCommentMeta)
+	ctx = context.WithValue(ctx, "parentIDs", map[string]int{
 		"authorId":  author.ID,
 		"articleId": article.ID,
 	})
@@ -257,7 +276,8 @@ func TestWrapper_Nested_ThreeLevels_Get(t *testing.T) {
 	}
 
 	// Test: Get comment with wrong article (but correct author) - should fail
-	ctxWrongArticle := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctxWrongArticle := ctxWithNestedMeta(testCommentMeta)
+	ctxWrongArticle = context.WithValue(ctxWrongArticle, "parentIDs", map[string]int{
 		"authorId":  author.ID,
 		"articleId": 999, // non-existent article
 	})
@@ -267,7 +287,8 @@ func TestWrapper_Nested_ThreeLevels_Get(t *testing.T) {
 	}
 
 	// Test: Get comment with wrong author (but correct article) - should fail
-	ctxWrongAuthor := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctxWrongAuthor := ctxWithNestedMeta(testCommentMeta)
+	ctxWrongAuthor = context.WithValue(ctxWrongAuthor, "parentIDs", map[string]int{
 		"authorId":  999, // non-existent author
 		"articleId": article.ID,
 	})
@@ -283,9 +304,11 @@ func TestWrapper_Nested_Update(t *testing.T) {
 
 	// Create author and article
 	authorWrapper := &datastore.Wrapper[TestAuthor]{Store: db}
-	author, _ := authorWrapper.Create(context.Background(), TestAuthor{Name: "Author", Email: "a@example.com"})
+	ctxAuthorMeta := ctxWithNestedMeta(testAuthorMeta)
+	author, _ := authorWrapper.Create(ctxAuthorMeta, TestAuthor{Name: "Author", Email: "a@example.com"})
 
-	ctxCreate := context.WithValue(context.Background(), "parentIDs", map[string]int{"authorId": author.ID})
+	ctxCreate := ctxWithNestedMeta(testArticleMeta)
+	ctxCreate = context.WithValue(ctxCreate, "parentIDs", map[string]int{"authorId": author.ID})
 	articleWrapper := &datastore.Wrapper[TestArticle]{Store: db}
 	article, err := articleWrapper.Create(ctxCreate, TestArticle{Title: "Original", Content: "Content"})
 	if err != nil {
@@ -293,7 +316,8 @@ func TestWrapper_Nested_Update(t *testing.T) {
 	}
 
 	// Test: Update article with correct parent context - should succeed
-	ctx := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctx := ctxWithNestedMeta(testArticleMeta)
+	ctx = context.WithValue(ctx, "parentIDs", map[string]int{
 		"authorId": author.ID,
 	})
 	article.Title = "Updated"
@@ -306,7 +330,8 @@ func TestWrapper_Nested_Update(t *testing.T) {
 	}
 
 	// Test: Update article with wrong parent context - should fail
-	ctxWrong := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctxWrong := ctxWithNestedMeta(testArticleMeta)
+	ctxWrong = context.WithValue(ctxWrong, "parentIDs", map[string]int{
 		"authorId": 999,
 	})
 	article.Title = "Should Fail"
@@ -322,9 +347,11 @@ func TestWrapper_Nested_Delete(t *testing.T) {
 
 	// Create author and article
 	authorWrapper := &datastore.Wrapper[TestAuthor]{Store: db}
-	author, _ := authorWrapper.Create(context.Background(), TestAuthor{Name: "Author", Email: "a@example.com"})
+	ctxAuthorMeta := ctxWithNestedMeta(testAuthorMeta)
+	author, _ := authorWrapper.Create(ctxAuthorMeta, TestAuthor{Name: "Author", Email: "a@example.com"})
 
-	ctxCreate := context.WithValue(context.Background(), "parentIDs", map[string]int{"authorId": author.ID})
+	ctxCreate := ctxWithNestedMeta(testArticleMeta)
+	ctxCreate = context.WithValue(ctxCreate, "parentIDs", map[string]int{"authorId": author.ID})
 	articleWrapper := &datastore.Wrapper[TestArticle]{Store: db}
 	article, err := articleWrapper.Create(ctxCreate, TestArticle{Title: "To Delete", Content: "Content"})
 	if err != nil {
@@ -332,7 +359,8 @@ func TestWrapper_Nested_Delete(t *testing.T) {
 	}
 
 	// Test: Delete article with wrong parent context - should fail
-	ctxWrong := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctxWrong := ctxWithNestedMeta(testArticleMeta)
+	ctxWrong = context.WithValue(ctxWrong, "parentIDs", map[string]int{
 		"authorId": 999,
 	})
 	err = articleWrapper.Delete(ctxWrong, article.ID)
@@ -341,7 +369,8 @@ func TestWrapper_Nested_Delete(t *testing.T) {
 	}
 
 	// Test: Delete article with correct parent context - should succeed
-	ctx := context.WithValue(context.Background(), "parentIDs", map[string]int{
+	ctx := ctxWithNestedMeta(testArticleMeta)
+	ctx = context.WithValue(ctx, "parentIDs", map[string]int{
 		"authorId": author.ID,
 	})
 	err = articleWrapper.Delete(ctx, article.ID)

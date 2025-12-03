@@ -28,15 +28,20 @@ func (w *Wrapper[T]) GetAll(ctx context.Context, relations []string) ([]*T, erro
 	items := []*T{}
 	query := w.Store.GetDB().NewSelect().Model(&items)
 
+	// Get metadata from context
+	meta, err := metadata.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Apply parent filters and JOINs from metadata
-	var zero T
-	query, err := w.applyParentFiltersForType(ctx, query, reflect.TypeOf(zero))
+	query, err = w.applyParentFiltersWithMeta(ctx, query, meta)
 	if err != nil {
 		return nil, err
 	}
 
 	// Apply ownership filter for type T
-	query, err = w.applyOwnershipFilter(ctx, query, reflect.TypeOf(zero))
+	query, err = w.applyOwnershipFilterWithMeta(ctx, query, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -64,8 +69,12 @@ func (w *Wrapper[T]) GetAll(ctx context.Context, relations []string) ([]*T, erro
 // Get retrieves a single item of type T by ID from the datastore
 // Filters from context (parent IDs) are applied automatically
 func (w *Wrapper[T]) Get(ctx context.Context, id int, relations []string) (*T, error) {
-	var zero T
-	item, err := w.getByType(ctx, reflect.TypeOf(zero), id, relations)
+	// Get metadata from context
+	meta, err := metadata.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	item, err := w.getWithMeta(ctx, meta, id, relations)
 	if err != nil {
 		return nil, err
 	}
@@ -77,19 +86,15 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
-	// Get metadata for this type
-	meta, err := metadata.Get[T]()
+	// Get metadata from context
+	meta, err := metadata.FromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	// If this type has a parent, validate parent exists and set foreign key
-	if meta.ParentType != nil {
-		// Get parent metadata
-		parentMeta, err := metadata.GetByType(meta.ParentType)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get parent metadata: %w", err)
-		}
+	if meta.ParentMeta != nil {
+		parentMeta := meta.ParentMeta
 
 		// Extract parent ID from context
 		parentIDs, ok := ctx.Value("parentIDs").(map[string]int)
@@ -105,7 +110,7 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 		// Validate parent exists by calling getByType on it
 		// This validates the full parent chain automatically
 		// Parent validation will use the parent's own ownership config from metadata
-		_, err = w.getByType(ctx, meta.ParentType, parentID, []string{})
+		_, err = w.getWithMeta(ctx, parentMeta, parentID, []string{})
 		if err != nil {
 			return nil, err
 		}
@@ -234,24 +239,24 @@ func (w *Wrapper[T]) Delete(ctx context.Context, id int) error {
 	return nil
 }
 
-// getByType retrieves a single item by ID for any type (not just T)
+// getWithMeta retrieves a single item by ID using metadata
 // This allows validating parent existence with full chain validation
-func (w *Wrapper[T]) getByType(ctx context.Context, itemType reflect.Type, id int, relations []string) (interface{}, error) {
+func (w *Wrapper[T]) getWithMeta(ctx context.Context, meta *metadata.TypeMetadata, id int, relations []string) (interface{}, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
-	// Create new instance of the type
-	item := reflect.New(itemType).Interface()
+	// Create new instance of the type from metadata
+	item := reflect.New(meta.ModelType).Interface()
 	query := w.Store.GetDB().NewSelect().Model(item)
 
 	// Apply parent filters and JOINs from metadata
-	query, err := w.applyParentFiltersForType(ctx, query, itemType)
+	query, err := w.applyParentFiltersWithMeta(ctx, query, meta)
 	if err != nil {
 		return nil, err
 	}
 
-	// Apply ownership filter for the actual item type being queried
-	query, err = w.applyOwnershipFilter(ctx, query, itemType)
+	// Apply ownership filter using the metadata
+	query, err = w.applyOwnershipFilterWithMeta(ctx, query, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -315,19 +320,15 @@ func fieldNameFromColumn(col string) string {
 	return strings.Join(parts, "")
 }
 
-// applyParentFiltersForType applies parent ID filters and JOINs for any type
-func (w *Wrapper[T]) applyParentFiltersForType(ctx context.Context, query *bun.SelectQuery, itemType reflect.Type) (*bun.SelectQuery, error) {
-	// Get metadata for the provided type
-	currentMeta, err := metadata.GetByType(itemType)
-	if err != nil {
-		return nil, err
-	}
+// applyParentFiltersWithMeta applies parent ID filters and JOINs using metadata chain
+func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.SelectQuery, currentMeta *metadata.TypeMetadata) (*bun.SelectQuery, error) {
+	// Metadata is required - nil means programming error
 	if currentMeta == nil {
 		return nil, fmt.Errorf("metadata is nil for type")
 	}
 
-	// If no parent, no filters needed
-	if currentMeta.ParentType == nil {
+	// If no parent, this is a root resource - no filters needed
+	if currentMeta.ParentMeta == nil {
 		return query, nil
 	}
 
@@ -337,7 +338,7 @@ func (w *Wrapper[T]) applyParentFiltersForType(ctx context.Context, query *bun.S
 		return query, nil
 	}
 
-	// Walk up the parent chain to collect all metadata
+	// Walk up the parent chain to collect all join info
 	// Build list from child -> parent -> grandparent
 	type joinInfo struct {
 		childType     reflect.Type
@@ -348,36 +349,26 @@ func (w *Wrapper[T]) applyParentFiltersForType(ctx context.Context, query *bun.S
 	}
 
 	var joins []joinInfo
-	childType := itemType
-	childTable := currentMeta.TableName
-	childFKCol := currentMeta.ForeignKeyCol
-	currentType := currentMeta.ParentType
+	childMeta := currentMeta
+	parentMeta := currentMeta.ParentMeta
 
-	// Walk up the chain
-	for currentType != nil {
-		parentMeta, err := metadata.GetByType(currentType)
-		if err != nil {
-			// Parent type not registered, stop
-			break
-		}
-
+	// Walk up the chain using ParentMeta pointers
+	for parentMeta != nil {
 		joins = append(joins, joinInfo{
-			childType:     childType,
-			childTable:    childTable,
-			childFKCol:    childFKCol,
+			childType:     childMeta.ModelType,
+			childTable:    childMeta.TableName,
+			childFKCol:    childMeta.ForeignKeyCol,
 			parentTable:   parentMeta.TableName,
 			parentURLUUID: parentMeta.URLParamUUID,
 		})
 
 		// Move up the chain
-		childType = currentType
-		childTable = parentMeta.TableName
-		childFKCol = parentMeta.ForeignKeyCol
-		currentType = parentMeta.ParentType
+		childMeta = parentMeta
+		parentMeta = parentMeta.ParentMeta
 	}
 
 	// Now build the JOINs and WHERE clauses
-	baseType := itemType
+	baseType := currentMeta.ModelType
 	for _, join := range joins {
 		// Check if we have a parent ID for this level
 		parentID, exists := parentIDs[join.parentURLUUID]
@@ -408,9 +399,9 @@ func (w *Wrapper[T]) applyParentFiltersForType(ctx context.Context, query *bun.S
 	return query, nil
 }
 
-// applyOwnershipFilter applies ownership filtering to a query if enforced in context
-// Uses the provided itemType to look up ownership configuration from metadata
-func (w *Wrapper[T]) applyOwnershipFilter(ctx context.Context, query *bun.SelectQuery, itemType reflect.Type) (*bun.SelectQuery, error) {
+// applyOwnershipFilterWithMeta applies ownership filtering to a query if enforced in context
+// Uses the provided metadata for ownership configuration
+func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata) (*bun.SelectQuery, error) {
 	// Check if ownership is enforced
 	enforced, ok := ctx.Value("ownershipEnforced").(bool)
 	if !ok || !enforced {
@@ -423,18 +414,8 @@ func (w *Wrapper[T]) applyOwnershipFilter(ctx context.Context, query *bun.Select
 		return nil, fmt.Errorf("ownership enforced but user ID missing from context")
 	}
 
-	// Look up ownership configuration from metadata for this specific type
-	if itemType.Kind() == reflect.Ptr {
-		itemType = itemType.Elem()
-	}
-	meta, err := metadata.GetByType(itemType)
-	if err != nil {
-		// Type not registered or no metadata - skip ownership filter
-		return query, nil
-	}
-
-	// If no ownership fields configured for this type, skip filter
-	if len(meta.OwnershipFields) == 0 {
+	// If no metadata or no ownership fields configured for this type, skip filter
+	if meta == nil || len(meta.OwnershipFields) == 0 {
 		return query, nil
 	}
 
@@ -450,6 +431,12 @@ func (w *Wrapper[T]) applyOwnershipFilter(ctx context.Context, query *bun.Select
 				}
 			}
 		}
+	}
+
+	// Get the model type for column name lookup
+	itemType := meta.ModelType
+	if itemType.Kind() == reflect.Ptr {
+		itemType = itemType.Elem()
 	}
 
 	// Build OR conditions: WHERE (field1 = ? OR field2 = ? OR ...)
@@ -480,7 +467,7 @@ func (w *Wrapper[T]) applyOwnershipFilter(ctx context.Context, query *bun.Select
 }
 
 // setOwnershipField sets the ownership field on an item if enforced in context
-// Uses metadata to determine which field to set
+// Uses metadata from context to determine which field to set
 // Always sets the field when ownership is configured, regardless of bypass scopes
 // (Bypass scopes only affect filtering on reads, not field population on creates)
 func (w *Wrapper[T]) setOwnershipField(ctx context.Context, item *T) error {
@@ -496,14 +483,8 @@ func (w *Wrapper[T]) setOwnershipField(ctx context.Context, item *T) error {
 		return fmt.Errorf("ownership enforced but user ID missing from context")
 	}
 
-	// Look up ownership configuration from metadata for type T
-	var zero T
-	tType := reflect.TypeOf(zero)
-	if tType.Kind() == reflect.Ptr {
-		tType = tType.Elem()
-	}
-
-	meta, err := metadata.GetByType(tType)
+	// Get metadata from context
+	meta, err := metadata.FromContext(ctx)
 	if err != nil || len(meta.OwnershipFields) == 0 {
 		// No ownership configured for this type
 		return nil

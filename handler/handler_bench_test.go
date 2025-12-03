@@ -71,6 +71,60 @@ type BenchReaction struct {
 }
 
 // ============================================================================
+// Benchmark Metadata
+// ============================================================================
+
+// Metadata for benchmark types - used for context injection
+var benchBlogMeta = &metadata.TypeMetadata{
+	TypeID:        "bench_blog_id",
+	TypeName:      "BenchBlog",
+	TableName:     "bench_blogs",
+	URLParamUUID:  "blogId",
+	ModelType:     reflect.TypeOf(BenchBlog{}),
+	ParentType:    nil,
+	ForeignKeyCol: "",
+}
+
+var benchPostMeta = &metadata.TypeMetadata{
+	TypeID:        "bench_post_id",
+	TypeName:      "BenchPost",
+	TableName:     "bench_posts",
+	URLParamUUID:  "postId",
+	ModelType:     reflect.TypeOf(BenchPost{}),
+	ParentType:    reflect.TypeOf(BenchBlog{}),
+	ParentMeta:    benchBlogMeta,
+	ForeignKeyCol: "blog_id",
+}
+
+var benchCommentMeta = &metadata.TypeMetadata{
+	TypeID:        "bench_comment_id",
+	TypeName:      "BenchComment",
+	TableName:     "bench_comments",
+	URLParamUUID:  "commentId",
+	ModelType:     reflect.TypeOf(BenchComment{}),
+	ParentType:    reflect.TypeOf(BenchPost{}),
+	ParentMeta:    benchPostMeta,
+	ForeignKeyCol: "post_id",
+}
+
+var benchReactionMeta = &metadata.TypeMetadata{
+	TypeID:        "bench_reaction_id",
+	TypeName:      "BenchReaction",
+	TableName:     "bench_reactions",
+	URLParamUUID:  "reactionId",
+	ModelType:     reflect.TypeOf(BenchReaction{}),
+	ParentType:    reflect.TypeOf(BenchComment{}),
+	ParentMeta:    benchCommentMeta,
+	ForeignKeyCol: "comment_id",
+}
+
+// addMetaToRequest adds metadata to request context
+func addMetaToRequest(r *http.Request, meta *metadata.TypeMetadata) *http.Request {
+	ctx := context.WithValue(r.Context(), metadata.MetadataKey, meta)
+	return r.WithContext(ctx)
+}
+
+// ============================================================================
 // Benchmark Database Setup
 // ============================================================================
 
@@ -105,47 +159,6 @@ func setupBenchDB() error {
 			return fmt.Errorf("failed to create table: %w", err)
 		}
 	}
-
-	// Register metadata for benchmark types
-	blogMeta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "BenchBlog",
-		TableName:     "bench_blogs",
-		URLParamUUID:  "blogId",
-		ParentType:    nil,
-		ForeignKeyCol: "",
-	}
-	metadata.Register(blogMeta, reflect.TypeOf(BenchBlog{}))
-
-	postMeta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "BenchPost",
-		TableName:     "bench_posts",
-		URLParamUUID:  "postId",
-		ParentType:    reflect.TypeOf(BenchBlog{}),
-		ForeignKeyCol: "blog_id",
-	}
-	metadata.Register(postMeta, reflect.TypeOf(BenchPost{}))
-
-	commentMeta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "BenchComment",
-		TableName:     "bench_comments",
-		URLParamUUID:  "commentId",
-		ParentType:    reflect.TypeOf(BenchPost{}),
-		ForeignKeyCol: "post_id",
-	}
-	metadata.Register(commentMeta, reflect.TypeOf(BenchComment{}))
-
-	reactionMeta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "BenchReaction",
-		TableName:     "bench_reactions",
-		URLParamUUID:  "reactionId",
-		ParentType:    reflect.TypeOf(BenchComment{}),
-		ForeignKeyCol: "comment_id",
-	}
-	metadata.Register(reactionMeta, reflect.TypeOf(BenchReaction{}))
 
 	benchInitialized = true
 	return nil
@@ -393,27 +406,33 @@ func BenchmarkNestedDepth(b *testing.B) {
 		b.Run(tt.name, func(b *testing.B) {
 			blogID, postID, commentID, reactionID := tt.setup(b)
 
-			// Build path based on depth
+			// Build path and select handler/metadata based on depth
 			var path string
 			var h http.HandlerFunc
+			var meta *metadata.TypeMetadata
 			switch tt.depth {
 			case 1:
 				path = fmt.Sprintf(tt.path, blogID)
 				h = handler.Get[BenchBlog]()
+				meta = benchBlogMeta
 			case 2:
 				path = fmt.Sprintf(tt.path, blogID, postID)
 				h = handler.Get[BenchPost]()
+				meta = benchPostMeta
 			case 3:
 				path = fmt.Sprintf(tt.path, blogID, postID, commentID)
 				h = handler.Get[BenchComment]()
+				meta = benchCommentMeta
 			case 4:
 				path = fmt.Sprintf(tt.path, blogID, postID, commentID, reactionID)
 				h = handler.Get[BenchReaction]()
+				meta = benchReactionMeta
 			}
 
 			// Create request with auth
 			req := httptest.NewRequest("GET", path, nil)
 			req = addAuthToRequest(req, "user-0", []string{"user"})
+			req = addMetaToRequest(req, meta)
 
 			// Add URL params to context
 			rctx := chi.NewRouteContext()
@@ -470,9 +489,10 @@ func BenchmarkAuthPermutations(b *testing.B) {
 			// Setup handler
 			h := handler.Get[BenchBlog]()
 
-			// Create request with scenario auth
+			// Create request with scenario auth and metadata
 			req := httptest.NewRequest("GET", fmt.Sprintf("/blogs/%d", blogID), nil)
 			req = addAuthToRequest(req, scenario.userID, scenario.scopes)
+			req = addMetaToRequest(req, benchBlogMeta)
 
 			// Add URL params
 			rctx := chi.NewRouteContext()
@@ -636,6 +656,7 @@ func BenchmarkOperations(b *testing.B) {
 				}
 
 				req = addAuthToRequest(req, "user-0", []string{"user"})
+				req = addMetaToRequest(req, benchBlogMeta)
 
 				// Add URL params if needed
 				if tt.method == "GET" || tt.method == "PUT" {
@@ -703,6 +724,7 @@ func BenchmarkNestedCollections(b *testing.B) {
 
 			req := httptest.NewRequest("GET", fmt.Sprintf("/blogs/%d/posts", blogID), nil)
 			req = addAuthToRequest(req, "user-0", []string{"user"})
+			req = addMetaToRequest(req, benchPostMeta)
 
 			// Add parent ID to context
 			rctx := chi.NewRouteContext()

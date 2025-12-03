@@ -9,13 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"reflect"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sjgoldie/go-restgen/datastore"
-	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/router"
 	"github.com/uptrace/bun"
 )
@@ -134,51 +132,8 @@ func TestMain(m *testing.M) {
 		panic("Failed to initialize datastore: " + err.Error())
 	}
 
-	// Register metadata for User
-	userMeta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "User",
-		TableName:     "users",
-		URLParamUUID:  "id",
-		ParentType:    nil,
-		ForeignKeyCol: "",
-	}
-	metadata.Register(userMeta, reflect.TypeOf(User{}))
-
-	// Register metadata for Author (root)
-	authorMeta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "Author",
-		TableName:     "authors",
-		URLParamUUID:  "authorId",
-		ParentType:    nil,
-		ForeignKeyCol: "",
-	}
-	metadata.Register(authorMeta, reflect.TypeOf(Author{}))
-
-	// Register metadata for Article (child of Author)
-	articleMeta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "Article",
-		TableName:     "articles",
-		URLParamUUID:  "articleId",
-		ParentType:    reflect.TypeOf(Author{}),
-		ForeignKeyCol: "author_id",
-	}
-	metadata.Register(articleMeta, reflect.TypeOf(Article{}))
-
-	// Register metadata for Comment (grandchild - child of Article)
-	commentMeta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "Comment",
-		TableName:     "comments",
-		URLParamUUID:  "commentId",
-		ParentType:    reflect.TypeOf(Article{}),
-		ForeignKeyCol: "article_id",
-	}
-	metadata.Register(commentMeta, reflect.TypeOf(Comment{}))
-
 	// Create tables
+	// Note: Metadata is now created automatically by RegisterRoutes via context injection
 	_, err = testDB.GetDB().NewCreateTable().Model((*User)(nil)).IfNotExists().Exec(context.Background())
 	if err != nil {
 		testDB.Cleanup()

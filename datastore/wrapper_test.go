@@ -21,6 +21,23 @@ type TestUser struct {
 	CreatedAt     time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
 }
 
+// testUserMeta is the metadata for TestUser (module-level for reuse)
+var testUserMeta = &metadata.TypeMetadata{
+	TypeID:        "test_user_id",
+	TypeName:      "TestUser",
+	TableName:     "users",
+	URLParamUUID:  "id",
+	ModelType:     reflect.TypeOf(TestUser{}),
+	ParentType:    nil,
+	ParentMeta:    nil,
+	ForeignKeyCol: "",
+}
+
+// ctxWithMeta creates a context with the given metadata
+func ctxWithMeta(meta *metadata.TypeMetadata) context.Context {
+	return context.WithValue(context.Background(), metadata.MetadataKey, meta)
+}
+
 func setupTestDB(t *testing.T) (*datastore.SQLite, func()) {
 	t.Helper()
 
@@ -28,17 +45,6 @@ func setupTestDB(t *testing.T) (*datastore.SQLite, func()) {
 	if err != nil {
 		t.Fatal("Failed to create test database:", err)
 	}
-
-	// Register metadata for TestUser
-	meta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "TestUser",
-		TableName:     "users",
-		URLParamUUID:  "id",
-		ParentType:    nil,
-		ForeignKeyCol: "",
-	}
-	metadata.Register(meta, reflect.TypeOf(TestUser{}))
 
 	// Create schema
 	_, err = db.GetDB().NewCreateTable().Model((*TestUser)(nil)).IfNotExists().Exec(context.Background())
@@ -60,13 +66,14 @@ func TestWrapper_Create(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
+	ctx := ctxWithMeta(testUserMeta)
 
 	user := TestUser{
 		Name:  "John Doe",
 		Email: "john@example.com",
 	}
 
-	created, err := wrapper.Create(context.Background(), user)
+	created, err := wrapper.Create(ctx, user)
 	if err != nil {
 		t.Fatal("Failed to create user:", err)
 	}
@@ -85,6 +92,7 @@ func TestWrapper_Get(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
+	ctx := ctxWithMeta(testUserMeta)
 
 	// Create a user first
 	user := TestUser{
@@ -92,13 +100,13 @@ func TestWrapper_Get(t *testing.T) {
 		Email: "jane@example.com",
 	}
 
-	created, err := wrapper.Create(context.Background(), user)
+	created, err := wrapper.Create(ctx, user)
 	if err != nil {
 		t.Fatal("Failed to create user:", err)
 	}
 
 	// Get the user
-	retrieved, err := wrapper.Get(context.Background(), created.ID, []string{})
+	retrieved, err := wrapper.Get(ctx, created.ID, []string{})
 	if err != nil {
 		t.Fatal("Failed to get user:", err)
 	}
@@ -117,6 +125,7 @@ func TestWrapper_GetAll(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
+	ctx := ctxWithMeta(testUserMeta)
 
 	// Create multiple users
 	users := []TestUser{
@@ -126,13 +135,13 @@ func TestWrapper_GetAll(t *testing.T) {
 	}
 
 	for _, user := range users {
-		if _, err := wrapper.Create(context.Background(), user); err != nil {
+		if _, err := wrapper.Create(ctx, user); err != nil {
 			t.Fatal("Failed to create user:", err)
 		}
 	}
 
 	// Get all users
-	retrieved, err := wrapper.GetAll(context.Background(), []string{})
+	retrieved, err := wrapper.GetAll(ctx, []string{})
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
@@ -147,6 +156,7 @@ func TestWrapper_Update(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
+	ctx := ctxWithMeta(testUserMeta)
 
 	// Create a user
 	user := TestUser{
@@ -154,14 +164,14 @@ func TestWrapper_Update(t *testing.T) {
 		Email: "original@example.com",
 	}
 
-	created, err := wrapper.Create(context.Background(), user)
+	created, err := wrapper.Create(ctx, user)
 	if err != nil {
 		t.Fatal("Failed to create user:", err)
 	}
 
 	// Update the user
 	created.Name = "Updated Name"
-	updated, err := wrapper.Update(context.Background(), created.ID, *created)
+	updated, err := wrapper.Update(ctx, created.ID, *created)
 	if err != nil {
 		t.Fatal("Failed to update user:", err)
 	}
@@ -176,6 +186,7 @@ func TestWrapper_Delete(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
+	ctx := ctxWithMeta(testUserMeta)
 
 	// Create a user
 	user := TestUser{
@@ -183,18 +194,18 @@ func TestWrapper_Delete(t *testing.T) {
 		Email: "delete@example.com",
 	}
 
-	created, err := wrapper.Create(context.Background(), user)
+	created, err := wrapper.Create(ctx, user)
 	if err != nil {
 		t.Fatal("Failed to create user:", err)
 	}
 
 	// Delete the user
-	if err := wrapper.Delete(context.Background(), created.ID); err != nil {
+	if err := wrapper.Delete(ctx, created.ID); err != nil {
 		t.Fatal("Failed to delete user:", err)
 	}
 
 	// Verify deletion
-	_, err = wrapper.Get(context.Background(), created.ID, []string{})
+	_, err = wrapper.Get(ctx, created.ID, []string{})
 	if err == nil {
 		t.Error("Expected error when getting deleted user")
 	}
@@ -207,8 +218,9 @@ func TestWrapper_Get_NotFound(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
+	ctx := ctxWithMeta(testUserMeta)
 
-	_, err := wrapper.Get(context.Background(), 999, []string{})
+	_, err := wrapper.Get(ctx, 999, []string{})
 	if err == nil {
 		t.Error("Expected error when getting non-existent user")
 	}
@@ -219,6 +231,7 @@ func TestWrapper_Update_NotFound(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
+	ctx := ctxWithMeta(testUserMeta)
 
 	user := TestUser{
 		ID:    999,
@@ -226,7 +239,7 @@ func TestWrapper_Update_NotFound(t *testing.T) {
 		Email: "notexist@example.com",
 	}
 
-	_, err := wrapper.Update(context.Background(), 999, user)
+	_, err := wrapper.Update(ctx, 999, user)
 	if err == nil {
 		t.Error("Expected error when updating non-existent user")
 	}
@@ -237,8 +250,9 @@ func TestWrapper_Delete_NotFound(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
+	ctx := ctxWithMeta(testUserMeta)
 
-	err := wrapper.Delete(context.Background(), 999)
+	err := wrapper.Delete(ctx, 999)
 	if err == nil {
 		t.Error("Expected error when deleting non-existent user")
 	}
@@ -256,8 +270,9 @@ func TestWrapper_GetAll_Empty(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
+	ctx := ctxWithMeta(testUserMeta)
 
-	retrieved, err := wrapper.GetAll(context.Background(), []string{})
+	retrieved, err := wrapper.GetAll(ctx, []string{})
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
@@ -272,20 +287,21 @@ func TestWrapper_Get_WithRelations(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
+	ctx := ctxWithMeta(testUserMeta)
 
 	user := TestUser{
 		Name:  "John Doe",
 		Email: "john@example.com",
 	}
 
-	created, err := wrapper.Create(context.Background(), user)
+	created, err := wrapper.Create(ctx, user)
 	if err != nil {
 		t.Fatal("Failed to create user:", err)
 	}
 
 	// Get with relations (even though we don't have any relations in this test model)
 	// This tests that the relations parameter is properly handled
-	retrieved, err := wrapper.Get(context.Background(), created.ID, []string{})
+	retrieved, err := wrapper.Get(ctx, created.ID, []string{})
 	if err != nil {
 		t.Fatal("Failed to get user with relations:", err)
 	}
@@ -300,20 +316,21 @@ func TestWrapper_GetAll_WithRelations(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
+	ctx := ctxWithMeta(testUserMeta)
 
 	user := TestUser{
 		Name:  "John Doe",
 		Email: "john@example.com",
 	}
 
-	_, err := wrapper.Create(context.Background(), user)
+	_, err := wrapper.Create(ctx, user)
 	if err != nil {
 		t.Fatal("Failed to create user:", err)
 	}
 
 	// Get all with relations (even though we don't have any relations in this test model)
 	// This tests that the relations parameter is properly handled
-	retrieved, err := wrapper.GetAll(context.Background(), []string{})
+	retrieved, err := wrapper.GetAll(ctx, []string{})
 	if err != nil {
 		t.Fatal("Failed to get all users with relations:", err)
 	}
@@ -328,6 +345,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
+	ctx := ctxWithMeta(testUserMeta)
 
 	// Create
 	user := TestUser{
@@ -335,7 +353,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 		Email: "lifecycle@example.com",
 	}
 
-	created, err := wrapper.Create(context.Background(), user)
+	created, err := wrapper.Create(ctx, user)
 	if err != nil {
 		t.Fatal("Failed to create user:", err)
 	}
@@ -344,7 +362,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 	}
 
 	// Get
-	retrieved, err := wrapper.Get(context.Background(), created.ID, []string{})
+	retrieved, err := wrapper.Get(ctx, created.ID, []string{})
 	if err != nil {
 		t.Fatal("Failed to get user:", err)
 	}
@@ -354,7 +372,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 
 	// Update
 	retrieved.Name = "Updated Lifecycle"
-	updated, err := wrapper.Update(context.Background(), retrieved.ID, *retrieved)
+	updated, err := wrapper.Update(ctx, retrieved.ID, *retrieved)
 	if err != nil {
 		t.Fatal("Failed to update user:", err)
 	}
@@ -363,7 +381,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 	}
 
 	// GetAll
-	all, err := wrapper.GetAll(context.Background(), []string{})
+	all, err := wrapper.GetAll(ctx, []string{})
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
@@ -372,13 +390,13 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 	}
 
 	// Delete
-	err = wrapper.Delete(context.Background(), created.ID)
+	err = wrapper.Delete(ctx, created.ID)
 	if err != nil {
 		t.Fatal("Failed to delete user:", err)
 	}
 
 	// Verify deletion
-	_, err = wrapper.Get(context.Background(), created.ID, []string{})
+	_, err = wrapper.Get(ctx, created.ID, []string{})
 	if err == nil {
 		t.Error("Expected error when getting deleted user")
 	}
@@ -416,6 +434,46 @@ type TestOwnedArticle struct {
 	CreatedAt     time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
 }
 
+// Ownership metadata (module-level for reuse)
+var testOwnedBlogMeta = &metadata.TypeMetadata{
+	TypeID:          "test_owned_blog_id",
+	TypeName:        "TestOwnedBlog",
+	TableName:       "test_owned_blogs",
+	URLParamUUID:    "blog_id",
+	ModelType:       reflect.TypeOf(TestOwnedBlog{}),
+	ParentType:      nil,
+	ParentMeta:      nil,
+	ForeignKeyCol:   "",
+	OwnershipFields: []string{"AuthorID"},
+	BypassScopes:    []string{"admin"},
+}
+
+var testOwnedPostMeta = &metadata.TypeMetadata{
+	TypeID:          "test_owned_post_id",
+	TypeName:        "TestOwnedPost",
+	TableName:       "test_owned_posts",
+	URLParamUUID:    "post_id",
+	ModelType:       reflect.TypeOf(TestOwnedPost{}),
+	ParentType:      reflect.TypeOf(TestOwnedBlog{}),
+	ParentMeta:      testOwnedBlogMeta,
+	ForeignKeyCol:   "blog_id",
+	OwnershipFields: []string{"AuthorID", "EditorID"},
+	BypassScopes:    []string{"admin"},
+}
+
+var testOwnedArticleMeta = &metadata.TypeMetadata{
+	TypeID:          "test_owned_article_id",
+	TypeName:        "TestOwnedArticle",
+	TableName:       "test_owned_articles",
+	URLParamUUID:    "article_id",
+	ModelType:       reflect.TypeOf(TestOwnedArticle{}),
+	ParentType:      nil,
+	ParentMeta:      nil,
+	ForeignKeyCol:   "",
+	OwnershipFields: []string{"AuthorID"},
+	BypassScopes:    []string{"admin", "moderator"},
+}
+
 func setupOwnershipTestDB(t *testing.T) (*datastore.SQLite, func()) {
 	t.Helper()
 
@@ -423,45 +481,6 @@ func setupOwnershipTestDB(t *testing.T) (*datastore.SQLite, func()) {
 	if err != nil {
 		t.Fatal("Failed to create test database:", err)
 	}
-
-	// Register metadata for TestOwnedBlog (single ownership field)
-	blogMeta := &metadata.TypeMetadata{
-		TypeID:          metadata.GenerateTypeID(),
-		TypeName:        "TestOwnedBlog",
-		TableName:       "test_owned_blogs",
-		URLParamUUID:    "blog_id",
-		ParentType:      nil,
-		ForeignKeyCol:   "",
-		OwnershipFields: []string{"AuthorID"},
-		BypassScopes:    []string{"admin"},
-	}
-	metadata.Register(blogMeta, reflect.TypeOf(TestOwnedBlog{}))
-
-	// Register metadata for TestOwnedPost (multiple ownership fields)
-	postMeta := &metadata.TypeMetadata{
-		TypeID:          metadata.GenerateTypeID(),
-		TypeName:        "TestOwnedPost",
-		TableName:       "test_owned_posts",
-		URLParamUUID:    "post_id",
-		ParentType:      reflect.TypeOf(TestOwnedBlog{}),
-		ForeignKeyCol:   "blog_id",
-		OwnershipFields: []string{"AuthorID", "EditorID"},
-		BypassScopes:    []string{"admin"},
-	}
-	metadata.Register(postMeta, reflect.TypeOf(TestOwnedPost{}))
-
-	// Register metadata for TestOwnedArticle (for bypass scope testing)
-	articleMeta := &metadata.TypeMetadata{
-		TypeID:          metadata.GenerateTypeID(),
-		TypeName:        "TestOwnedArticle",
-		TableName:       "test_owned_articles",
-		URLParamUUID:    "article_id",
-		ParentType:      nil,
-		ForeignKeyCol:   "",
-		OwnershipFields: []string{"AuthorID"},
-		BypassScopes:    []string{"admin", "moderator"},
-	}
-	metadata.Register(articleMeta, reflect.TypeOf(TestOwnedArticle{}))
 
 	// Create schemas
 	ctx := context.Background()
@@ -494,7 +513,7 @@ func TestOwnership_SingleField_GetAll(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestOwnedBlog]{Store: db}
-	ctx := context.Background()
+	ctx := ctxWithMeta(testOwnedBlogMeta)
 
 	// Create blogs for different authors (without ownership enforcement on create)
 	blogs := []TestOwnedBlog{
@@ -536,7 +555,7 @@ func TestOwnership_SingleField_Get(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestOwnedBlog]{Store: db}
-	ctx := context.Background()
+	ctx := ctxWithMeta(testOwnedBlogMeta)
 
 	// Create a blog for alice
 	blog := TestOwnedBlog{AuthorID: "alice", Name: "Alice's Blog"}
@@ -573,11 +592,12 @@ func TestOwnership_MultipleFields_GetAll(t *testing.T) {
 
 	blogWrapper := &datastore.Wrapper[TestOwnedBlog]{Store: db}
 	postWrapper := &datastore.Wrapper[TestOwnedPost]{Store: db}
-	ctx := context.Background()
+	ctxBlog := ctxWithMeta(testOwnedBlogMeta)
+	ctxPost := ctxWithMeta(testOwnedPostMeta)
 
 	// Create a blog for alice
 	blog := TestOwnedBlog{AuthorID: "alice", Name: "Alice's Blog"}
-	createdBlog, err := blogWrapper.Create(ctx, blog)
+	createdBlog, err := blogWrapper.Create(ctxBlog, blog)
 	if err != nil {
 		t.Fatal("Failed to create blog:", err)
 	}
@@ -587,7 +607,7 @@ func TestOwnership_MultipleFields_GetAll(t *testing.T) {
 	parentIDs := map[string]int{
 		"blog_id": createdBlog.ID,
 	}
-	ctxWithParent := context.WithValue(ctx, "parentIDs", parentIDs)
+	ctxWithParent := context.WithValue(ctxPost, "parentIDs", parentIDs)
 
 	posts := []TestOwnedPost{
 		{BlogID: createdBlog.ID, AuthorID: "alice", EditorID: "", Title: "Alice authored"},
@@ -604,7 +624,7 @@ func TestOwnership_MultipleFields_GetAll(t *testing.T) {
 
 	// GetAll with ownership enforcement for alice
 	// Should get posts where alice is author OR editor
-	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
+	ctxAlice := context.WithValue(ctxPost, "ownershipEnforced", true)
 	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
 
 	retrieved, err := postWrapper.GetAll(ctxAlice, []string{})
@@ -630,7 +650,7 @@ func TestOwnership_BypassScope_Admin(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestOwnedArticle]{Store: db}
-	ctx := context.Background()
+	ctx := ctxWithMeta(testOwnedArticleMeta)
 
 	// Create articles for different authors
 	articles := []TestOwnedArticle{
@@ -672,7 +692,7 @@ func TestOwnership_BypassScope_Moderator(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestOwnedArticle]{Store: db}
-	ctx := context.Background()
+	ctx := ctxWithMeta(testOwnedArticleMeta)
 
 	// Create articles for different authors
 	articles := []TestOwnedArticle{
@@ -713,7 +733,7 @@ func TestOwnership_SetOwnershipField_OnCreate(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestOwnedBlog]{Store: db}
-	ctx := context.Background()
+	ctx := ctxWithMeta(testOwnedBlogMeta)
 
 	// Create with ownership enforcement
 	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
@@ -740,7 +760,7 @@ func TestOwnership_NoOwnershipContext_GetAll(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestOwnedBlog]{Store: db}
-	ctx := context.Background()
+	ctx := ctxWithMeta(testOwnedBlogMeta)
 
 	// Create blogs for different authors
 	blogs := []TestOwnedBlog{
@@ -771,7 +791,7 @@ func TestOwnership_TypeWithoutOwnershipConfig(t *testing.T) {
 	defer cleanup()
 
 	wrapper := &datastore.Wrapper[TestUser]{Store: db}
-	ctx := context.Background()
+	ctx := ctxWithMeta(testUserMeta)
 
 	// Create users
 	users := []TestUser{
@@ -808,18 +828,19 @@ func TestOwnership_NestedResourceValidation(t *testing.T) {
 
 	blogWrapper := &datastore.Wrapper[TestOwnedBlog]{Store: db}
 	postWrapper := &datastore.Wrapper[TestOwnedPost]{Store: db}
-	ctx := context.Background()
+	ctxBlog := ctxWithMeta(testOwnedBlogMeta)
+	ctxPost := ctxWithMeta(testOwnedPostMeta)
 
 	// Create blog for alice
 	blog := TestOwnedBlog{AuthorID: "alice", Name: "Alice's Blog"}
-	createdBlog, err := blogWrapper.Create(ctx, blog)
+	createdBlog, err := blogWrapper.Create(ctxBlog, blog)
 	if err != nil {
 		t.Fatal("Failed to create blog:", err)
 	}
 
 	// Try to create post under alice's blog as bob (with ownership enforcement)
 	// This should fail because bob can't access alice's blog
-	ctxBob := context.WithValue(ctx, "ownershipEnforced", true)
+	ctxBob := context.WithValue(ctxPost, "ownershipEnforced", true)
 	ctxBob = context.WithValue(ctxBob, "ownershipUserID", "bob")
 
 	// Add parent ID to context
@@ -841,7 +862,7 @@ func TestOwnership_NestedResourceValidation(t *testing.T) {
 	}
 
 	// Create post as alice (should succeed)
-	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
+	ctxAlice := context.WithValue(ctxPost, "ownershipEnforced", true)
 	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
 	ctxAlice = context.WithValue(ctxAlice, "parentIDs", parentIDs)
 

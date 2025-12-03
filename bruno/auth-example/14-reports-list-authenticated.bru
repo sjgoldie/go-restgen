@@ -1,0 +1,26 @@
+meta {
+  name: Reports - List With Auth
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/reports
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Listing reports with auth should succeed", function() {
+    expect(res.status).to.equal(200);
+  });
+}

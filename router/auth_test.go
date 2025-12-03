@@ -200,10 +200,10 @@ func TestAuth_MethodSpecificAuth(t *testing.T) {
 	r := addAuthMiddleware(chi.NewRouter(), "user123", []string{"user"})
 	b := router.NewBuilder(r)
 
-	// First register without auth for GET
+	// First register without auth for GET/LIST (public reads)
 	router.RegisterRoutes[AuthTestUser](b, "/users",
 		router.AuthConfig{
-			Methods: []string{router.MethodGet},
+			Methods: []string{router.MethodGet, router.MethodList},
 			Scopes:  []string{router.ScopePublic},
 		},
 		router.AuthConfig{
@@ -212,12 +212,12 @@ func TestAuth_MethodSpecificAuth(t *testing.T) {
 		},
 	)
 
-	// GET without auth - should succeed (public)
+	// GET /users (list) without auth - should succeed (public)
 	r2 := chi.NewRouter()
 	b2 := router.NewBuilder(r2)
 	router.RegisterRoutes[AuthTestUser](b2, "/users",
 		router.AuthConfig{
-			Methods: []string{router.MethodGet},
+			Methods: []string{router.MethodGet, router.MethodList},
 			Scopes:  []string{router.ScopePublic},
 		},
 		router.AuthConfig{
@@ -231,7 +231,7 @@ func TestAuth_MethodSpecificAuth(t *testing.T) {
 	r2.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("expected status 200 for public GET, got %d", w.Code)
+		t.Errorf("expected status 200 for public LIST, got %d", w.Code)
 	}
 
 	// POST without auth - should fail (auth required)
@@ -245,6 +245,90 @@ func TestAuth_MethodSpecificAuth(t *testing.T) {
 	}
 }
 
+func TestAuth_MethodListVsMethodGet(t *testing.T) {
+	// Test that MethodList and MethodGet can have different auth configs
+	// Use case: List requires auth (can't browse), but Get is public (shareable links)
+
+	// Setup: Create a post first
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	_, _ = db.NewDelete().Model((*AuthTestPost)(nil)).Where("1=1").Exec(ctx)
+	post := &AuthTestPost{UserID: "user1", Title: "Test Post"}
+	_, _ = db.NewInsert().Model(post).Returning("*").Exec(ctx)
+
+	t.Run("PublicGet_AuthenticatedList", func(t *testing.T) {
+		// List requires auth, Get is public
+		r := chi.NewRouter()
+		b := router.NewBuilder(r)
+
+		router.RegisterRoutes[AuthTestPost](b, "/posts",
+			router.AuthConfig{
+				Methods: []string{router.MethodList},
+				Scopes:  []string{router.ScopeAuthOnly}, // List requires auth
+			},
+			router.AuthConfig{
+				Methods: []string{router.MethodGet},
+				Scopes:  []string{router.ScopePublic}, // Get is public
+			},
+		)
+
+		// GET /posts (list) without auth - should fail
+		req := httptest.NewRequest("GET", "/posts", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("expected status 401 for list without auth, got %d", w.Code)
+		}
+
+		// GET /posts/1 (single item) without auth - should succeed
+		req = httptest.NewRequest("GET", "/posts/1", nil)
+		w = httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200 for public get, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("PublicList_AuthenticatedGet", func(t *testing.T) {
+		// List is public, Get requires auth
+		r := chi.NewRouter()
+		b := router.NewBuilder(r)
+
+		router.RegisterRoutes[AuthTestPost](b, "/posts",
+			router.AuthConfig{
+				Methods: []string{router.MethodList},
+				Scopes:  []string{router.ScopePublic}, // List is public
+			},
+			router.AuthConfig{
+				Methods: []string{router.MethodGet},
+				Scopes:  []string{router.ScopeAuthOnly}, // Get requires auth
+			},
+		)
+
+		// GET /posts (list) without auth - should succeed
+		req := httptest.NewRequest("GET", "/posts", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200 for public list, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// GET /posts/1 (single item) without auth - should fail
+		req = httptest.NewRequest("GET", "/posts/1", nil)
+		w = httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("expected status 401 for get without auth, got %d", w.Code)
+		}
+	})
+}
+
 func TestAuth_MethodAllOverride(t *testing.T) {
 	// MethodAll sets default, specific method overrides
 	r := chi.NewRouter()
@@ -256,18 +340,18 @@ func TestAuth_MethodAllOverride(t *testing.T) {
 			Scopes:  []string{"user"}, // Default: user scope required
 		},
 		router.AuthConfig{
-			Methods: []string{router.MethodGet},
-			Scopes:  []string{router.ScopePublic}, // Override: GET is public
+			Methods: []string{router.MethodGet, router.MethodList},
+			Scopes:  []string{router.ScopePublic}, // Override: both GET and LIST are public
 		},
 	)
 
-	// GET should be public (override)
+	// GET /users (list) should be public (override)
 	req := httptest.NewRequest("GET", "/users", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("expected status 200 for overridden GET, got %d", w.Code)
+		t.Errorf("expected status 200 for overridden LIST, got %d", w.Code)
 	}
 
 	// POST should require scope (default from MethodAll)
@@ -535,6 +619,32 @@ func TestAuthHelpers(t *testing.T) {
 
 	t.Run("PublicReadOnly", func(t *testing.T) {
 		cfg := router.PublicReadOnly()
+		if len(cfg.Methods) != 2 || cfg.Methods[0] != router.MethodGet || cfg.Methods[1] != router.MethodList {
+			t.Errorf("expected Methods [MethodGet, MethodList], got %v", cfg.Methods)
+		}
+		if len(cfg.Scopes) != 1 || cfg.Scopes[0] != router.ScopePublic {
+			t.Errorf("expected Scopes [ScopePublic], got %v", cfg.Scopes)
+		}
+		if cfg.Ownership != nil {
+			t.Errorf("expected nil Ownership, got %v", cfg.Ownership)
+		}
+	})
+
+	t.Run("PublicList", func(t *testing.T) {
+		cfg := router.PublicList()
+		if len(cfg.Methods) != 1 || cfg.Methods[0] != router.MethodList {
+			t.Errorf("expected Methods [MethodList], got %v", cfg.Methods)
+		}
+		if len(cfg.Scopes) != 1 || cfg.Scopes[0] != router.ScopePublic {
+			t.Errorf("expected Scopes [ScopePublic], got %v", cfg.Scopes)
+		}
+		if cfg.Ownership != nil {
+			t.Errorf("expected nil Ownership, got %v", cfg.Ownership)
+		}
+	})
+
+	t.Run("PublicGet", func(t *testing.T) {
+		cfg := router.PublicGet()
 		if len(cfg.Methods) != 1 || cfg.Methods[0] != router.MethodGet {
 			t.Errorf("expected Methods [MethodGet], got %v", cfg.Methods)
 		}

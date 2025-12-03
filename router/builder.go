@@ -131,7 +131,7 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 	r.Route(path, func(r chi.Router) {
 		// List endpoint - GET /resources
 		listHandler := http.Handler(handler.GetAll[T]())
-		if authConfig := authMap[MethodGet]; authConfig != nil {
+		if authConfig := authMap[MethodList]; authConfig != nil {
 			listHandler = wrapWithAuth(listHandler, authConfig)
 		} else {
 			listHandler = blockUnauthorized(listHandler)

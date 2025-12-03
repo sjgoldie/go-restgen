@@ -10,7 +10,8 @@ const AuthInfoKey = "authInfo"
 
 // HTTP methods for auth configuration
 const (
-	MethodGet    = "GET"
+	MethodGet    = "GET"  // Single item: GET /resources/{id}
+	MethodList   = "LIST" // Collection: GET /resources
 	MethodPost   = "POST"
 	MethodPut    = "PUT"
 	MethodDelete = "DELETE"
@@ -58,7 +59,7 @@ func expandMethods(methods []string) []string {
 	var expanded []string
 	for _, method := range methods {
 		if method == MethodAll {
-			expanded = append(expanded, MethodGet, MethodPost, MethodPut, MethodDelete)
+			expanded = append(expanded, MethodGet, MethodList, MethodPost, MethodPut, MethodDelete)
 		} else {
 			expanded = append(expanded, method)
 		}
@@ -125,8 +126,24 @@ func AllWithOwnershipUnless(fields []string, bypassScopes ...string) AuthConfig 
 	}
 }
 
-// PublicReadOnly returns an AuthConfig that allows public GET access only
+// PublicReadOnly returns an AuthConfig that allows public read access (both List and Get)
 func PublicReadOnly() AuthConfig {
+	return AuthConfig{
+		Methods: []string{MethodGet, MethodList},
+		Scopes:  []string{ScopePublic},
+	}
+}
+
+// PublicList returns an AuthConfig that allows public LIST access only (collection endpoint)
+func PublicList() AuthConfig {
+	return AuthConfig{
+		Methods: []string{MethodList},
+		Scopes:  []string{ScopePublic},
+	}
+}
+
+// PublicGet returns an AuthConfig that allows public GET access only (single item endpoint)
+func PublicGet() AuthConfig {
 	return AuthConfig{
 		Methods: []string{MethodGet},
 		Scopes:  []string{ScopePublic},

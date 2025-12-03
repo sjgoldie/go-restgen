@@ -1,10 +1,11 @@
 package metadata
 
 import (
-	"reflect"
+	"context"
 	"strings"
-	"sync"
 	"testing"
+
+	apperrors "github.com/sjgoldie/go-restgen/errors"
 )
 
 // Test types
@@ -21,34 +22,22 @@ type TestPost struct {
 	EditorID string
 }
 
-type TestComment struct {
-	ID     int
-	PostID int
-	Text   string
-}
-
-func TestRegisterAndGet(t *testing.T) {
-	// Clear registry
-	registryLock.Lock()
-	registry = make(map[reflect.Type]*TypeMetadata)
-	registryLock.Unlock()
-
-	// Register a type
+func TestFromContext(t *testing.T) {
+	// Create metadata
 	meta := &TypeMetadata{
-		TypeID:        "test_id_1",
-		TypeName:      "TestUser",
-		TableName:     "test_users",
-		URLParamUUID:  "param_uuid_1",
-		ParentType:    nil,
-		ForeignKeyCol: "",
+		TypeID:       "test_id_1",
+		TypeName:     "TestUser",
+		TableName:    "test_users",
+		URLParamUUID: "param_uuid_1",
 	}
 
-	Register(meta, reflect.TypeOf(TestUser{}))
+	// Add to context
+	ctx := context.WithValue(context.Background(), MetadataKey, meta)
 
-	// Get by generic type
-	retrieved, err := Get[TestUser]()
+	// Retrieve from context
+	retrieved, err := FromContext(ctx)
 	if err != nil {
-		t.Fatalf("Get[TestUser]() failed: %v", err)
+		t.Fatalf("FromContext() returned error: %v", err)
 	}
 
 	if retrieved.TypeID != "test_id_1" {
@@ -62,197 +51,155 @@ func TestRegisterAndGet(t *testing.T) {
 	}
 }
 
-func TestRegisterAndGetWithPointerType(t *testing.T) {
-	// Clear registry
-	registryLock.Lock()
-	registry = make(map[reflect.Type]*TypeMetadata)
-	registryLock.Unlock()
+func TestFromContextEmpty(t *testing.T) {
+	// Empty context
+	ctx := context.Background()
 
-	// Register with non-pointer type
-	meta := &TypeMetadata{
-		TypeID:   "test_id_2",
-		TypeName: "TestPost",
-	}
-
-	Register(meta, reflect.TypeOf(TestPost{}))
-
-	// Get by pointer type - should still work
-	retrieved, err := Get[*TestPost]()
-	if err != nil {
-		t.Fatalf("Get[*TestPost]() failed: %v", err)
-	}
-
-	if retrieved.TypeID != "test_id_2" {
-		t.Errorf("Expected TypeID 'test_id_2', got '%s'", retrieved.TypeID)
-	}
-}
-
-func TestGetByType(t *testing.T) {
-	// Clear registry
-	registryLock.Lock()
-	registry = make(map[reflect.Type]*TypeMetadata)
-	registryLock.Unlock()
-
-	// Register a type
-	meta := &TypeMetadata{
-		TypeID:   "test_id_3",
-		TypeName: "TestComment",
-	}
-
-	tType := reflect.TypeOf(TestComment{})
-	Register(meta, tType)
-
-	// Get by reflect.Type
-	retrieved, err := GetByType(tType)
-	if err != nil {
-		t.Fatalf("GetByType() failed: %v", err)
-	}
-
-	if retrieved.TypeID != "test_id_3" {
-		t.Errorf("Expected TypeID 'test_id_3', got '%s'", retrieved.TypeID)
-	}
-}
-
-func TestGetByTypeWithPointer(t *testing.T) {
-	// Clear registry
-	registryLock.Lock()
-	registry = make(map[reflect.Type]*TypeMetadata)
-	registryLock.Unlock()
-
-	// Register with non-pointer type
-	meta := &TypeMetadata{
-		TypeID:   "test_id_4",
-		TypeName: "TestUser",
-	}
-
-	Register(meta, reflect.TypeOf(TestUser{}))
-
-	// Get by pointer type
-	ptrType := reflect.TypeOf(&TestUser{})
-	retrieved, err := GetByType(ptrType)
-	if err != nil {
-		t.Fatalf("GetByType() with pointer failed: %v", err)
-	}
-
-	if retrieved.TypeID != "test_id_4" {
-		t.Errorf("Expected TypeID 'test_id_4', got '%s'", retrieved.TypeID)
-	}
-}
-
-func TestGetUnregisteredType(t *testing.T) {
-	// Clear registry
-	registryLock.Lock()
-	registry = make(map[reflect.Type]*TypeMetadata)
-	registryLock.Unlock()
-
-	// Try to get unregistered type
-	_, err := Get[TestUser]()
+	// Retrieve from empty context
+	retrieved, err := FromContext(ctx)
 	if err == nil {
-		t.Fatal("Expected error for unregistered type, got nil")
+		t.Error("FromContext() should return error for empty context")
 	}
-
-	expectedError := "type TestUser not registered"
-	if err.Error() != expectedError {
-		t.Errorf("Expected error '%s', got '%s'", expectedError, err.Error())
+	if retrieved != nil {
+		t.Error("FromContext() should return nil metadata for empty context")
+	}
+	if err != apperrors.ErrMetadataNotFound {
+		t.Errorf("Expected ErrMetadataNotFound, got %v", err)
 	}
 }
 
-func TestUpdateOwnership(t *testing.T) {
-	// Clear registry
-	registryLock.Lock()
-	registry = make(map[reflect.Type]*TypeMetadata)
-	registryLock.Unlock()
+func TestFromContextWrongType(t *testing.T) {
+	// Add wrong type to context
+	ctx := context.WithValue(context.Background(), MetadataKey, "wrong type")
 
-	// Register a type without ownership
+	// Retrieve from context
+	retrieved, err := FromContext(ctx)
+	if err == nil {
+		t.Error("FromContext() should return error for wrong type")
+	}
+	if retrieved != nil {
+		t.Error("FromContext() should return nil metadata for wrong type")
+	}
+	if err != apperrors.ErrMetadataNotFound {
+		t.Errorf("Expected ErrMetadataNotFound, got %v", err)
+	}
+}
+
+func TestParentMetaChain(t *testing.T) {
+	// Create parent metadata
+	parentMeta := &TypeMetadata{
+		TypeID:       "parent_id",
+		TypeName:     "TestUser",
+		TableName:    "test_users",
+		URLParamUUID: "parent_uuid",
+		ParentMeta:   nil,
+	}
+
+	// Create child metadata with parent
+	childMeta := &TypeMetadata{
+		TypeID:        "child_id",
+		TypeName:      "TestPost",
+		TableName:     "test_posts",
+		URLParamUUID:  "child_uuid",
+		ParentMeta:    parentMeta,
+		ForeignKeyCol: "user_id",
+	}
+
+	// Verify parent chain
+	if childMeta.ParentMeta == nil {
+		t.Fatal("Expected ParentMeta to be set")
+	}
+
+	if childMeta.ParentMeta.TypeName != "TestUser" {
+		t.Errorf("Expected parent TypeName 'TestUser', got '%s'", childMeta.ParentMeta.TypeName)
+	}
+
+	if childMeta.ForeignKeyCol != "user_id" {
+		t.Errorf("Expected ForeignKeyCol 'user_id', got '%s'", childMeta.ForeignKeyCol)
+	}
+
+	// Parent should have no parent
+	if parentMeta.ParentMeta != nil {
+		t.Error("Expected root parent to have nil ParentMeta")
+	}
+}
+
+func TestMultipleLevelParentChain(t *testing.T) {
+	// Create three-level hierarchy
+	grandparentMeta := &TypeMetadata{
+		TypeID:       "gp_id",
+		TypeName:     "Organization",
+		TableName:    "organizations",
+		URLParamUUID: "org_uuid",
+	}
+
+	parentMeta := &TypeMetadata{
+		TypeID:        "p_id",
+		TypeName:      "Team",
+		TableName:     "teams",
+		URLParamUUID:  "team_uuid",
+		ParentMeta:    grandparentMeta,
+		ForeignKeyCol: "organization_id",
+	}
+
+	childMeta := &TypeMetadata{
+		TypeID:        "c_id",
+		TypeName:      "Member",
+		TableName:     "members",
+		URLParamUUID:  "member_uuid",
+		ParentMeta:    parentMeta,
+		ForeignKeyCol: "team_id",
+	}
+
+	// Walk up the chain
+	current := childMeta
+	levels := []string{}
+	for current != nil {
+		levels = append(levels, current.TypeName)
+		current = current.ParentMeta
+	}
+
+	if len(levels) != 3 {
+		t.Errorf("Expected 3 levels, got %d", len(levels))
+	}
+
+	if levels[0] != "Member" {
+		t.Errorf("Expected first level 'Member', got '%s'", levels[0])
+	}
+	if levels[1] != "Team" {
+		t.Errorf("Expected second level 'Team', got '%s'", levels[1])
+	}
+	if levels[2] != "Organization" {
+		t.Errorf("Expected third level 'Organization', got '%s'", levels[2])
+	}
+}
+
+func TestOwnershipFields(t *testing.T) {
 	meta := &TypeMetadata{
-		TypeID:          "test_id_5",
+		TypeID:          "test_id",
 		TypeName:        "TestPost",
-		OwnershipFields: nil,
-		BypassScopes:    nil,
+		OwnershipFields: []string{"AuthorID", "EditorID"},
+		BypassScopes:    []string{"admin", "moderator"},
 	}
 
-	tType := reflect.TypeOf(TestPost{})
-	Register(meta, tType)
-
-	// Update ownership
-	ownershipFields := []string{"AuthorID", "EditorID"}
-	bypassScopes := []string{"admin", "moderator"}
-
-	err := UpdateOwnership(tType, ownershipFields, bypassScopes)
-	if err != nil {
-		t.Fatalf("UpdateOwnership() failed: %v", err)
+	if len(meta.OwnershipFields) != 2 {
+		t.Errorf("Expected 2 ownership fields, got %d", len(meta.OwnershipFields))
+	}
+	if meta.OwnershipFields[0] != "AuthorID" {
+		t.Errorf("Expected first ownership field 'AuthorID', got '%s'", meta.OwnershipFields[0])
+	}
+	if meta.OwnershipFields[1] != "EditorID" {
+		t.Errorf("Expected second ownership field 'EditorID', got '%s'", meta.OwnershipFields[1])
 	}
 
-	// Verify ownership was updated
-	retrieved, _ := GetByType(tType)
-	if len(retrieved.OwnershipFields) != 2 {
-		t.Errorf("Expected 2 ownership fields, got %d", len(retrieved.OwnershipFields))
+	if len(meta.BypassScopes) != 2 {
+		t.Errorf("Expected 2 bypass scopes, got %d", len(meta.BypassScopes))
 	}
-	if retrieved.OwnershipFields[0] != "AuthorID" {
-		t.Errorf("Expected first ownership field 'AuthorID', got '%s'", retrieved.OwnershipFields[0])
+	if meta.BypassScopes[0] != "admin" {
+		t.Errorf("Expected first bypass scope 'admin', got '%s'", meta.BypassScopes[0])
 	}
-	if retrieved.OwnershipFields[1] != "EditorID" {
-		t.Errorf("Expected second ownership field 'EditorID', got '%s'", retrieved.OwnershipFields[1])
-	}
-
-	if len(retrieved.BypassScopes) != 2 {
-		t.Errorf("Expected 2 bypass scopes, got %d", len(retrieved.BypassScopes))
-	}
-	if retrieved.BypassScopes[0] != "admin" {
-		t.Errorf("Expected first bypass scope 'admin', got '%s'", retrieved.BypassScopes[0])
-	}
-	if retrieved.BypassScopes[1] != "moderator" {
-		t.Errorf("Expected second bypass scope 'moderator', got '%s'", retrieved.BypassScopes[1])
-	}
-}
-
-func TestUpdateOwnershipWithPointerType(t *testing.T) {
-	// Clear registry
-	registryLock.Lock()
-	registry = make(map[reflect.Type]*TypeMetadata)
-	registryLock.Unlock()
-
-	// Register with non-pointer type
-	meta := &TypeMetadata{
-		TypeID:   "test_id_6",
-		TypeName: "TestUser",
-	}
-
-	Register(meta, reflect.TypeOf(TestUser{}))
-
-	// Update ownership using pointer type
-	ptrType := reflect.TypeOf(&TestUser{})
-	err := UpdateOwnership(ptrType, []string{"ID"}, []string{"admin"})
-	if err != nil {
-		t.Fatalf("UpdateOwnership() with pointer type failed: %v", err)
-	}
-
-	// Verify it worked
-	retrieved, _ := Get[TestUser]()
-	if len(retrieved.OwnershipFields) != 1 {
-		t.Errorf("Expected 1 ownership field, got %d", len(retrieved.OwnershipFields))
-	}
-	if retrieved.OwnershipFields[0] != "ID" {
-		t.Errorf("Expected ownership field 'ID', got '%s'", retrieved.OwnershipFields[0])
-	}
-}
-
-func TestUpdateOwnershipUnregisteredType(t *testing.T) {
-	// Clear registry
-	registryLock.Lock()
-	registry = make(map[reflect.Type]*TypeMetadata)
-	registryLock.Unlock()
-
-	// Try to update ownership for unregistered type
-	tType := reflect.TypeOf(TestUser{})
-	err := UpdateOwnership(tType, []string{"ID"}, []string{"admin"})
-	if err == nil {
-		t.Fatal("Expected error for unregistered type, got nil")
-	}
-
-	expectedError := "type TestUser not registered"
-	if err.Error() != expectedError {
-		t.Errorf("Expected error '%s', got '%s'", expectedError, err.Error())
+	if meta.BypassScopes[1] != "moderator" {
+		t.Errorf("Expected second bypass scope 'moderator', got '%s'", meta.BypassScopes[1])
 	}
 }
 
@@ -292,137 +239,5 @@ func TestGenerateTypeID(t *testing.T) {
 	// Check they contain underscores (UUID format with hyphens replaced)
 	if !strings.Contains(id1, "_") {
 		t.Error("GenerateTypeID() returned ID without underscores")
-	}
-}
-
-func TestConcurrentAccess(t *testing.T) {
-	// Clear registry
-	registryLock.Lock()
-	registry = make(map[reflect.Type]*TypeMetadata)
-	registryLock.Unlock()
-
-	// Register a type
-	meta := &TypeMetadata{
-		TypeID:   "test_id_7",
-		TypeName: "TestUser",
-	}
-	Register(meta, reflect.TypeOf(TestUser{}))
-
-	// Concurrent reads and writes
-	var wg sync.WaitGroup
-	iterations := 100
-
-	// Concurrent reads
-	for i := 0; i < iterations; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, err := Get[TestUser]()
-			if err != nil {
-				t.Errorf("Concurrent Get[TestUser]() failed: %v", err)
-			}
-		}()
-	}
-
-	// Concurrent ownership updates
-	for i := 0; i < iterations; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			fields := []string{"field_" + string(rune(i%10+'0'))}
-			err := UpdateOwnership(reflect.TypeOf(TestUser{}), fields, nil)
-			if err != nil {
-				t.Errorf("Concurrent UpdateOwnership() failed: %v", err)
-			}
-		}(i)
-	}
-
-	wg.Wait()
-}
-
-func TestMetadataWithParentType(t *testing.T) {
-	// Clear registry
-	registryLock.Lock()
-	registry = make(map[reflect.Type]*TypeMetadata)
-	registryLock.Unlock()
-
-	// Register parent type
-	parentType := reflect.TypeOf(TestUser{})
-	parentMeta := &TypeMetadata{
-		TypeID:        "parent_id",
-		TypeName:      "TestUser",
-		TableName:     "test_users",
-		ParentType:    nil,
-		ForeignKeyCol: "",
-	}
-	Register(parentMeta, parentType)
-
-	// Register child type with parent relationship
-	childType := reflect.TypeOf(TestPost{})
-	childMeta := &TypeMetadata{
-		TypeID:        "child_id",
-		TypeName:      "TestPost",
-		TableName:     "test_posts",
-		ParentType:    parentType,
-		ForeignKeyCol: "user_id",
-	}
-	Register(childMeta, childType)
-
-	// Retrieve and verify child has parent relationship
-	retrieved, err := Get[TestPost]()
-	if err != nil {
-		t.Fatalf("Get[TestPost]() failed: %v", err)
-	}
-
-	if retrieved.ParentType == nil {
-		t.Fatal("Expected ParentType to be set, got nil")
-	}
-
-	if retrieved.ParentType != parentType {
-		t.Error("ParentType doesn't match registered parent type")
-	}
-
-	if retrieved.ForeignKeyCol != "user_id" {
-		t.Errorf("Expected ForeignKeyCol 'user_id', got '%s'", retrieved.ForeignKeyCol)
-	}
-}
-
-func TestUpdateOwnershipMultipleTimes(t *testing.T) {
-	// Clear registry
-	registryLock.Lock()
-	registry = make(map[reflect.Type]*TypeMetadata)
-	registryLock.Unlock()
-
-	// Register a type
-	meta := &TypeMetadata{
-		TypeID:   "test_id_8",
-		TypeName: "TestPost",
-	}
-	tType := reflect.TypeOf(TestPost{})
-	Register(meta, tType)
-
-	// First update
-	err := UpdateOwnership(tType, []string{"AuthorID"}, []string{"admin"})
-	if err != nil {
-		t.Fatalf("First UpdateOwnership() failed: %v", err)
-	}
-
-	retrieved, _ := Get[TestPost]()
-	if len(retrieved.OwnershipFields) != 1 || retrieved.OwnershipFields[0] != "AuthorID" {
-		t.Error("First update didn't set ownership correctly")
-	}
-
-	// Second update (should replace first)
-	err = UpdateOwnership(tType, []string{"AuthorID", "EditorID"}, []string{"admin", "moderator"})
-	if err != nil {
-		t.Fatalf("Second UpdateOwnership() failed: %v", err)
-	}
-
-	retrieved, _ = Get[TestPost]()
-	if len(retrieved.OwnershipFields) != 2 {
-		t.Errorf("Expected 2 ownership fields after second update, got %d", len(retrieved.OwnershipFields))
-	}
-	if len(retrieved.BypassScopes) != 2 {
-		t.Errorf("Expected 2 bypass scopes after second update, got %d", len(retrieved.BypassScopes))
 	}
 }

@@ -18,15 +18,15 @@ type NestedFunc func(b *Builder)
 
 // Builder provides context for registering nested routes and manages the chi router
 type Builder struct {
-	router     chi.Router   // Chi router being configured
-	parentType reflect.Type // Go type of the immediate parent (nil for root)
+	router     chi.Router             // Chi router being configured
+	parentMeta *metadata.TypeMetadata // Metadata of the immediate parent (nil for root)
 }
 
 // NewBuilder creates a new Builder for registering routes
 func NewBuilder(r chi.Router) *Builder {
 	return &Builder{
 		router:     r,
-		parentType: nil,
+		parentMeta: nil,
 	}
 }
 
@@ -79,17 +79,21 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 	r := b.router
 
 	// Check if this type has a parent relationship
-	foreignKeyCol, err := findParentRelationshipFromType(tType, b.parentType)
+	var parentType reflect.Type
+	if b.parentMeta != nil {
+		parentType = b.parentMeta.ModelType
+	}
+	foreignKeyCol, err := findParentRelationshipFromType(tType, parentType)
 	if err != nil {
 		panic(fmt.Sprintf("error analyzing type %s: %v", typeName, err))
 	}
 
 	// Validate parent relationship
-	if b.parentType != nil {
+	if b.parentMeta != nil {
 		// We're nested, so we must have a parent relationship
 		if foreignKeyCol == "" {
 			panic(fmt.Sprintf("type %s is registered as nested under %s but has no bun relation field for parent type",
-				typeName, b.parentType.Name()))
+				typeName, b.parentMeta.TypeName))
 		}
 	} else if foreignKeyCol != "" {
 		// We have a parent relationship but we're not nested
@@ -97,22 +101,22 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 			typeName, foreignKeyCol, typeName))
 	}
 
-	// Register metadata
+	// Create metadata with all configuration
 	meta := &metadata.TypeMetadata{
 		TypeID:        typeID,
 		TypeName:      typeName,
 		TableName:     tableName,
 		URLParamUUID:  urlParamUUID,
-		ParentType:    b.parentType,
+		ModelType:     tType,
+		ParentType:    parentType,
+		ParentMeta:    b.parentMeta,
 		ForeignKeyCol: foreignKeyCol,
 	}
-	metadata.Register(meta, tType)
 
 	// Merge auth configs (last wins for each method)
 	authMap := mergeAuthConfigs(configs)
 
-	// Extract and store ownership configuration in metadata
-	// Look through all auth configs to find ownership config (last one wins)
+	// Extract ownership configuration from auth configs (last one wins)
 	var ownershipFields []string
 	var bypassScopes []string
 	for _, config := range configs {
@@ -121,14 +125,21 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 			bypassScopes = config.Ownership.BypassScopes
 		}
 	}
+
+	// Only set ownership if configured
 	if len(ownershipFields) > 0 {
-		if err := metadata.UpdateOwnership(tType, ownershipFields, bypassScopes); err != nil {
-			panic(fmt.Sprintf("failed to update ownership for type %s: %v", typeName, err))
-		}
+		meta.OwnershipFields = ownershipFields
+		meta.BypassScopes = bypassScopes
 	}
+
+	// Create middleware to inject metadata into context
+	metadataMiddleware := createMetadataMiddleware(meta)
 
 	// Register routes with UUID parameter names
 	r.Route(path, func(r chi.Router) {
+		// Add metadata middleware to all routes in this group
+		r.Use(metadataMiddleware)
+
 		// List endpoint - GET /resources
 		listHandler := http.Handler(handler.GetAll[T]())
 		if authConfig := authMap[MethodList]; authConfig != nil {
@@ -184,16 +195,26 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 
 			// Register nested routes
 			if nested != nil {
-				// Create a new builder with this type as parent
+				// Create a new builder with this type's metadata as parent
 				childBuilder := &Builder{
 					router:     r,
-					parentType: tType, // Pass current type as parent type
+					parentMeta: meta, // Pass current metadata as parent
 				}
 
 				nested(childBuilder)
 			}
 		})
 	})
+}
+
+// createMetadataMiddleware creates middleware that injects TypeMetadata into context
+func createMetadataMiddleware(meta *metadata.TypeMetadata) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), metadata.MetadataKey, meta)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }
 
 // createParentIDMiddleware creates middleware that extracts a parent ID from URL
@@ -235,7 +256,7 @@ func findParentRelationshipFromType(childType reflect.Type, parentType reflect.T
 		return "", nil
 	}
 
-	// Look for a field with type *ParentType
+	// Look for a field with type matching parent type
 	for i := 0; i < childType.NumField(); i++ {
 		field := childType.Field(i)
 

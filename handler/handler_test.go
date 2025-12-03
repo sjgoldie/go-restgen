@@ -41,6 +41,27 @@ type TestPost struct {
 // Global test database for all handler tests
 var testDB *datastore.SQLite
 
+// Test metadata for injecting into context
+var userMeta = &metadata.TypeMetadata{
+	TypeID:        "test_user_id",
+	TypeName:      "TestUser",
+	TableName:     "users",
+	URLParamUUID:  "id",
+	ModelType:     reflect.TypeOf(TestUser{}),
+	ParentType:    nil,
+	ForeignKeyCol: "",
+}
+
+// withMeta creates middleware that injects metadata into context
+func withMeta(meta *metadata.TypeMetadata) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), metadata.MetadataKey, meta)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Setup: create database once for all tests
 	var err error
@@ -71,29 +92,6 @@ func TestMain(m *testing.M) {
 		testDB.Cleanup()
 		panic("Failed to create posts table: " + err.Error())
 	}
-
-	// Register metadata for TestUser
-	// Use "id" as URLParamUUID for compatibility with existing tests
-	userMeta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "TestUser",
-		TableName:     "users",
-		URLParamUUID:  "id",
-		ParentType:    nil,
-		ForeignKeyCol: "",
-	}
-	metadata.Register(userMeta, reflect.TypeOf(TestUser{}))
-
-	// Register metadata for TestPost
-	postMeta := &metadata.TypeMetadata{
-		TypeID:        metadata.GenerateTypeID(),
-		TypeName:      "TestPost",
-		TableName:     "posts",
-		URLParamUUID:  "post_id",
-		ParentType:    reflect.TypeOf(TestUser{}),
-		ForeignKeyCol: "user_id",
-	}
-	metadata.Register(postMeta, reflect.TypeOf(TestPost{}))
 
 	// Run tests
 	code := m.Run()
@@ -167,6 +165,7 @@ func TestHandler_GetAll(t *testing.T) {
 
 			// Make request
 			r := chi.NewRouter()
+			r.Use(withMeta(userMeta))
 			r.Get("/users", handler.GetAll[TestUser]())
 
 			req := httptest.NewRequest(http.MethodGet, "/users", nil)
@@ -234,6 +233,7 @@ func TestHandler_Get(t *testing.T) {
 
 			// Make request
 			r := chi.NewRouter()
+			r.Use(withMeta(userMeta))
 			r.Get("/users/{id}", handler.Get[TestUser]())
 
 			req := httptest.NewRequest(http.MethodGet, "/users/"+tt.requestID, nil)
@@ -312,6 +312,7 @@ func TestHandler_Create(t *testing.T) {
 
 			// Make request
 			r := chi.NewRouter()
+			r.Use(withMeta(userMeta))
 			r.Post("/users", handler.Create[TestUser]())
 
 			req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewReader(body))
@@ -398,6 +399,7 @@ func TestHandler_Update(t *testing.T) {
 
 			// Make request
 			r := chi.NewRouter()
+			r.Use(withMeta(userMeta))
 			r.Put("/users/{id}", handler.Update[TestUser]())
 
 			req := httptest.NewRequest(http.MethodPut, "/users/"+tt.requestID, bytes.NewReader(body))
@@ -469,6 +471,7 @@ func TestHandler_Delete(t *testing.T) {
 
 			// Make request
 			r := chi.NewRouter()
+			r.Use(withMeta(userMeta))
 			r.Delete("/users/{id}", handler.Delete[TestUser]())
 
 			req := httptest.NewRequest(http.MethodDelete, "/users/"+tt.requestID, nil)
@@ -580,6 +583,9 @@ func TestHandler_ContextCancellation(t *testing.T) {
 				req = httptest.NewRequest(tt.method, tt.path, nil)
 			}
 
+			// Add metadata to context
+			ctx = context.WithValue(ctx, metadata.MetadataKey, userMeta)
+
 			// Add route context for handlers that need ID parameter
 			if tt.method != http.MethodGet || tt.path != "/users" {
 				rctx := chi.NewRouteContext()
@@ -667,6 +673,9 @@ func TestHandler_ContextTimeout(t *testing.T) {
 				req = httptest.NewRequest(tt.method, tt.path, nil)
 			}
 
+			// Add metadata to context
+			ctx = context.WithValue(ctx, metadata.MetadataKey, userMeta)
+
 			// Add route context for handlers that need ID parameter
 			if tt.method != http.MethodGet || tt.path != "/users" {
 				rctx := chi.NewRouteContext()
@@ -701,7 +710,8 @@ func TestHandler_GetAllWithRelations(t *testing.T) {
 
 	// Create request with empty relations array - just testing that context extraction works
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
-	ctx := context.WithValue(req.Context(), "relations", []string{})
+	ctx := context.WithValue(req.Context(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, "relations", []string{})
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
@@ -738,6 +748,7 @@ func TestHandler_GetWithRelations(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "1")
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, userMeta)
 	ctx = context.WithValue(ctx, "relations", []string{})
 	req = req.WithContext(ctx)
 
@@ -768,7 +779,9 @@ func TestHandler_UpdateInvalidID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "invalid")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, userMeta)
+	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
 	handler.Update[TestUser]()(w, req)

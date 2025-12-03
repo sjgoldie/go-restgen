@@ -9,4 +9,5 @@ var (
 	ErrDuplicate        = errors.New("resource already exists")
 	ErrInvalidReference = errors.New("invalid reference to related resource")
 	ErrUnavailable      = errors.New("service temporarily unavailable")
+	ErrMetadataNotFound = errors.New("metadata not found in context")
 )

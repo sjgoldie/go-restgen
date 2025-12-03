@@ -157,6 +157,25 @@ func (m *ModeratorAction) BeforeAppendModel(ctx context.Context, query bun.Query
 	return nil
 }
 
+// Report model - demonstrates MethodList vs MethodGet differentiation
+// Use case: Can't browse all reports, but can access individual report via shareable link
+type Report struct {
+	bun.BaseModel `bun:"table:reports"`
+	ID            int       `bun:"id,pk,autoincrement" json:"id"`
+	Title         string    `bun:"title,notnull" json:"title"`
+	Content       string    `bun:"content" json:"content"`
+	CreatedAt     time.Time `bun:"created_at,notnull,skipupdate" json:"created_at,omitempty"`
+}
+
+func (r *Report) BeforeAppendModel(ctx context.Context, query bun.Query) error {
+	now := time.Now()
+	switch query.(type) {
+	case *bun.InsertQuery:
+		r.CreatedAt = now
+	}
+	return nil
+}
+
 // Simple auth middleware that parses fake bearer tokens
 // Token format: user:<userID>:<scope1>,<scope2>,...
 // Example: "user:alice:user" or "user:bob:user,admin"
@@ -233,6 +252,7 @@ func main() {
 		(*Post)(nil),
 		(*Comment)(nil),
 		(*ModeratorAction)(nil),
+		(*Report)(nil),
 	}
 
 	for _, model := range models {
@@ -291,6 +311,15 @@ func main() {
 		router.AllScoped("moderator"),
 	)
 
+	// Report - demonstrates MethodList vs MethodGet differentiation
+	// List requires auth (can't browse all reports)
+	// Get is public (shareable links work without auth)
+	// Create/Update/Delete require auth
+	router.RegisterRoutes[Report](b, "/reports",
+		router.IsAuthenticated(), // Default: all methods require auth
+		router.PublicGet(),       // Override: GET single item is public
+	)
+
 	// Print usage information
 	fmt.Println("Auth Example Server starting on :8080")
 	fmt.Println("Using SQLite in-memory database")
@@ -328,6 +357,12 @@ func main() {
 	fmt.Println("\n6. Moderator Actions - Specific scope requirement")
 	fmt.Println("   GET    /moderator-actions  (requires 'moderator' scope)")
 	fmt.Println("   POST   /moderator-actions  (requires 'moderator' scope)")
+	fmt.Println("\n7. Reports - MethodList vs MethodGet differentiation")
+	fmt.Println("   GET    /reports            (requires auth - can't browse)")
+	fmt.Println("   GET    /reports/{id}       (public - shareable links)")
+	fmt.Println("   POST   /reports            (requires auth)")
+	fmt.Println("   PUT    /reports/{id}       (requires auth)")
+	fmt.Println("   DELETE /reports/{id}       (requires auth)")
 	fmt.Println("\nSee README.md for complete curl examples")
 
 	log.Fatal(http.ListenAndServe(":8080", r))

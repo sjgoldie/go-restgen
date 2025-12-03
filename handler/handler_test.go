@@ -790,3 +790,65 @@ func TestHandler_UpdateInvalidID(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, w.Code)
 	}
 }
+
+// TestHandler_MissingMetadata tests handlers when metadata is not in context
+func TestHandler_MissingMetadata(t *testing.T) {
+	cleanTable(t)
+
+	tests := []struct {
+		name         string
+		method       string
+		path         string
+		body         []byte
+		handler      http.HandlerFunc
+		expectedCode int
+	}{
+		{
+			name:         "Get without metadata",
+			method:       http.MethodGet,
+			path:         "/users/1",
+			handler:      handler.Get[TestUser](),
+			expectedCode: http.StatusInternalServerError,
+		},
+		{
+			name:         "Update without metadata",
+			method:       http.MethodPut,
+			path:         "/users/1",
+			body:         []byte(`{"name":"Test","email":"test@example.com"}`),
+			handler:      handler.Update[TestUser](),
+			expectedCode: http.StatusInternalServerError,
+		},
+		{
+			name:         "Delete without metadata",
+			method:       http.MethodDelete,
+			path:         "/users/1",
+			handler:      handler.Delete[TestUser](),
+			expectedCode: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req *http.Request
+			if tt.body != nil {
+				req = httptest.NewRequest(tt.method, tt.path, bytes.NewReader(tt.body))
+				req.Header.Set("Content-Type", "application/json")
+			} else {
+				req = httptest.NewRequest(tt.method, tt.path, nil)
+			}
+
+			// Add route context with ID but NO metadata
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("id", "1")
+			ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+			req = req.WithContext(ctx)
+
+			w := httptest.NewRecorder()
+			tt.handler(w, req)
+
+			if w.Code != tt.expectedCode {
+				t.Errorf("Expected status %d, got %d: %s", tt.expectedCode, w.Code, w.Body.String())
+			}
+		})
+	}
+}

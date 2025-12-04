@@ -3,11 +3,13 @@ package datastore_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/sjgoldie/go-restgen/datastore"
+	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/uptrace/bun"
 )
@@ -874,5 +876,338 @@ func TestOwnership_NestedResourceValidation(t *testing.T) {
 
 	if created.AuthorID != "alice" {
 		t.Errorf("Expected post author to be alice, got %s", created.AuthorID)
+	}
+}
+
+// Validation tests
+
+// TestValidatedItem is a test model for validation testing
+type TestValidatedItem struct {
+	bun.BaseModel `bun:"table:test_validated_items"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	Name          string `bun:"name,notnull"`
+	Status        string `bun:"status,notnull"`
+	Priority      int    `bun:"priority,notnull"`
+}
+
+func setupValidationTestDB(t *testing.T) (*datastore.SQLite, func()) {
+	t.Helper()
+
+	db, err := datastore.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal("Failed to create test database:", err)
+	}
+
+	_, err = db.GetDB().NewCreateTable().Model((*TestValidatedItem)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create table:", err)
+	}
+
+	cleanup := func() {
+		db.GetDB().NewDropTable().Model((*TestValidatedItem)(nil)).IfExists().Exec(context.Background())
+		db.Cleanup()
+	}
+
+	return db, cleanup
+}
+
+func TestValidation_Create_Success(t *testing.T) {
+	db, cleanup := setupValidationTestDB(t)
+	defer cleanup()
+
+	// Validator that allows all creates
+	var validator metadata.ValidatorFunc[TestValidatedItem] = func(vc metadata.ValidationContext[TestValidatedItem]) error {
+		return nil
+	}
+
+	meta := &metadata.TypeMetadata{
+		TypeID:    "test_validated_item",
+		TypeName:  "TestValidatedItem",
+		TableName: "test_validated_items",
+		ModelType: reflect.TypeOf(TestValidatedItem{}),
+		Validator: validator,
+	}
+
+	wrapper := &datastore.Wrapper[TestValidatedItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	item := TestValidatedItem{Name: "Test", Status: "active", Priority: 1}
+	created, err := wrapper.Create(ctx, item)
+	if err != nil {
+		t.Fatal("Expected create to succeed:", err)
+	}
+	if created.ID == 0 {
+		t.Error("Expected ID to be set")
+	}
+}
+
+func TestValidation_Create_Failure(t *testing.T) {
+	db, cleanup := setupValidationTestDB(t)
+	defer cleanup()
+
+	// Validator that rejects creates with priority > 5
+	// Must be explicitly typed as ValidatorFunc[T] for type assertion to work
+	var validator metadata.ValidatorFunc[TestValidatedItem] = func(vc metadata.ValidationContext[TestValidatedItem]) error {
+		if vc.Operation == metadata.OpCreate && vc.New.Priority > 5 {
+			return errors.New("priority must be 5 or less")
+		}
+		return nil
+	}
+
+	meta := &metadata.TypeMetadata{
+		TypeID:    "test_validated_item",
+		TypeName:  "TestValidatedItem",
+		TableName: "test_validated_items",
+		ModelType: reflect.TypeOf(TestValidatedItem{}),
+		Validator: validator,
+	}
+
+	wrapper := &datastore.Wrapper[TestValidatedItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	item := TestValidatedItem{Name: "Test", Status: "active", Priority: 10}
+	_, err := wrapper.Create(ctx, item)
+	if err == nil {
+		t.Fatal("Expected create to fail validation")
+	}
+
+	var validationErr *apperrors.ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Errorf("Expected ValidationError, got %T", err)
+	}
+	if validationErr.Message != "priority must be 5 or less" {
+		t.Errorf("Expected message 'priority must be 5 or less', got '%s'", validationErr.Message)
+	}
+}
+
+func TestValidation_Update_Success(t *testing.T) {
+	db, cleanup := setupValidationTestDB(t)
+	defer cleanup()
+
+	// Validator that allows status transitions from active to inactive
+	var validator metadata.ValidatorFunc[TestValidatedItem] = func(vc metadata.ValidationContext[TestValidatedItem]) error {
+		if vc.Operation == metadata.OpUpdate {
+			if vc.Old.Status == "active" && vc.New.Status == "inactive" {
+				return nil // allowed
+			}
+			if vc.Old.Status == vc.New.Status {
+				return nil // no change is allowed
+			}
+		}
+		return nil
+	}
+
+	meta := &metadata.TypeMetadata{
+		TypeID:    "test_validated_item",
+		TypeName:  "TestValidatedItem",
+		TableName: "test_validated_items",
+		ModelType: reflect.TypeOf(TestValidatedItem{}),
+		Validator: validator,
+	}
+
+	wrapper := &datastore.Wrapper[TestValidatedItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	// Create item first
+	item := TestValidatedItem{Name: "Test", Status: "active", Priority: 1}
+	created, err := wrapper.Create(ctx, item)
+	if err != nil {
+		t.Fatal("Failed to create item:", err)
+	}
+
+	// Update to inactive (should succeed)
+	created.Status = "inactive"
+	updated, err := wrapper.Update(ctx, created.ID, *created)
+	if err != nil {
+		t.Fatal("Expected update to succeed:", err)
+	}
+	if updated.Status != "inactive" {
+		t.Errorf("Expected status 'inactive', got '%s'", updated.Status)
+	}
+}
+
+func TestValidation_Update_Failure(t *testing.T) {
+	db, cleanup := setupValidationTestDB(t)
+	defer cleanup()
+
+	// Validator that blocks updates to completed items
+	var validator metadata.ValidatorFunc[TestValidatedItem] = func(vc metadata.ValidationContext[TestValidatedItem]) error {
+		if vc.Operation == metadata.OpUpdate && vc.Old.Status == "completed" {
+			return errors.New("cannot modify completed items")
+		}
+		return nil
+	}
+
+	meta := &metadata.TypeMetadata{
+		TypeID:    "test_validated_item",
+		TypeName:  "TestValidatedItem",
+		TableName: "test_validated_items",
+		ModelType: reflect.TypeOf(TestValidatedItem{}),
+		Validator: validator,
+	}
+
+	wrapper := &datastore.Wrapper[TestValidatedItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	// Create item with status "completed"
+	item := TestValidatedItem{Name: "Test", Status: "completed", Priority: 1}
+	created, err := wrapper.Create(ctx, item)
+	if err != nil {
+		t.Fatal("Failed to create item:", err)
+	}
+
+	// Try to update (should fail)
+	created.Name = "Updated"
+	_, err = wrapper.Update(ctx, created.ID, *created)
+	if err == nil {
+		t.Fatal("Expected update to fail validation")
+	}
+
+	var validationErr *apperrors.ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Errorf("Expected ValidationError, got %T", err)
+	}
+}
+
+func TestValidation_Delete_Success(t *testing.T) {
+	db, cleanup := setupValidationTestDB(t)
+	defer cleanup()
+
+	// Validator that allows deletes of non-completed items
+	var validator metadata.ValidatorFunc[TestValidatedItem] = func(vc metadata.ValidationContext[TestValidatedItem]) error {
+		if vc.Operation == metadata.OpDelete && vc.Old.Status == "completed" {
+			return errors.New("cannot delete completed items")
+		}
+		return nil
+	}
+
+	meta := &metadata.TypeMetadata{
+		TypeID:    "test_validated_item",
+		TypeName:  "TestValidatedItem",
+		TableName: "test_validated_items",
+		ModelType: reflect.TypeOf(TestValidatedItem{}),
+		Validator: validator,
+	}
+
+	wrapper := &datastore.Wrapper[TestValidatedItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	// Create item with status "active"
+	item := TestValidatedItem{Name: "Test", Status: "active", Priority: 1}
+	created, err := wrapper.Create(ctx, item)
+	if err != nil {
+		t.Fatal("Failed to create item:", err)
+	}
+
+	// Delete (should succeed)
+	err = wrapper.Delete(ctx, created.ID)
+	if err != nil {
+		t.Fatal("Expected delete to succeed:", err)
+	}
+}
+
+func TestValidation_Delete_Failure(t *testing.T) {
+	db, cleanup := setupValidationTestDB(t)
+	defer cleanup()
+
+	// Validator that blocks deletes of completed items
+	var validator metadata.ValidatorFunc[TestValidatedItem] = func(vc metadata.ValidationContext[TestValidatedItem]) error {
+		if vc.Operation == metadata.OpDelete && vc.Old.Status == "completed" {
+			return errors.New("cannot delete completed items")
+		}
+		return nil
+	}
+
+	meta := &metadata.TypeMetadata{
+		TypeID:    "test_validated_item",
+		TypeName:  "TestValidatedItem",
+		TableName: "test_validated_items",
+		ModelType: reflect.TypeOf(TestValidatedItem{}),
+		Validator: validator,
+	}
+
+	wrapper := &datastore.Wrapper[TestValidatedItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	// Create item with status "completed"
+	item := TestValidatedItem{Name: "Test", Status: "completed", Priority: 1}
+	created, err := wrapper.Create(ctx, item)
+	if err != nil {
+		t.Fatal("Failed to create item:", err)
+	}
+
+	// Try to delete (should fail)
+	err = wrapper.Delete(ctx, created.ID)
+	if err == nil {
+		t.Fatal("Expected delete to fail validation")
+	}
+
+	var validationErr *apperrors.ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Errorf("Expected ValidationError, got %T", err)
+	}
+}
+
+func TestValidation_NoValidator(t *testing.T) {
+	db, cleanup := setupValidationTestDB(t)
+	defer cleanup()
+
+	// No validator configured
+	meta := &metadata.TypeMetadata{
+		TypeID:    "test_validated_item",
+		TypeName:  "TestValidatedItem",
+		TableName: "test_validated_items",
+		ModelType: reflect.TypeOf(TestValidatedItem{}),
+		Validator: nil, // No validator
+	}
+
+	wrapper := &datastore.Wrapper[TestValidatedItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	// All operations should succeed without validator
+	item := TestValidatedItem{Name: "Test", Status: "active", Priority: 100}
+	created, err := wrapper.Create(ctx, item)
+	if err != nil {
+		t.Fatal("Create should succeed without validator:", err)
+	}
+
+	created.Name = "Updated"
+	_, err = wrapper.Update(ctx, created.ID, *created)
+	if err != nil {
+		t.Fatal("Update should succeed without validator:", err)
+	}
+
+	err = wrapper.Delete(ctx, created.ID)
+	if err != nil {
+		t.Fatal("Delete should succeed without validator:", err)
+	}
+}
+
+func TestValidation_WrongValidatorType(t *testing.T) {
+	db, cleanup := setupValidationTestDB(t)
+	defer cleanup()
+
+	// Validator for wrong type (should be skipped)
+	wrongValidator := func(vc metadata.ValidationContext[TestUser]) error {
+		return errors.New("should not be called")
+	}
+
+	meta := &metadata.TypeMetadata{
+		TypeID:    "test_validated_item",
+		TypeName:  "TestValidatedItem",
+		TableName: "test_validated_items",
+		ModelType: reflect.TypeOf(TestValidatedItem{}),
+		Validator: wrongValidator, // Wrong type
+	}
+
+	wrapper := &datastore.Wrapper[TestValidatedItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	// Should succeed because validator type doesn't match
+	item := TestValidatedItem{Name: "Test", Status: "active", Priority: 1}
+	_, err := wrapper.Create(ctx, item)
+	if err != nil {
+		t.Fatal("Create should succeed when validator type doesn't match:", err)
 	}
 }

@@ -14,7 +14,12 @@ go run main.go
 
 ## Testing
 
-This example includes 7 comprehensive Bruno API tests that verify the full CRUD lifecycle. See [`../../bruno/README.md`](../../bruno/README.md) for instructions on running the tests.
+This example includes 17 comprehensive Bruno API tests that verify the full CRUD lifecycle plus filtering, sorting, and pagination. See [`../../bruno/README.md`](../../bruno/README.md) for instructions on running the tests.
+
+Run tests with the automated script:
+```bash
+./scripts/run-bruno-tests.sh simple
+```
 
 ## Usage
 
@@ -30,6 +35,24 @@ curl -X POST http://localhost:8080/users \
 ### Get all users
 ```bash
 curl http://localhost:8080/users
+```
+
+### Filtering, Sorting, and Pagination
+```bash
+# Filter by name
+curl 'http://localhost:8080/users?filter[Name]=John%20Doe'
+
+# Filter with operators
+curl 'http://localhost:8080/users?filter[Name][like]=John%'
+
+# Sort by name descending
+curl 'http://localhost:8080/users?sort=-Name'
+
+# Pagination with total count
+curl 'http://localhost:8080/users?limit=10&offset=0&count=true'
+
+# Combined
+curl 'http://localhost:8080/users?filter[Name][like]=J%&sort=-Name&limit=10&count=true'
 ```
 
 ### Get a specific user
@@ -60,9 +83,15 @@ This example shows:
 3. **Builder API** - Register routes with support for nesting:
    ```go
    b := router.NewBuilder(r)
-   router.RegisterRoutes[User](b, "/users")
+   router.RegisterRoutes[User](b, "/users",
+       router.AllPublic(),
+       router.WithFilters("Name", "Email"),
+       router.WithSorts("Name", "Email"),
+       router.WithPagination(20, 100),
+   )
    ```
-4. **Security by default** - Path IDs always take precedence over JSON body IDs
+4. **Query parameters** - Filtering, sorting, and pagination with `WithFilters`, `WithSorts`, `WithPagination`
+5. **Security by default** - Path IDs always take precedence over JSON body IDs
 
 ## Using PostgreSQL Instead
 

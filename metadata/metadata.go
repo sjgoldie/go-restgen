@@ -29,6 +29,47 @@ type TypeMetadata struct {
 	ForeignKeyCol   string        // Column in THIS table that references parent (e.g., "user_id")
 	OwnershipFields []string      // Model field names for ownership validation (OR logic)
 	BypassScopes    []string      // Scopes that bypass ownership validation (e.g., "admin")
+
+	// Query options for GetAll
+	FilterableFields []string // Field names allowed for filtering (empty = no filtering)
+	SortableFields   []string // Field names allowed for sorting (empty = no sorting)
+	DefaultSort      string   // Default sort field (prefix with - for descending)
+	DefaultLimit     int      // Default page size (0 = no limit)
+	MaxLimit         int      // Maximum allowed limit (0 = no max)
+}
+
+// QueryOptions holds parsed query parameters for filtering, sorting, and pagination
+type QueryOptions struct {
+	Filters    map[string]FilterValue // field -> value/operator
+	Sort       []SortField            // ordered list of sort fields
+	Limit      int                    // 0 means use default
+	Offset     int                    // 0 means start from beginning
+	CountTotal bool                   // whether to return total count
+}
+
+// FilterValue represents a filter with value and operator
+type FilterValue struct {
+	Value    string
+	Operator string // eq, gt, gte, lt, lte, like, neq (eq is default)
+}
+
+// SortField represents a single sort field with direction
+type SortField struct {
+	Field string
+	Desc  bool
+}
+
+// queryOptionsKeyType is the context key type for storing QueryOptions
+type queryOptionsKeyType string
+
+// QueryOptionsKey is the context key for storing QueryOptions
+const QueryOptionsKey queryOptionsKeyType = "restgen_query_options"
+
+// QueryOptionsFromContext retrieves QueryOptions from context
+// Returns nil if not present (not an error - query options are optional)
+func QueryOptionsFromContext(ctx context.Context) *QueryOptions {
+	opts, _ := ctx.Value(QueryOptionsKey).(*QueryOptions)
+	return opts
 }
 
 // metadataKeyType is the context key type for storing TypeMetadata

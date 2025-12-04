@@ -80,8 +80,15 @@ func main() {
 	})
 
 	// Register CRUD routes using Builder API (public for this simple example)
+	// Configure filtering, sorting, and pagination
 	b := router.NewBuilder(r)
-	router.RegisterRoutes[User](b, "/users", router.AllPublic())
+	router.RegisterRoutes[User](b, "/users",
+		router.AllPublic(),
+		router.WithFilters("Name", "Email"),            // Allow filtering by Name and Email
+		router.WithSorts("Name", "Email", "CreatedAt"), // Allow sorting by these fields
+		router.WithPagination(20, 100),                 // Default 20 items, max 100
+		router.WithDefaultSort("-CreatedAt"),           // Default sort by CreatedAt descending
+	)
 
 	// Start server
 	fmt.Println("Server starting on :8080")
@@ -92,5 +99,16 @@ func main() {
 	fmt.Println("  GET    http://localhost:8080/users/{id}")
 	fmt.Println("  PUT    http://localhost:8080/users/{id}")
 	fmt.Println("  DELETE http://localhost:8080/users/{id}")
+	fmt.Println("\nQuery parameters for GET /users:")
+	fmt.Println("  filter[Name]=value     Filter by name (eq, neq, gt, gte, lt, lte, like)")
+	fmt.Println("  filter[Email]=value    Filter by email")
+	fmt.Println("  sort=Name,-Email       Sort by fields (- prefix for descending)")
+	fmt.Println("  limit=10               Limit results (max 100)")
+	fmt.Println("  offset=20              Skip results for pagination")
+	fmt.Println("  count=true             Include X-Total-Count header")
+	fmt.Println("\nExamples:")
+	fmt.Println("  curl 'http://localhost:8080/users?filter[Name]=Alice'")
+	fmt.Println("  curl 'http://localhost:8080/users?sort=-CreatedAt&limit=10'")
+	fmt.Println("  curl 'http://localhost:8080/users?limit=10&offset=20&count=true'")
 	log.Fatal(http.ListenAndServe(":8080", r))
 }

@@ -31,27 +31,30 @@ func NewBuilder(r chi.Router) *Builder {
 }
 
 // RegisterRoutes registers CRUD routes for a resource type T
-// Accepts optional auth configs and nested function for child routes
-// Auth configs can be mixed with nested function in any order
+// Accepts optional auth configs, query configs, and nested function for child routes
+// Configs can be mixed with nested function in any order
 func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
-	// Separate auth configs from nested function
-	var configs []AuthConfig
+	// Separate auth configs, query configs, and nested function
+	var authConfigs []AuthConfig
+	var queryConfigs []QueryConfig
 	var nested NestedFunc
 
 	for _, opt := range options {
 		switch v := opt.(type) {
 		case AuthConfig:
-			configs = append(configs, v)
+			authConfigs = append(authConfigs, v)
+		case QueryConfig:
+			queryConfigs = append(queryConfigs, v)
 		case func(*Builder):
 			nested = v
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, configs...)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs)
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, configs ...AuthConfig) {
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -114,12 +117,12 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 	}
 
 	// Merge auth configs (last wins for each method)
-	authMap := mergeAuthConfigs(configs)
+	authMap := mergeAuthConfigs(authConfigs)
 
 	// Extract ownership configuration from auth configs (last one wins)
 	var ownershipFields []string
 	var bypassScopes []string
-	for _, config := range configs {
+	for _, config := range authConfigs {
 		if config.Ownership != nil {
 			ownershipFields = config.Ownership.Fields
 			bypassScopes = config.Ownership.BypassScopes
@@ -130,6 +133,25 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 	if len(ownershipFields) > 0 {
 		meta.OwnershipFields = ownershipFields
 		meta.BypassScopes = bypassScopes
+	}
+
+	// Merge query configs (last wins for each setting)
+	for _, qc := range queryConfigs {
+		if len(qc.FilterableFields) > 0 {
+			meta.FilterableFields = qc.FilterableFields
+		}
+		if len(qc.SortableFields) > 0 {
+			meta.SortableFields = qc.SortableFields
+		}
+		if qc.DefaultSort != "" {
+			meta.DefaultSort = qc.DefaultSort
+		}
+		if qc.DefaultLimit > 0 {
+			meta.DefaultLimit = qc.DefaultLimit
+		}
+		if qc.MaxLimit > 0 {
+			meta.MaxLimit = qc.MaxLimit
+		}
 	}
 
 	// Create middleware to inject metadata into context

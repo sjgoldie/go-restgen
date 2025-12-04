@@ -1,0 +1,33 @@
+meta {
+  name: Blogs - Admin Filter+Sort Combined (bypass + filter + sort)
+  type: http
+  seq: 25
+}
+
+get {
+  url: {{baseUrl}}/blogs?filter[Status]=published&sort=Name
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Admin sees published blogs sorted by name (combined filter + sort)", function() {
+    expect(res.body).to.be.an('array');
+    // All results should be published
+    expect(res.body.every(blog => blog.status === "published")).to.be.true;
+    // Should have 2 published blogs (Alice's + Bob's)
+    expect(res.body.length).to.equal(2);
+    // Verify ascending sort order by name
+    expect(res.body[0].name).to.equal("Alice's Blog");
+    expect(res.body[1].name).to.equal("Bob's Published Blog");
+  });
+}

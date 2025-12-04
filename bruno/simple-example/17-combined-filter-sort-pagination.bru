@@ -1,0 +1,18 @@
+meta {
+  name: Combined Filter Sort and Pagination
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/users?filter[Name][like]=Bob%25&sort=-Name&limit=10&count=true
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 1
+  res.body[0].name: eq Bob Smith
+}

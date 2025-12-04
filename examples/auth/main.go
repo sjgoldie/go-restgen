@@ -61,13 +61,14 @@ func (a *Author) BeforeAppendModel(ctx context.Context, query bun.Query) error {
 	return nil
 }
 
-// Blog model - demonstrates ownership with admin bypass
+// Blog model - demonstrates ownership with admin bypass, plus filtering and sorting
 type Blog struct {
 	bun.BaseModel `bun:"table:blogs"`
 	ID            int       `bun:"id,pk,autoincrement" json:"id"`
 	AuthorID      string    `bun:"author_id,notnull" json:"author_id"` // External user ID
 	Name          string    `bun:"name,notnull" json:"name"`
 	Description   string    `bun:"description" json:"description"`
+	Status        string    `bun:"status,notnull,default:'draft'" json:"status"` // draft, published, archived
 	CreatedAt     time.Time `bun:"created_at,notnull,skipupdate" json:"created_at,omitempty"`
 	UpdatedAt     time.Time `bun:"updated_at,notnull" json:"updated_at,omitempty"`
 	Posts         []*Post   `bun:"rel:has-many,join:id=blog_id" json:"-"`
@@ -289,8 +290,12 @@ func main() {
 	)
 
 	// Blog → Post → Comment (nested with different auth at each level)
+	// Blog demonstrates ownership + filtering + sorting combined
 	router.RegisterRoutes[Blog](b, "/blogs",
 		router.AllWithOwnershipUnless([]string{"AuthorID"}, "admin"),
+		router.WithFilters("Status", "Name"),
+		router.WithSorts("Name", "Status", "CreatedAt"),
+		router.WithDefaultSort("-CreatedAt"),
 		func(b *router.Builder) {
 			// Post - multiple ownership fields (AuthorID OR EditorID), admin bypass
 			router.RegisterRoutes[Post](b, "/posts",
@@ -341,8 +346,10 @@ func main() {
 	fmt.Println("   POST   /authors            (requires 'admin' scope)")
 	fmt.Println("   PUT    /authors/{id}       (requires 'admin' scope)")
 	fmt.Println("   DELETE /authors/{id}       (requires 'admin' scope)")
-	fmt.Println("\n3. Blogs - Ownership-based (author owns blog), admin bypass")
-	fmt.Println("   GET    /blogs              (shows only user's blogs)")
+	fmt.Println("\n3. Blogs - Ownership-based (author owns blog), admin bypass, with filtering/sorting")
+	fmt.Println("   GET    /blogs              (shows only user's blogs, admin sees all)")
+	fmt.Println("   GET    /blogs?filter[Status]=published  (filter by status)")
+	fmt.Println("   GET    /blogs?sort=Name    (sort by name)")
 	fmt.Println("   POST   /blogs              (creates blog owned by user)")
 	fmt.Println("   PUT    /blogs/{id}         (owner or admin only)")
 	fmt.Println("   DELETE /blogs/{id}         (owner or admin only)")

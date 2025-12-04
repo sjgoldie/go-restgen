@@ -1,7 +1,7 @@
 meta {
-  name: Blogs - Create Blog (Alice)
+  name: Blogs - Create Draft Blog (Alice)
   type: http
-  seq: 4
+  seq: 17
 }
 
 post {
@@ -16,9 +16,9 @@ auth:bearer {
 
 body:json {
   {
-    "name": "Alice's Blog",
-    "description": "Blog owned by Alice",
-    "status": "published"
+    "name": "Alice's Draft Blog",
+    "description": "Draft blog owned by Alice",
+    "status": "draft"
   }
 }
 
@@ -26,9 +26,9 @@ assert {
   res.status: eq 201
   res.body.id: isDefined
   res.body.author_id: eq alice
-  res.body.name: eq Alice's Blog
+  res.body.status: eq draft
 }
 
 script:post-response {
-  bru.setVar("aliceBlogId", res.body.id);
+  bru.setVar("aliceDraftBlogId", res.body.id);
 }

@@ -203,6 +203,72 @@ func TestOwnershipFields(t *testing.T) {
 	}
 }
 
+func TestQueryOptionsFromContext(t *testing.T) {
+	// Create QueryOptions
+	opts := &QueryOptions{
+		Filters: map[string]FilterValue{
+			"Name": {Value: "test", Operator: "eq"},
+		},
+		Sort: []SortField{
+			{Field: "Name", Desc: false},
+		},
+		Limit:      10,
+		Offset:     5,
+		CountTotal: true,
+	}
+
+	// Add to context
+	ctx := context.WithValue(context.Background(), QueryOptionsKey, opts)
+
+	// Retrieve from context
+	retrieved := QueryOptionsFromContext(ctx)
+	if retrieved == nil {
+		t.Fatal("QueryOptionsFromContext() returned nil")
+	}
+
+	if retrieved.Limit != 10 {
+		t.Errorf("Expected Limit 10, got %d", retrieved.Limit)
+	}
+	if retrieved.Offset != 5 {
+		t.Errorf("Expected Offset 5, got %d", retrieved.Offset)
+	}
+	if !retrieved.CountTotal {
+		t.Error("Expected CountTotal to be true")
+	}
+	if len(retrieved.Filters) != 1 {
+		t.Errorf("Expected 1 filter, got %d", len(retrieved.Filters))
+	}
+	if retrieved.Filters["Name"].Value != "test" {
+		t.Errorf("Expected filter value 'test', got '%s'", retrieved.Filters["Name"].Value)
+	}
+	if len(retrieved.Sort) != 1 {
+		t.Errorf("Expected 1 sort field, got %d", len(retrieved.Sort))
+	}
+	if retrieved.Sort[0].Field != "Name" {
+		t.Errorf("Expected sort field 'Name', got '%s'", retrieved.Sort[0].Field)
+	}
+}
+
+func TestQueryOptionsFromContextEmpty(t *testing.T) {
+	// Empty context - should return nil (not an error)
+	ctx := context.Background()
+	retrieved := QueryOptionsFromContext(ctx)
+	if retrieved != nil {
+		t.Error("QueryOptionsFromContext() should return nil for empty context")
+	}
+}
+
+func TestQueryOptionsFromContextWrongType(t *testing.T) {
+	// Add wrong type to context
+	ctx := context.WithValue(context.Background(), QueryOptionsKey, "wrong type")
+
+	// Should return nil (type assertion fails)
+	retrieved := QueryOptionsFromContext(ctx)
+	if retrieved != nil {
+		t.Error("QueryOptionsFromContext() should return nil for wrong type")
+	}
+}
+
 func TestGenerateTypeID(t *testing.T) {
 	// Generate a few IDs
 	id1 := GenerateTypeID()

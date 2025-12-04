@@ -147,7 +147,7 @@ func TestService_GetAll(t *testing.T) {
 				t.Fatal("Failed to create service:", err)
 			}
 
-			items, err := svc.GetAll(ctxWithMeta(testModelMeta), []string{})
+			items, _, err := svc.GetAll(ctxWithMeta(testModelMeta), []string{})
 			if err != nil {
 				t.Fatal("GetAll failed:", err)
 			}

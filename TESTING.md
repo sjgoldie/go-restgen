@@ -12,11 +12,11 @@ go-restgen uses a combination of unit tests, integration tests, and end-to-end A
 - **datastore**: 71.6% - Database operations (uses SQLite in-memory)
 - **handler**: 62.7% - HTTP handler tests including context error handling
 
-**Integration Test Coverage: 35 end-to-end API tests** (Bruno)
+**Integration Test Coverage: 58 end-to-end API tests** (Bruno)
 
-- Simple example: 7 tests
+- Simple example: 17 tests (includes filtering, sorting, pagination)
 - Nested routes example: 16 tests
-- Auth example: 12 tests
+- Auth example: 25 tests (includes ownership + filtering + sorting combined)
 
 All unit tests use SQLite in-memory databases - no external database required!
 
@@ -90,11 +90,25 @@ Tests verify:
 
 ### End-to-End API Tests (Bruno)
 
-Located in `bruno/` directory with 35 tests across 3 example applications:
+Located in `bruno/` directory with 58 tests across 3 example applications.
 
-**Simple Example (7 tests)**
+**Running All Tests:**
+```bash
+# Automated script (recommended)
+./scripts/run-bruno-tests.sh all
+
+# Run specific example
+./scripts/run-bruno-tests.sh simple
+./scripts/run-bruno-tests.sh nested
+./scripts/run-bruno-tests.sh auth
+```
+
+**Simple Example (17 tests)**
 - Full CRUD lifecycle
 - Basic HTTP operations
+- Filtering (equality, comparison operators, LIKE patterns)
+- Sorting (ascending, descending, multiple fields)
+- Pagination (limit, offset, count)
 
 **Nested Routes Example (16 tests)**
 - 3-level nested resources (Users → Posts → Comments)
@@ -102,13 +116,16 @@ Located in `bruno/` directory with 35 tests across 3 example applications:
 - Parent chain validation
 - CRUD operations on nested resources
 
-**Auth Example (12 tests)**
+**Auth Example (25 tests)**
 - Public vs authenticated endpoints
 - Scope-based authorization
 - Ownership filtering (users see only their resources)
 - Admin bypass (admins see all resources)
 - Multi-ownership (author OR editor)
 - Mixed auth patterns
+- Ownership + filtering combined (filter by status within owned resources)
+- Ownership + sorting combined
+- MethodList vs MethodGet differentiation
 
 See `bruno/README.md` for running instructions.
 

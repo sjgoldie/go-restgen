@@ -15,9 +15,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	apperrors "github.com/sjgoldie/go-restgen/errors"
@@ -65,6 +67,11 @@ func handleMutationError(w http.ResponseWriter, err error, operation string) {
 }
 
 // GetAll handles GET requests to retrieve all items of type T
+// Supports query parameters for filtering, sorting, and pagination:
+//   - filter[field]=value or filter[field][op]=value (ops: eq, neq, gt, gte, lt, lte, like)
+//   - sort=field1,-field2 (prefix with - for descending)
+//   - limit=N, offset=N for pagination
+//   - count=true to include X-Total-Count header
 func GetAll[T any]() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svc, err := service.New[T]()
@@ -81,7 +88,13 @@ func GetAll[T any]() http.HandlerFunc {
 			relations = []string{}
 		}
 
-		items, err := svc.GetAll(r.Context(), relations)
+		// Parse query parameters into QueryOptions
+		opts := parseQueryOptions(r.URL.Query())
+
+		// Add QueryOptions to context
+		ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+		items, totalCount, err := svc.GetAll(ctx, relations)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return // Client disconnected, no response needed
@@ -100,12 +113,91 @@ func GetAll[T any]() http.HandlerFunc {
 			return
 		}
 
+		// Set pagination headers
+		if opts.CountTotal && totalCount > 0 {
+			w.Header().Set("X-Total-Count", strconv.Itoa(totalCount))
+		}
+		if opts.Limit > 0 {
+			w.Header().Set("X-Limit", strconv.Itoa(opts.Limit))
+		}
+		if opts.Offset > 0 {
+			w.Header().Set("X-Offset", strconv.Itoa(opts.Offset))
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(items); err != nil {
 			slog.Warn("failed to encode response", "error", err)
 		}
 	}
+}
+
+// parseQueryOptions extracts filtering, sorting, and pagination options from query parameters
+func parseQueryOptions(query url.Values) *metadata.QueryOptions {
+	opts := &metadata.QueryOptions{
+		Filters: make(map[string]metadata.FilterValue),
+	}
+
+	// Parse filters: filter[field]=value or filter[field][op]=value
+	for key, values := range query {
+		if len(values) == 0 {
+			continue
+		}
+		value := values[0]
+
+		// Check for filter[field] or filter[field][op] pattern
+		if strings.HasPrefix(key, "filter[") && strings.HasSuffix(key, "]") {
+			// Remove "filter[" prefix and "]" suffix
+			inner := key[7 : len(key)-1]
+
+			// Check for nested operator: field][op
+			if idx := strings.Index(inner, "]["); idx != -1 {
+				field := inner[:idx]
+				op := inner[idx+2:]
+				opts.Filters[field] = metadata.FilterValue{Value: value, Operator: op}
+			} else {
+				// Simple filter: filter[field]=value (default eq operator)
+				opts.Filters[inner] = metadata.FilterValue{Value: value, Operator: "eq"}
+			}
+		}
+	}
+
+	// Parse sort: sort=field1,-field2
+	if sortStr := query.Get("sort"); sortStr != "" {
+		fields := strings.Split(sortStr, ",")
+		for _, field := range fields {
+			field = strings.TrimSpace(field)
+			if field == "" {
+				continue
+			}
+			desc := false
+			if strings.HasPrefix(field, "-") {
+				desc = true
+				field = field[1:]
+			}
+			opts.Sort = append(opts.Sort, metadata.SortField{Field: field, Desc: desc})
+		}
+	}
+
+	// Parse pagination
+	if limitStr := query.Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
+			opts.Limit = limit
+		}
+	}
+
+	if offsetStr := query.Get("offset"); offsetStr != "" {
+		if offset, err := strconv.Atoi(offsetStr); err == nil && offset >= 0 {
+			opts.Offset = offset
+		}
+	}
+
+	// Parse count flag
+	if countStr := query.Get("count"); countStr == "true" || countStr == "1" {
+		opts.CountTotal = true
+	}
+
+	return opts
 }
 
 // Get handles GET requests to retrieve a single item of type T by ID

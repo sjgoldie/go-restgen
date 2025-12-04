@@ -217,3 +217,47 @@ jobs:
       - name: Run Tests
         working-directory: bruno
         run: bru run validator-example --env local --format json
+
+  audit-example-test:
+    name: Audit Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Build Server
+        run: go build -o /tmp/audit-server ./examples/audit
+
+      - name: Start Server
+        run: /tmp/audit-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run audit-example --env local --format json

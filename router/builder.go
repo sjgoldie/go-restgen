@@ -31,13 +31,14 @@ func NewBuilder(r chi.Router) *Builder {
 }
 
 // RegisterRoutes registers CRUD routes for a resource type T
-// Accepts optional auth configs, query configs, validator, and nested function for child routes
+// Accepts optional auth configs, query configs, validator, auditor, and nested function for child routes
 // Configs can be mixed with nested function in any order
 func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
-	// Separate auth configs, query configs, validator, and nested function
+	// Separate auth configs, query configs, validator, auditor, and nested function
 	var authConfigs []AuthConfig
 	var queryConfigs []QueryConfig
 	var validator metadata.ValidatorFunc[T]
+	var auditor metadata.AuditFunc[T]
 	var nested NestedFunc
 
 	for _, opt := range options {
@@ -48,16 +49,18 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			queryConfigs = append(queryConfigs, v)
 		case ValidatorConfig[T]:
 			validator = v.Fn
+		case AuditConfig[T]:
+			auditor = v.Fn
 		case func(*Builder):
 			nested = v
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor)
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T]) {
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T]) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -160,6 +163,11 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 	// Set validator if provided
 	if validator != nil {
 		meta.Validator = validator
+	}
+
+	// Set auditor if provided
+	if auditor != nil {
+		meta.Auditor = auditor
 	}
 
 	// Create middleware to inject metadata into context

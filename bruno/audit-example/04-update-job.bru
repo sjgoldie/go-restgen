@@ -1,0 +1,27 @@
+meta {
+  name: Update Job
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/jobs/{{jobId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "id": {{jobId}},
+    "title": "Data Processing",
+    "status": "running",
+    "priority": 5
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{jobId}}
+  res.body.status: eq running
+  res.body.priority: eq 5
+}

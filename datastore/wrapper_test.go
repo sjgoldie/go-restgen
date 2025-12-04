@@ -1211,3 +1211,347 @@ func TestValidation_WrongValidatorType(t *testing.T) {
 		t.Fatal("Create should succeed when validator type doesn't match:", err)
 	}
 }
+
+// Audit tests
+
+// TestAuditItem is a test model for audit testing
+type TestAuditItem struct {
+	bun.BaseModel `bun:"table:test_audit_items"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	Name          string `bun:"name,notnull"`
+	Status        string `bun:"status,notnull"`
+}
+
+// TestAuditLog is the audit log model
+type TestAuditLog struct {
+	bun.BaseModel `bun:"table:test_audit_logs"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	ItemID        int    `bun:"item_id"`
+	Operation     string `bun:"operation,notnull"`
+	OldStatus     string `bun:"old_status"`
+	NewStatus     string `bun:"new_status"`
+}
+
+func setupAuditTestDB(t *testing.T) (*datastore.SQLite, func()) {
+	t.Helper()
+
+	db, err := datastore.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal("Failed to create test database:", err)
+	}
+
+	_, err = db.GetDB().NewCreateTable().Model((*TestAuditItem)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create items table:", err)
+	}
+
+	_, err = db.GetDB().NewCreateTable().Model((*TestAuditLog)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create audit logs table:", err)
+	}
+
+	cleanup := func() {
+		db.GetDB().NewDropTable().Model((*TestAuditLog)(nil)).IfExists().Exec(context.Background())
+		db.GetDB().NewDropTable().Model((*TestAuditItem)(nil)).IfExists().Exec(context.Background())
+		db.Cleanup()
+	}
+
+	return db, cleanup
+}
+
+func TestAudit_Create(t *testing.T) {
+	db, cleanup := setupAuditTestDB(t)
+	defer cleanup()
+
+	// Auditor that logs creates
+	var auditor metadata.AuditFunc[TestAuditItem] = func(ac metadata.AuditContext[TestAuditItem]) any {
+		return &TestAuditLog{
+			ItemID:    ac.New.ID,
+			Operation: string(ac.Operation),
+			NewStatus: ac.New.Status,
+		}
+	}
+
+	meta := &metadata.TypeMetadata{
+		TypeID:    "test_audit_item",
+		TypeName:  "TestAuditItem",
+		TableName: "test_audit_items",
+		ModelType: reflect.TypeOf(TestAuditItem{}),
+		Auditor:   auditor,
+	}
+
+	wrapper := &datastore.Wrapper[TestAuditItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	item := TestAuditItem{Name: "Test", Status: "active"}
+	created, err := wrapper.Create(ctx, item)
+	if err != nil {
+		t.Fatal("Expected create to succeed:", err)
+	}
+
+	// Verify audit log was created
+	var logs []TestAuditLog
+	err = db.GetDB().NewSelect().Model(&logs).Scan(context.Background())
+	if err != nil {
+		t.Fatal("Failed to query audit logs:", err)
+	}
+
+	if len(logs) != 1 {
+		t.Fatalf("Expected 1 audit log, got %d", len(logs))
+	}
+
+	if logs[0].ItemID != created.ID {
+		t.Errorf("Expected ItemID %d, got %d", created.ID, logs[0].ItemID)
+	}
+	if logs[0].Operation != "create" {
+		t.Errorf("Expected operation 'create', got '%s'", logs[0].Operation)
+	}
+	if logs[0].NewStatus != "active" {
+		t.Errorf("Expected NewStatus 'active', got '%s'", logs[0].NewStatus)
+	}
+}
+
+func TestAudit_Update(t *testing.T) {
+	db, cleanup := setupAuditTestDB(t)
+	defer cleanup()
+
+	// Auditor that logs updates with old and new status
+	var auditor metadata.AuditFunc[TestAuditItem] = func(ac metadata.AuditContext[TestAuditItem]) any {
+		oldStatus := ""
+		if ac.Old != nil {
+			oldStatus = ac.Old.Status
+		}
+		newStatus := ""
+		if ac.New != nil {
+			newStatus = ac.New.Status
+		}
+		return &TestAuditLog{
+			ItemID:    ac.New.ID,
+			Operation: string(ac.Operation),
+			OldStatus: oldStatus,
+			NewStatus: newStatus,
+		}
+	}
+
+	meta := &metadata.TypeMetadata{
+		TypeID:       "test_audit_item",
+		TypeName:     "TestAuditItem",
+		TableName:    "test_audit_items",
+		URLParamUUID: "id",
+		ModelType:    reflect.TypeOf(TestAuditItem{}),
+		Auditor:      auditor,
+	}
+
+	wrapper := &datastore.Wrapper[TestAuditItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	// Create an item first (without audit to simplify test)
+	item := TestAuditItem{Name: "Test", Status: "pending"}
+	_, err := db.GetDB().NewInsert().Model(&item).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to insert test item:", err)
+	}
+
+	// Update the item
+	item.Status = "active"
+	_, err = wrapper.Update(ctx, item.ID, item)
+	if err != nil {
+		t.Fatal("Expected update to succeed:", err)
+	}
+
+	// Verify audit log was created
+	var logs []TestAuditLog
+	err = db.GetDB().NewSelect().Model(&logs).Scan(context.Background())
+	if err != nil {
+		t.Fatal("Failed to query audit logs:", err)
+	}
+
+	if len(logs) != 1 {
+		t.Fatalf("Expected 1 audit log, got %d", len(logs))
+	}
+
+	if logs[0].Operation != "update" {
+		t.Errorf("Expected operation 'update', got '%s'", logs[0].Operation)
+	}
+	if logs[0].OldStatus != "pending" {
+		t.Errorf("Expected OldStatus 'pending', got '%s'", logs[0].OldStatus)
+	}
+	if logs[0].NewStatus != "active" {
+		t.Errorf("Expected NewStatus 'active', got '%s'", logs[0].NewStatus)
+	}
+}
+
+func TestAudit_Delete(t *testing.T) {
+	db, cleanup := setupAuditTestDB(t)
+	defer cleanup()
+
+	// Auditor that logs deletes with old status
+	var auditor metadata.AuditFunc[TestAuditItem] = func(ac metadata.AuditContext[TestAuditItem]) any {
+		return &TestAuditLog{
+			ItemID:    ac.Old.ID,
+			Operation: string(ac.Operation),
+			OldStatus: ac.Old.Status,
+		}
+	}
+
+	meta := &metadata.TypeMetadata{
+		TypeID:       "test_audit_item",
+		TypeName:     "TestAuditItem",
+		TableName:    "test_audit_items",
+		URLParamUUID: "id",
+		ModelType:    reflect.TypeOf(TestAuditItem{}),
+		Auditor:      auditor,
+	}
+
+	wrapper := &datastore.Wrapper[TestAuditItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	// Create an item first (without audit to simplify test)
+	item := TestAuditItem{Name: "Test", Status: "active"}
+	_, err := db.GetDB().NewInsert().Model(&item).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to insert test item:", err)
+	}
+
+	// Delete the item
+	err = wrapper.Delete(ctx, item.ID)
+	if err != nil {
+		t.Fatal("Expected delete to succeed:", err)
+	}
+
+	// Verify audit log was created
+	var logs []TestAuditLog
+	err = db.GetDB().NewSelect().Model(&logs).Scan(context.Background())
+	if err != nil {
+		t.Fatal("Failed to query audit logs:", err)
+	}
+
+	if len(logs) != 1 {
+		t.Fatalf("Expected 1 audit log, got %d", len(logs))
+	}
+
+	if logs[0].Operation != "delete" {
+		t.Errorf("Expected operation 'delete', got '%s'", logs[0].Operation)
+	}
+	if logs[0].OldStatus != "active" {
+		t.Errorf("Expected OldStatus 'active', got '%s'", logs[0].OldStatus)
+	}
+}
+
+func TestAudit_SkipWhenNil(t *testing.T) {
+	db, cleanup := setupAuditTestDB(t)
+	defer cleanup()
+
+	// Auditor that returns nil for creates (skip audit)
+	var auditor metadata.AuditFunc[TestAuditItem] = func(ac metadata.AuditContext[TestAuditItem]) any {
+		if ac.Operation == metadata.OpCreate {
+			return nil // Skip audit for creates
+		}
+		return &TestAuditLog{
+			ItemID:    ac.Old.ID,
+			Operation: string(ac.Operation),
+		}
+	}
+
+	meta := &metadata.TypeMetadata{
+		TypeID:    "test_audit_item",
+		TypeName:  "TestAuditItem",
+		TableName: "test_audit_items",
+		ModelType: reflect.TypeOf(TestAuditItem{}),
+		Auditor:   auditor,
+	}
+
+	wrapper := &datastore.Wrapper[TestAuditItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	item := TestAuditItem{Name: "Test", Status: "active"}
+	_, err := wrapper.Create(ctx, item)
+	if err != nil {
+		t.Fatal("Expected create to succeed:", err)
+	}
+
+	// Verify no audit log was created
+	var logs []TestAuditLog
+	err = db.GetDB().NewSelect().Model(&logs).Scan(context.Background())
+	if err != nil {
+		t.Fatal("Failed to query audit logs:", err)
+	}
+
+	if len(logs) != 0 {
+		t.Fatalf("Expected 0 audit logs, got %d", len(logs))
+	}
+}
+
+func TestAudit_NoAuditor(t *testing.T) {
+	db, cleanup := setupAuditTestDB(t)
+	defer cleanup()
+
+	// No auditor configured
+	meta := &metadata.TypeMetadata{
+		TypeID:    "test_audit_item",
+		TypeName:  "TestAuditItem",
+		TableName: "test_audit_items",
+		ModelType: reflect.TypeOf(TestAuditItem{}),
+	}
+
+	wrapper := &datastore.Wrapper[TestAuditItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	item := TestAuditItem{Name: "Test", Status: "active"}
+	_, err := wrapper.Create(ctx, item)
+	if err != nil {
+		t.Fatal("Create should succeed without auditor:", err)
+	}
+
+	// Verify no audit log was created
+	var logs []TestAuditLog
+	err = db.GetDB().NewSelect().Model(&logs).Scan(context.Background())
+	if err != nil {
+		t.Fatal("Failed to query audit logs:", err)
+	}
+
+	if len(logs) != 0 {
+		t.Fatalf("Expected 0 audit logs, got %d", len(logs))
+	}
+}
+
+func TestAudit_WrongAuditorType(t *testing.T) {
+	db, cleanup := setupAuditTestDB(t)
+	defer cleanup()
+
+	// Auditor for wrong type (should be skipped)
+	wrongAuditor := func(ac metadata.AuditContext[TestUser]) any {
+		return &TestAuditLog{Operation: "should not be called"}
+	}
+
+	meta := &metadata.TypeMetadata{
+		TypeID:    "test_audit_item",
+		TypeName:  "TestAuditItem",
+		TableName: "test_audit_items",
+		ModelType: reflect.TypeOf(TestAuditItem{}),
+		Auditor:   wrongAuditor, // Wrong type
+	}
+
+	wrapper := &datastore.Wrapper[TestAuditItem]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, meta)
+
+	// Should succeed because auditor type doesn't match (no audit)
+	item := TestAuditItem{Name: "Test", Status: "active"}
+	_, err := wrapper.Create(ctx, item)
+	if err != nil {
+		t.Fatal("Create should succeed when auditor type doesn't match:", err)
+	}
+
+	// Verify no audit log was created
+	var logs []TestAuditLog
+	err = db.GetDB().NewSelect().Model(&logs).Scan(context.Background())
+	if err != nil {
+		t.Fatal("Failed to query audit logs:", err)
+	}
+
+	if len(logs) != 0 {
+		t.Fatalf("Expected 0 audit logs, got %d", len(logs))
+	}
+}

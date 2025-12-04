@@ -13,7 +13,8 @@ type Common[T any] struct {
 }
 
 // GetAll retrieves all items of type T
-func (s *Common[T]) GetAll(ctx context.Context, relations []string) ([]*T, error) {
+// Returns items, total count (0 if not requested), and error
+func (s *Common[T]) GetAll(ctx context.Context, relations []string) ([]*T, int, error) {
 	return s.store.GetAll(ctx, relations)
 }
 

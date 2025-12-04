@@ -20,6 +20,11 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// Test route paths as constants to avoid duplication
+const (
+	testUsersPath = "/users"
+)
+
 // TestUser is a test model
 type TestUser struct {
 	bun.BaseModel `bun:"table:users"`
@@ -587,7 +592,7 @@ func TestHandler_ContextCancellation(t *testing.T) {
 			ctx = context.WithValue(ctx, metadata.MetadataKey, userMeta)
 
 			// Add route context for handlers that need ID parameter
-			if tt.method != http.MethodGet || tt.path != "/users" {
+			if tt.method != http.MethodGet || tt.path != testUsersPath {
 				rctx := chi.NewRouteContext()
 				rctx.URLParams.Add("id", "1")
 				ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
@@ -677,7 +682,7 @@ func TestHandler_ContextTimeout(t *testing.T) {
 			ctx = context.WithValue(ctx, metadata.MetadataKey, userMeta)
 
 			// Add route context for handlers that need ID parameter
-			if tt.method != http.MethodGet || tt.path != "/users" {
+			if tt.method != http.MethodGet || tt.path != testUsersPath {
 				rctx := chi.NewRouteContext()
 				rctx.URLParams.Add("id", "1")
 				ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
@@ -848,6 +853,113 @@ func TestHandler_MissingMetadata(t *testing.T) {
 
 			if w.Code != tt.expectedCode {
 				t.Errorf("Expected status %d, got %d: %s", tt.expectedCode, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestHandler_GetAll_QueryParams tests query parameter parsing for GetAll
+func TestHandler_GetAll_QueryParams(t *testing.T) {
+	cleanTable(t)
+
+	// Insert test data
+	db, _ := datastore.Get()
+	users := []TestUser{
+		{Name: "Alice", Email: "alice@example.com"},
+		{Name: "Bob", Email: "bob@example.com"},
+		{Name: "Charlie", Email: "charlie@example.com"},
+	}
+	for _, user := range users {
+		_, err := db.GetDB().NewInsert().Model(&user).Exec(context.Background())
+		if err != nil {
+			t.Fatal("Failed to insert test user:", err)
+		}
+	}
+
+	// Update metadata to allow filtering and sorting
+	queryMeta := &metadata.TypeMetadata{
+		TypeID:           "test_user_query_id",
+		TypeName:         "TestUser",
+		TableName:        "users",
+		URLParamUUID:     "id",
+		ModelType:        reflect.TypeOf(TestUser{}),
+		FilterableFields: []string{"Name", "Email"},
+		SortableFields:   []string{"Name", "Email"},
+		DefaultLimit:     10,
+		MaxLimit:         100,
+	}
+
+	tests := []struct {
+		name          string
+		queryString   string
+		expectedCount int
+		checkHeaders  map[string]string
+	}{
+		{
+			name:          "no query params",
+			queryString:   "",
+			expectedCount: 3,
+		},
+		{
+			name:          "filter by name",
+			queryString:   "filter[Name]=Alice",
+			expectedCount: 1,
+		},
+		{
+			name:          "limit",
+			queryString:   "limit=2",
+			expectedCount: 2,
+			checkHeaders:  map[string]string{"X-Limit": "2"},
+		},
+		{
+			name:          "offset",
+			queryString:   "offset=1&sort=Name",
+			expectedCount: 2,
+			checkHeaders:  map[string]string{"X-Offset": "1"},
+		},
+		{
+			name:          "count",
+			queryString:   "count=true&limit=1",
+			expectedCount: 1,
+			checkHeaders:  map[string]string{"X-Total-Count": "3"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := chi.NewRouter()
+			r.Use(withMeta(queryMeta))
+			r.Get("/users", handler.GetAll[TestUser]())
+
+			url := "/users"
+			if tt.queryString != "" {
+				url += "?" + tt.queryString
+			}
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			w := httptest.NewRecorder()
+
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+				return
+			}
+
+			var results []TestUser
+			if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+				t.Fatal("Failed to unmarshal response:", err)
+			}
+
+			if len(results) != tt.expectedCount {
+				t.Errorf("Expected %d results, got %d", tt.expectedCount, len(results))
+			}
+
+			// Check headers if specified
+			for header, expected := range tt.checkHeaders {
+				actual := w.Header().Get(header)
+				if actual != expected {
+					t.Errorf("Expected header %s=%s, got %s", header, expected, actual)
+				}
 			}
 		})
 	}

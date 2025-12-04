@@ -289,6 +289,108 @@ router.ScopeAuthOnly  // "__restgen_auth_only__" - Auth required, no scope check
 router.AuthInfoKey  // "authInfo" - Key for AuthInfo in context
 ```
 
+## Query Parameters: Filtering, Sorting & Pagination
+
+go-restgen supports query parameters for filtering, sorting, and paginating results on `GET /resource` (list) endpoints.
+
+### Configuration
+
+Configure allowed fields when registering routes:
+
+```go
+router.RegisterRoutes[User](b, "/users",
+    router.AllPublic(),
+    router.WithFilters("Name", "Email", "Status"),      // Allow filtering by these fields
+    router.WithSorts("Name", "Email", "CreatedAt"),     // Allow sorting by these fields
+    router.WithPagination(20, 100),                     // Default 20 items, max 100
+    router.WithDefaultSort("-CreatedAt"),               // Default sort (- prefix = descending)
+)
+```
+
+**Security Note**: Only fields explicitly listed in `WithFilters` and `WithSorts` can be used. Invalid fields are silently ignored.
+
+### Filtering
+
+Filter results using the `filter[field]` query parameter:
+
+```bash
+# Simple equality filter
+GET /users?filter[Name]=Alice
+
+# With operator
+GET /users?filter[Status][neq]=inactive
+GET /users?filter[Age][gte]=18
+GET /users?filter[Name][like]=John%
+
+# Multiple filters (AND logic)
+GET /users?filter[Status]=active&filter[Role]=admin
+```
+
+**Supported Operators:**
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `eq` (default) | Equals | `filter[Status]=active` or `filter[Status][eq]=active` |
+| `neq` | Not equals | `filter[Status][neq]=inactive` |
+| `gt` | Greater than | `filter[Age][gt]=18` |
+| `gte` | Greater than or equal | `filter[Age][gte]=18` |
+| `lt` | Less than | `filter[Age][lt]=65` |
+| `lte` | Less than or equal | `filter[Age][lte]=65` |
+| `like` | SQL LIKE pattern | `filter[Name][like]=John%` |
+
+### Sorting
+
+Sort results using the `sort` query parameter:
+
+```bash
+# Single field ascending
+GET /users?sort=Name
+
+# Single field descending (- prefix)
+GET /users?sort=-CreatedAt
+
+# Multiple fields (comma-separated)
+GET /users?sort=Status,-CreatedAt
+```
+
+### Pagination
+
+Control result size with `limit` and `offset`:
+
+```bash
+# First 10 results
+GET /users?limit=10
+
+# Skip first 20, get next 10
+GET /users?limit=10&offset=20
+```
+
+**Response Headers:**
+- `X-Limit` - The limit applied to the query
+- `X-Offset` - The offset applied to the query
+
+### Total Count
+
+Request total count (useful for pagination UI) with `count=true`:
+
+```bash
+GET /users?limit=10&offset=20&count=true
+```
+
+**Response Headers:**
+- `X-Total-Count` - Total number of records (before pagination)
+
+### Complete Example
+
+```bash
+# Get active users, sorted by newest first, page 2 (10 per page), with total count
+curl 'http://localhost:8080/users?filter[Status]=active&sort=-CreatedAt&limit=10&offset=10&count=true'
+
+# Response headers include:
+# X-Total-Count: 47
+# X-Limit: 10
+# X-Offset: 10
+```
+
 ## Multi-Registration
 
 go-restgen supports registering the same model type at multiple routes with different configurations. This is useful when:
@@ -519,7 +621,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors -coverprofi
 go tool cover -func=/tmp/coverage.out
 ```
 
-For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 35 comprehensive API tests.
+For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 58 comprehensive API tests covering filtering, sorting, pagination, and ownership.
 
 ## Dependencies
 
@@ -533,10 +635,10 @@ go-restgen builds on these excellent projects:
 - [x] SQLite support
 - [x] Nested resource support with automatic parent validation
 - [x] Multi-registration support (same model at different routes with different configs)
+- [x] Query parameter filtering and sorting
+- [x] Pagination with limit/offset and total count
 - [ ] Optionally retrieve an object's relations when retrieving the object itself
 - [ ] MySQL support
-- [ ] Query parameter filtering and sorting
-- [ ] Pagination helpers
 - [ ] OpenAPI/Swagger generation
 
 ## Contributing

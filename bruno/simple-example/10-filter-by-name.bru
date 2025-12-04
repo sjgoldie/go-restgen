@@ -1,0 +1,18 @@
+meta {
+  name: Filter Users by Name
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/users?filter[Name]=Bob Smith
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 1
+  res.body[0].name: eq Bob Smith
+}

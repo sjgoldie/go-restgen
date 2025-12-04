@@ -1,0 +1,32 @@
+meta {
+  name: Blogs - Admin Sort by Name Desc (bypass + sort)
+  type: http
+  seq: 24
+}
+
+get {
+  url: {{baseUrl}}/blogs?sort=-Name
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Admin sees ALL blogs sorted by name descending (bypass + sort)", function() {
+    expect(res.body).to.be.an('array');
+    // Should see all 4 blogs
+    expect(res.body.length).to.equal(4);
+    // Verify descending sort order
+    for (let i = 0; i < res.body.length - 1; i++) {
+      expect(res.body[i].name >= res.body[i+1].name).to.be.true;
+    }
+  });
+}

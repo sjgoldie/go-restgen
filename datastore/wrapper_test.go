@@ -141,7 +141,7 @@ func TestWrapper_GetAll(t *testing.T) {
 	}
 
 	// Get all users
-	retrieved, err := wrapper.GetAll(ctx, []string{})
+	retrieved, _, err := wrapper.GetAll(ctx, []string{})
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
@@ -272,7 +272,7 @@ func TestWrapper_GetAll_Empty(t *testing.T) {
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
 	ctx := ctxWithMeta(testUserMeta)
 
-	retrieved, err := wrapper.GetAll(ctx, []string{})
+	retrieved, _, err := wrapper.GetAll(ctx, []string{})
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
@@ -330,7 +330,7 @@ func TestWrapper_GetAll_WithRelations(t *testing.T) {
 
 	// Get all with relations (even though we don't have any relations in this test model)
 	// This tests that the relations parameter is properly handled
-	retrieved, err := wrapper.GetAll(ctx, []string{})
+	retrieved, _, err := wrapper.GetAll(ctx, []string{})
 	if err != nil {
 		t.Fatal("Failed to get all users with relations:", err)
 	}
@@ -381,7 +381,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 	}
 
 	// GetAll
-	all, err := wrapper.GetAll(ctx, []string{})
+	all, _, err := wrapper.GetAll(ctx, []string{})
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
@@ -533,7 +533,7 @@ func TestOwnership_SingleField_GetAll(t *testing.T) {
 	ctxWithOwnership := context.WithValue(ctx, "ownershipEnforced", true)
 	ctxWithOwnership = context.WithValue(ctxWithOwnership, "ownershipUserID", "alice")
 
-	retrieved, err := wrapper.GetAll(ctxWithOwnership, []string{})
+	retrieved, _, err := wrapper.GetAll(ctxWithOwnership, []string{})
 	if err != nil {
 		t.Fatal("Failed to get blogs:", err)
 	}
@@ -627,7 +627,7 @@ func TestOwnership_MultipleFields_GetAll(t *testing.T) {
 	ctxAlice := context.WithValue(ctxPost, "ownershipEnforced", true)
 	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
 
-	retrieved, err := postWrapper.GetAll(ctxAlice, []string{})
+	retrieved, _, err := postWrapper.GetAll(ctxAlice, []string{})
 	if err != nil {
 		t.Fatal("Failed to get posts:", err)
 	}
@@ -675,7 +675,7 @@ func TestOwnership_BypassScope_Admin(t *testing.T) {
 	}
 	ctxCharlie = context.WithValue(ctxCharlie, "authInfo", authInfo)
 
-	retrieved, err := wrapper.GetAll(ctxCharlie, []string{})
+	retrieved, _, err := wrapper.GetAll(ctxCharlie, []string{})
 	if err != nil {
 		t.Fatal("Failed to get articles:", err)
 	}
@@ -717,7 +717,7 @@ func TestOwnership_BypassScope_Moderator(t *testing.T) {
 	}
 	ctxDiana = context.WithValue(ctxDiana, "authInfo", authInfo)
 
-	retrieved, err := wrapper.GetAll(ctxDiana, []string{})
+	retrieved, _, err := wrapper.GetAll(ctxDiana, []string{})
 	if err != nil {
 		t.Fatal("Failed to get articles:", err)
 	}
@@ -776,7 +776,7 @@ func TestOwnership_NoOwnershipContext_GetAll(t *testing.T) {
 	}
 
 	// GetAll without ownership enforcement - should get all
-	retrieved, err := wrapper.GetAll(ctx, []string{})
+	retrieved, _, err := wrapper.GetAll(ctx, []string{})
 	if err != nil {
 		t.Fatal("Failed to get all blogs:", err)
 	}
@@ -811,7 +811,7 @@ func TestOwnership_TypeWithoutOwnershipConfig(t *testing.T) {
 	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
 	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
 
-	retrieved, err := wrapper.GetAll(ctxAlice, []string{})
+	retrieved, _, err := wrapper.GetAll(ctxAlice, []string{})
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}

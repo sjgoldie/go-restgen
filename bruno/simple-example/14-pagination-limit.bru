@@ -1,0 +1,18 @@
+meta {
+  name: Pagination with Limit
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/users?limit=1&sort=Name
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 1
+  res.body[0].name: eq Bob Smith
+}

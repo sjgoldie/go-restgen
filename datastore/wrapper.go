@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	apperrors "github.com/sjgoldie/go-restgen/errors"
@@ -21,7 +22,8 @@ type Wrapper[T any] struct {
 
 // GetAll retrieves all items of type T from the datastore
 // Filters from context are applied automatically
-func (w *Wrapper[T]) GetAll(ctx context.Context, relations []string) ([]*T, error) {
+// Returns items, total count (0 if not requested), and error
+func (w *Wrapper[T]) GetAll(ctx context.Context, relations []string) ([]*T, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -31,20 +33,42 @@ func (w *Wrapper[T]) GetAll(ctx context.Context, relations []string) ([]*T, erro
 	// Get metadata from context
 	meta, err := metadata.FromContext(ctx)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// Apply parent filters and JOINs from metadata
 	query, err = w.applyParentFiltersWithMeta(ctx, query, meta)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// Apply ownership filter for type T
 	query, err = w.applyOwnershipFilterWithMeta(ctx, query, meta)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
+
+	// Get query options from context (optional)
+	opts := metadata.QueryOptionsFromContext(ctx)
+
+	// Apply filters from query options
+	query = w.applyQueryFilters(query, opts, meta)
+
+	// Get total count BEFORE sorting/pagination (if requested)
+	// Use the same query with filters already applied
+	var totalCount int
+	if opts != nil && opts.CountTotal {
+		totalCount, err = query.Count(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	// Apply sorting from query options (or default sort)
+	query = w.applyQuerySorting(query, opts, meta)
+
+	// Apply pagination AFTER count
+	query = w.applyQueryPagination(query, opts, meta)
 
 	// Add relations if specified
 	for _, relation := range relations {
@@ -54,16 +78,16 @@ func (w *Wrapper[T]) GetAll(ctx context.Context, relations []string) ([]*T, erro
 	if err := query.Scan(ctx); err != nil {
 		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, err
+			return nil, 0, err
 		}
 		// Check for connection issues
 		if errors.Is(err, sql.ErrConnDone) {
-			return nil, apperrors.ErrUnavailable
+			return nil, 0, apperrors.ErrUnavailable
 		}
-		return nil, err
+		return nil, 0, err
 	}
 
-	return items, nil
+	return items, totalCount, nil
 }
 
 // Get retrieves a single item of type T by ID from the datastore
@@ -513,19 +537,136 @@ func (w *Wrapper[T]) setOwnershipField(ctx context.Context, item *T) error {
 func fieldToColumnName(tType reflect.Type, fieldName string) (string, error) {
 	field, found := tType.FieldByName(fieldName)
 	if !found {
-		return "", fmt.Errorf("ownership field %s not found on type %s", fieldName, tType.Name())
+		return "", fmt.Errorf("field %s not found on type %s", fieldName, tType.Name())
 	}
 
 	// Check bun tag for column name
 	bunTag := field.Tag.Get("bun")
 	if bunTag == "" {
-		return "", fmt.Errorf("ownership field %s on type %s must have bun tag with column name", fieldName, tType.Name())
+		return "", fmt.Errorf("field %s on type %s must have bun tag with column name", fieldName, tType.Name())
 	}
 
 	parts := strings.Split(bunTag, ",")
 	if len(parts) == 0 || parts[0] == "" || parts[0] == "-" {
-		return "", fmt.Errorf("ownership field %s on type %s has invalid bun tag: column name required", fieldName, tType.Name())
+		return "", fmt.Errorf("field %s on type %s has invalid bun tag: column name required", fieldName, tType.Name())
 	}
 
 	return parts[0], nil
+}
+
+// applyQueryFilters applies filters from QueryOptions to the query
+// Only fields in metadata.FilterableFields are allowed (others silently ignored)
+func (w *Wrapper[T]) applyQueryFilters(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
+	if opts == nil || len(opts.Filters) == 0 {
+		return query
+	}
+
+	for field, filter := range opts.Filters {
+		// Skip fields not in allowlist
+		if !slices.Contains(meta.FilterableFields, field) {
+			continue
+		}
+
+		colName, err := fieldToColumnName(meta.ModelType, field)
+		if err != nil {
+			continue // skip if can't resolve column
+		}
+
+		// Apply operator
+		switch filter.Operator {
+		case "eq", "":
+			query = query.Where("?TableAlias.? = ?", bun.Ident(colName), filter.Value)
+		case "neq":
+			query = query.Where("?TableAlias.? != ?", bun.Ident(colName), filter.Value)
+		case "gt":
+			query = query.Where("?TableAlias.? > ?", bun.Ident(colName), filter.Value)
+		case "gte":
+			query = query.Where("?TableAlias.? >= ?", bun.Ident(colName), filter.Value)
+		case "lt":
+			query = query.Where("?TableAlias.? < ?", bun.Ident(colName), filter.Value)
+		case "lte":
+			query = query.Where("?TableAlias.? <= ?", bun.Ident(colName), filter.Value)
+		case "like":
+			query = query.Where("?TableAlias.? LIKE ?", bun.Ident(colName), filter.Value)
+		}
+	}
+	return query
+}
+
+// applyQuerySorting applies sorting from QueryOptions to the query
+// Falls back to metadata.DefaultSort if no sort specified
+// Only fields in metadata.SortableFields are allowed (others silently ignored)
+func (w *Wrapper[T]) applyQuerySorting(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
+	// Use sort from options if provided
+	if opts != nil && len(opts.Sort) > 0 {
+		for _, sort := range opts.Sort {
+			if !slices.Contains(meta.SortableFields, sort.Field) {
+				continue // skip invalid sort fields
+			}
+
+			colName, err := fieldToColumnName(meta.ModelType, sort.Field)
+			if err != nil {
+				continue
+			}
+
+			if sort.Desc {
+				query = query.OrderExpr("?TableAlias.? DESC", bun.Ident(colName))
+			} else {
+				query = query.OrderExpr("?TableAlias.? ASC", bun.Ident(colName))
+			}
+		}
+		return query
+	}
+
+	// Fall back to default sort from metadata
+	if meta.DefaultSort != "" {
+		field := meta.DefaultSort
+		desc := false
+		if strings.HasPrefix(field, "-") {
+			desc = true
+			field = field[1:]
+		}
+
+		colName, err := fieldToColumnName(meta.ModelType, field)
+		if err == nil {
+			if desc {
+				query = query.OrderExpr("?TableAlias.? DESC", bun.Ident(colName))
+			} else {
+				query = query.OrderExpr("?TableAlias.? ASC", bun.Ident(colName))
+			}
+		}
+	}
+
+	return query
+}
+
+// applyQueryPagination applies limit/offset from QueryOptions to the query
+// Uses metadata defaults if not specified in options
+func (w *Wrapper[T]) applyQueryPagination(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
+	limit := meta.DefaultLimit
+	offset := 0
+
+	if opts != nil {
+		if opts.Limit > 0 {
+			limit = opts.Limit
+		}
+		if opts.Offset > 0 {
+			offset = opts.Offset
+		}
+	}
+
+	// Enforce max limit if configured
+	if meta.MaxLimit > 0 && limit > meta.MaxLimit {
+		limit = meta.MaxLimit
+	}
+
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+
+	if offset > 0 {
+		query = query.Offset(offset)
+	}
+
+	return query
 }

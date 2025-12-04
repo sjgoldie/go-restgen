@@ -25,6 +25,26 @@ npx @usebruno/cli run /path/to/bruno/folder
 
 ## Running Tests
 
+### Automated Script (Recommended)
+
+The easiest way to run all Bruno tests is using the automated script:
+
+```bash
+# Run all example tests
+./scripts/run-bruno-tests.sh all
+
+# Run specific example tests
+./scripts/run-bruno-tests.sh simple
+./scripts/run-bruno-tests.sh nested
+./scripts/run-bruno-tests.sh auth
+```
+
+The script automatically:
+- Checks if the port is in use (fails gracefully if occupied)
+- Starts the appropriate example server
+- Runs the Bruno tests
+- Cleans up the server when done
+
 ### Using Bruno GUI
 
 **Start a server and run tests interactively:**
@@ -34,7 +54,7 @@ npx @usebruno/cli run /path/to/bruno/folder
 3. Navigate to the example folder (simple-example, nested-example, or auth-example)
 4. Click "Run Collection" to run all tests
 
-### Using Bruno CLI
+### Using Bruno CLI (Manual)
 
 **Run tests from command line:**
 
@@ -74,7 +94,7 @@ go run main.go
 - Open the `simple-example` folder
 - Click "Run Collection" to run all tests in sequence
 
-**Tests cover:**
+**Tests cover (17 tests):**
 - Health check
 - Create user
 - Get all users
@@ -82,6 +102,9 @@ go run main.go
 - Update user
 - Delete user
 - Verify deletion (404)
+- Filtering (equality, comparison operators, LIKE patterns)
+- Sorting (ascending, descending, multiple fields)
+- Pagination (limit, offset, count)
 
 ### Nested Routes Example Tests
 
@@ -97,7 +120,7 @@ go run main.go
 - Open the `nested-example` folder
 - Click "Run Collection" to run all tests in sequence
 
-**Tests cover:**
+**Tests cover (16 tests):**
 1. **User Creation** - Create multiple users
 2. **Nested Post Creation** - Create posts under specific users
 3. **Parent Filtering** - Posts are filtered by parent user ID
@@ -126,11 +149,16 @@ go run main.go
 - Open the `auth-example` folder
 - Click "Run Collection" to run all tests in sequence
 
-**Tests cover:**
+**Tests cover (25 tests):**
 1. **Articles** - Public reads, publisher-only writes
-2. **Blogs** - Ownership filtering (users see only their blogs, admin sees all)
+2. **Blogs** - Ownership filtering with query parameters:
+   - Users see only their blogs, admin sees all
+   - Filter by status (ownership + filter combined)
+   - Sort by name (ownership + sort combined)
+   - Combined filter + sort with ownership
 3. **Posts** - Multi-ownership (accessible by author OR editor)
 4. **Comments** - Mixed auth (GET is public, POST/PUT/DELETE require auth)
+5. **Reports** - MethodList vs MethodGet differentiation
 
 **Test users (bearer tokens):**
 - `user:alice:user` - Regular user
@@ -139,6 +167,8 @@ go run main.go
 - `user:diana:user,moderator` - Moderator user
 
 ## Test Coverage
+
+**Total: 58 end-to-end API tests** across all example applications.
 
 These Bruno tests provide **end-to-end API coverage** for the example applications. They complement the unit tests by:
 

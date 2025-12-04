@@ -1,0 +1,18 @@
+meta {
+  name: Filter Users by Email
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/users?filter[Email]=bob@example.com
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 1
+  res.body[0].email: eq bob@example.com
+}

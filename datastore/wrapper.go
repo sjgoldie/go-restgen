@@ -155,8 +155,22 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 		return nil, err
 	}
 
-	// Use Returning to get the created record back with generated fields
-	_, err = w.Store.GetDB().NewInsert().Model(&item).Returning("*").Exec(ctx)
+	// If audit is configured, wrap in transaction
+	if meta.Auditor != nil {
+		err = w.Store.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			// Insert the item
+			_, err := tx.NewInsert().Model(&item).Returning("*").Exec(ctx)
+			if err != nil {
+				return err
+			}
+			// Run audit (item now has ID populated)
+			return w.runAudit(ctx, tx, meta, metadata.OpCreate, nil, &item)
+		})
+	} else {
+		// No audit, just insert directly
+		_, err = w.Store.GetDB().NewInsert().Model(&item).Returning("*").Exec(ctx)
+	}
+
 	if err != nil {
 		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -212,8 +226,22 @@ func (w *Wrapper[T]) Update(ctx context.Context, id int, item T) (*T, error) {
 		return nil, err
 	}
 
-	// Use Returning to get the updated record back
-	err = w.Store.GetDB().NewUpdate().Model(&item).WherePK().Returning("*").Scan(ctx)
+	// If audit is configured, wrap in transaction
+	if meta.Auditor != nil {
+		err = w.Store.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			// Update the item
+			err := tx.NewUpdate().Model(&item).WherePK().Returning("*").Scan(ctx)
+			if err != nil {
+				return err
+			}
+			// Run audit with old and new values
+			return w.runAudit(ctx, tx, meta, metadata.OpUpdate, existing, &item)
+		})
+	} else {
+		// No audit, just update directly
+		err = w.Store.GetDB().NewUpdate().Model(&item).WherePK().Returning("*").Scan(ctx)
+	}
+
 	if err != nil {
 		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -265,7 +293,25 @@ func (w *Wrapper[T]) Delete(ctx context.Context, id int) error {
 	}
 
 	var item T
-	result, err := w.Store.GetDB().NewDelete().Model(&item).Where("? = ?", bun.Ident("id"), id).Exec(ctx)
+	var result sql.Result
+
+	// If audit is configured, wrap in transaction
+	if meta.Auditor != nil {
+		err = w.Store.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			// Delete the item
+			var txErr error
+			result, txErr = tx.NewDelete().Model(&item).Where("? = ?", bun.Ident("id"), id).Exec(ctx)
+			if txErr != nil {
+				return txErr
+			}
+			// Run audit with old value (new is nil for delete)
+			return w.runAudit(ctx, tx, meta, metadata.OpDelete, existing, nil)
+		})
+	} else {
+		// No audit, just delete directly
+		result, err = w.Store.GetDB().NewDelete().Model(&item).Where("? = ?", bun.Ident("id"), id).Exec(ctx)
+	}
+
 	if err != nil {
 		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -726,4 +772,37 @@ func (w *Wrapper[T]) runValidation(ctx context.Context, meta *metadata.TypeMetad
 	}
 
 	return nil
+}
+
+// runAudit executes the audit function if one is configured in metadata
+// Inserts the audit record using the provided database handle (can be tx or db)
+// Returns an error if the audit insert fails
+func (w *Wrapper[T]) runAudit(ctx context.Context, db bun.IDB, meta *metadata.TypeMetadata, op metadata.Operation, old, new *T) error {
+	if meta.Auditor == nil {
+		return nil
+	}
+
+	// Type assert the auditor function
+	auditor, ok := meta.Auditor.(metadata.AuditFunc[T])
+	if !ok {
+		return nil // auditor type mismatch, skip (shouldn't happen)
+	}
+
+	// Build audit context
+	ac := metadata.AuditContext[T]{
+		Operation: op,
+		Old:       old,
+		New:       new,
+		Ctx:       ctx,
+	}
+
+	// Run the auditor to get the audit record
+	auditRecord := auditor(ac)
+	if auditRecord == nil {
+		return nil // nil means skip audit for this operation
+	}
+
+	// Insert the audit record
+	_, err := db.NewInsert().Model(auditRecord).Exec(ctx)
+	return err
 }

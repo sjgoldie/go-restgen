@@ -545,6 +545,102 @@ router.WithValidator(func(vc metadata.ValidationContext[Task]) error {
 
 See the [validator example](./examples/validator) for a complete working example with state machine validation.
 
+## Audit
+
+go-restgen supports custom audit logging for create, update, and delete operations. Audit records are inserted within the same database transaction as the main operation, ensuring consistency.
+
+### Basic Usage
+
+```go
+// Define your audit log model
+type JobAuditLog struct {
+    bun.BaseModel `bun:"table:job_audit_logs"`
+    ID            int       `bun:"id,pk,autoincrement" json:"id"`
+    JobID         int       `bun:"job_id,notnull" json:"job_id"`
+    Operation     string    `bun:"operation,notnull" json:"operation"`
+    OldData       string    `bun:"old_data" json:"old_data"`
+    NewData       string    `bun:"new_data" json:"new_data"`
+    CreatedAt     time.Time `bun:"created_at,notnull" json:"created_at"`
+}
+
+// Register routes with audit
+router.RegisterRoutes[Job](b, "/jobs",
+    router.AllPublic(),
+    router.WithAudit(func(ac metadata.AuditContext[Job]) any {
+        return &JobAuditLog{
+            JobID:     ac.New.ID,  // or ac.Old.ID for delete
+            Operation: string(ac.Operation),
+            OldData:   toJSON(ac.Old),
+            NewData:   toJSON(ac.New),
+            CreatedAt: time.Now(),
+        }
+    }),
+)
+```
+
+### AuditContext
+
+The audit function receives an `AuditContext[T]` with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Operation` | `metadata.Operation` | One of `OpCreate`, `OpUpdate`, `OpDelete` |
+| `New` | `*T` | The item after operation (nil for delete) |
+| `Old` | `*T` | The item before operation (nil for create) |
+| `Ctx` | `context.Context` | Request context (contains AuthInfo, parent IDs, etc.) |
+
+### How It Works
+
+- **Transaction**: Audit insert runs in the same transaction as the main operation
+- **Rollback**: If audit insert fails, the main operation is rolled back
+- **Skip Audit**: Return `nil` from the audit function to skip audit for that operation
+- **Flexible**: You define the audit model - can include user info, timestamps, JSON snapshots, etc.
+
+### Conditional Auditing
+
+Skip audit for certain operations by returning `nil`:
+
+```go
+router.WithAudit(func(ac metadata.AuditContext[Job]) any {
+    // Only audit status changes
+    if ac.Operation == metadata.OpUpdate {
+        if ac.Old.Status == ac.New.Status {
+            return nil  // Skip audit - no status change
+        }
+    }
+
+    return &JobAuditLog{
+        JobID:     getJobID(ac),
+        Operation: string(ac.Operation),
+        OldStatus: getStatus(ac.Old),
+        NewStatus: getStatus(ac.New),
+    }
+})
+```
+
+### Accessing User Info
+
+Access the authenticated user from the context:
+
+```go
+router.WithAudit(func(ac metadata.AuditContext[Job]) any {
+    // Get user ID from auth context
+    var userID string
+    if authInfo, ok := ac.Ctx.Value(router.AuthInfoKey).(*router.AuthInfo); ok {
+        userID = authInfo.UserID
+    }
+
+    return &JobAuditLog{
+        JobID:     ac.New.ID,
+        Operation: string(ac.Operation),
+        UserID:    userID,
+        CreatedAt: time.Now(),
+    }
+})
+```
+
+See the [audit example](./examples/audit) for a complete working example.
+
 ## Architecture
 
 go-restgen follows a clean layered architecture:
@@ -663,6 +759,7 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[Nested Routes](./examples/nested_routes)** - 3-level nesting (Users → Posts → Comments) with automatic parent validation
 - **[Authentication & Authorization](./examples/auth)** - Comprehensive auth patterns including scopes, ownership, admin bypass, and multi-ownership
 - **[Validation](./examples/validator)** - Business rule validation with state machine transitions
+- **[Audit](./examples/audit)** - Audit logging with transactional consistency
 
 All examples include comprehensive Bruno API tests. See [`bruno/README.md`](./bruno/README.md) for details.
 
@@ -725,6 +822,7 @@ go-restgen builds on these excellent projects:
 - [x] Query parameter filtering and sorting
 - [x] Pagination with limit/offset and total count
 - [x] Custom validation for business rules
+- [x] Transactional audit logging
 - [ ] Optionally retrieve an object's relations when retrieving the object itself
 - [ ] MySQL support
 - [ ] OpenAPI/Swagger generation

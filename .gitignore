@@ -12,9 +12,13 @@
 examples/simple/simple
 examples/nested_routes/nested_routes
 examples/auth/auth
+examples/validator/validator
+examples/audit/audit
 /simple
 /nested_routes
 /auth
+/validator
+/audit
 
 # Test binary, built with `go test -c`
 *.test

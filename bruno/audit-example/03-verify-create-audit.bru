@@ -1,0 +1,19 @@
+meta {
+  name: Verify Create Audit Log
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/audit-logs
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body[0].job_id: eq {{jobId}}
+  res.body[0].operation: eq create
+  res.body[0].old_data: eq
+  res.body[0].new_data: contains Data Processing
+}

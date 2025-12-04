@@ -1,4 +1,4 @@
-//nolint:dupl,errcheck,gosec // Test code - duplicate test patterns and unchecked test cleanup are acceptable
+//nolint:dupl,errcheck,gosec,goconst // Test code - duplicate test patterns, unchecked test cleanup, and repeated test strings are acceptable
 package router_test
 
 import (
@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -1262,6 +1263,198 @@ func TestBuilder_ValidationDelete(t *testing.T) {
 		}
 		if !bytes.Contains(w.Body.Bytes(), []byte("in progress")) {
 			t.Errorf("expected error about in progress, got: %s", w.Body.String())
+		}
+	})
+}
+
+// AuditedTask is a model for testing audit functionality
+type AuditedTask struct {
+	bun.BaseModel `bun:"table:audited_tasks"`
+	ID            int    `bun:"id,pk,autoincrement" json:"id"`
+	Title         string `bun:"title,notnull" json:"title"`
+	Status        string `bun:"status,notnull" json:"status"`
+}
+
+// TaskAuditLog is the audit log for AuditedTask
+type TaskAuditLog struct {
+	bun.BaseModel `bun:"table:task_audit_logs"`
+	ID            int    `bun:"id,pk,autoincrement" json:"id"`
+	TaskID        int    `bun:"task_id" json:"task_id"`
+	Operation     string `bun:"operation,notnull" json:"operation"`
+	OldStatus     string `bun:"old_status" json:"old_status"`
+	NewStatus     string `bun:"new_status" json:"new_status"`
+}
+
+func TestWithAudit(t *testing.T) {
+	// Get the global datastore (initialized in TestMain)
+	db, err := datastore.Get()
+	if err != nil {
+		t.Fatal("failed to get datastore:", err)
+	}
+
+	// Create tables
+	_, err = db.GetDB().NewCreateTable().Model((*AuditedTask)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("failed to create tasks table:", err)
+	}
+	_, err = db.GetDB().NewCreateTable().Model((*TaskAuditLog)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("failed to create audit logs table:", err)
+	}
+	defer func() {
+		db.GetDB().NewDropTable().Model((*TaskAuditLog)(nil)).IfExists().Exec(context.Background())
+		db.GetDB().NewDropTable().Model((*AuditedTask)(nil)).IfExists().Exec(context.Background())
+	}()
+
+	// Setup router with audit
+	r := chi.NewRouter()
+	b := router.NewBuilder(r)
+
+	router.RegisterRoutes[AuditedTask](b, "/tasks",
+		router.AuthConfig{
+			Methods: []string{router.MethodAll},
+			Scopes:  []string{router.ScopePublic},
+		},
+		router.WithAudit(func(ac metadata.AuditContext[AuditedTask]) any {
+			oldStatus := ""
+			if ac.Old != nil {
+				oldStatus = ac.Old.Status
+			}
+			newStatus := ""
+			if ac.New != nil {
+				newStatus = ac.New.Status
+			}
+			taskID := 0
+			if ac.New != nil {
+				taskID = ac.New.ID
+			} else if ac.Old != nil {
+				taskID = ac.Old.ID
+			}
+			return &TaskAuditLog{
+				TaskID:    taskID,
+				Operation: string(ac.Operation),
+				OldStatus: oldStatus,
+				NewStatus: newStatus,
+			}
+		}),
+	)
+
+	t.Run("create generates audit log", func(t *testing.T) {
+		// Clear any existing data
+		db.GetDB().NewDelete().Model((*TaskAuditLog)(nil)).Where("1=1").Exec(context.Background())
+		db.GetDB().NewDelete().Model((*AuditedTask)(nil)).Where("1=1").Exec(context.Background())
+
+		body := `{"title":"Test Task","status":"pending"}`
+		req := httptest.NewRequest("POST", "/tasks", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Verify audit log was created
+		var logs []TaskAuditLog
+		err := db.GetDB().NewSelect().Model(&logs).Scan(context.Background())
+		if err != nil {
+			t.Fatal("failed to query audit logs:", err)
+		}
+
+		if len(logs) != 1 {
+			t.Fatalf("expected 1 audit log, got %d", len(logs))
+		}
+
+		if logs[0].Operation != "create" {
+			t.Errorf("expected operation 'create', got '%s'", logs[0].Operation)
+		}
+		if logs[0].NewStatus != "pending" {
+			t.Errorf("expected NewStatus 'pending', got '%s'", logs[0].NewStatus)
+		}
+	})
+
+	t.Run("update generates audit log with old and new", func(t *testing.T) {
+		// Clear and create fresh data
+		db.GetDB().NewDelete().Model((*TaskAuditLog)(nil)).Where("1=1").Exec(context.Background())
+		db.GetDB().NewDelete().Model((*AuditedTask)(nil)).Where("1=1").Exec(context.Background())
+
+		// Create a task first
+		task := &AuditedTask{Title: "Update Test", Status: "pending"}
+		_, err := db.GetDB().NewInsert().Model(task).Returning("*").Exec(context.Background())
+		if err != nil {
+			t.Fatal("failed to create task:", err)
+		}
+
+		// Update the task
+		body := fmt.Sprintf(`{"id":%d,"title":"Update Test","status":"active"}`, task.ID)
+		req := httptest.NewRequest("PUT", fmt.Sprintf("/tasks/%d", task.ID), bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Verify audit log
+		var logs []TaskAuditLog
+		err = db.GetDB().NewSelect().Model(&logs).Scan(context.Background())
+		if err != nil {
+			t.Fatal("failed to query audit logs:", err)
+		}
+
+		if len(logs) != 1 {
+			t.Fatalf("expected 1 audit log, got %d", len(logs))
+		}
+
+		if logs[0].Operation != "update" {
+			t.Errorf("expected operation 'update', got '%s'", logs[0].Operation)
+		}
+		if logs[0].OldStatus != "pending" {
+			t.Errorf("expected OldStatus 'pending', got '%s'", logs[0].OldStatus)
+		}
+		if logs[0].NewStatus != "active" {
+			t.Errorf("expected NewStatus 'active', got '%s'", logs[0].NewStatus)
+		}
+	})
+
+	t.Run("delete generates audit log", func(t *testing.T) {
+		// Clear and create fresh data
+		db.GetDB().NewDelete().Model((*TaskAuditLog)(nil)).Where("1=1").Exec(context.Background())
+		db.GetDB().NewDelete().Model((*AuditedTask)(nil)).Where("1=1").Exec(context.Background())
+
+		// Create a task first
+		task := &AuditedTask{Title: "Delete Test", Status: "completed"}
+		_, err := db.GetDB().NewInsert().Model(task).Returning("*").Exec(context.Background())
+		if err != nil {
+			t.Fatal("failed to create task:", err)
+		}
+
+		// Delete the task
+		req := httptest.NewRequest("DELETE", fmt.Sprintf("/tasks/%d", task.ID), nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Verify audit log
+		var logs []TaskAuditLog
+		err = db.GetDB().NewSelect().Model(&logs).Scan(context.Background())
+		if err != nil {
+			t.Fatal("failed to query audit logs:", err)
+		}
+
+		if len(logs) != 1 {
+			t.Fatalf("expected 1 audit log, got %d", len(logs))
+		}
+
+		if logs[0].Operation != "delete" {
+			t.Errorf("expected operation 'delete', got '%s'", logs[0].Operation)
+		}
+		if logs[0].OldStatus != "completed" {
+			t.Errorf("expected OldStatus 'completed', got '%s'", logs[0].OldStatus)
 		}
 	})
 }

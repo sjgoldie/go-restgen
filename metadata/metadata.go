@@ -35,6 +35,22 @@ type ValidationContext[T any] struct {
 // The error message will be returned to the client as a 400 Bad Request
 type ValidatorFunc[T any] func(ValidationContext[T]) error
 
+// AuditContext provides context for audit functions
+// For Create: Old is nil, New contains the created item (with ID populated)
+// For Update: Old contains the previous state, New contains the updated item
+// For Delete: Old contains the deleted item, New is nil
+type AuditContext[T any] struct {
+	Operation Operation
+	New       *T              // The item after operation (nil for delete)
+	Old       *T              // The item before operation (nil for create)
+	Ctx       context.Context // Contains AuthInfo, parentIDs, etc.
+}
+
+// AuditFunc is a function that creates an audit record for a mutation operation
+// Return nil to skip audit for this operation
+// The returned audit record (any bun model) will be inserted in the same transaction
+type AuditFunc[T any] func(AuditContext[T]) any
+
 // AuthInfo contains authentication and authorization information.
 // Developers populate this in their auth middleware and add to context.
 type AuthInfo struct {
@@ -64,6 +80,9 @@ type TypeMetadata struct {
 
 	// Validation
 	Validator any // ValidatorFunc[T] stored as any for type erasure
+
+	// Audit
+	Auditor any // AuditFunc[T] stored as any for type erasure
 }
 
 // QueryOptions holds parsed query parameters for filtering, sorting, and pagination

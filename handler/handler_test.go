@@ -1083,3 +1083,191 @@ func TestHandler_GetAll_FilterOperators(t *testing.T) {
 		})
 	}
 }
+
+// TestValidatedItem is a test model for validation tests
+type TestValidatedItem struct {
+	bun.BaseModel `bun:"table:test_validated_items"`
+	ID            int    `bun:"id,pk,autoincrement" json:"id"`
+	Name          string `bun:"name,notnull" json:"name"`
+	Status        string `bun:"status,notnull" json:"status"`
+	Priority      int    `bun:"priority,notnull" json:"priority"`
+}
+
+// TestHandler_ValidationError_Create tests that Create returns 400 with validation message
+func TestHandler_ValidationError_Create(t *testing.T) {
+	// Create table for validated items
+	db, _ := datastore.Get()
+	_, err := db.GetDB().NewCreateTable().Model((*TestValidatedItem)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_validated_items table:", err)
+	}
+	defer func() {
+		db.GetDB().NewDropTable().Model((*TestValidatedItem)(nil)).IfExists().Exec(context.Background())
+	}()
+
+	// Clean table
+	db.GetDB().NewDelete().Model((*TestValidatedItem)(nil)).Where("1=1").Exec(context.Background())
+
+	// Create validator that rejects priority > 5
+	var validator metadata.ValidatorFunc[TestValidatedItem] = func(vc metadata.ValidationContext[TestValidatedItem]) error {
+		if vc.New.Priority > 5 {
+			return apperrors.NewValidationError("priority must be between 1 and 5")
+		}
+		return nil
+	}
+
+	// Create metadata with validator
+	validatedMeta := &metadata.TypeMetadata{
+		TypeID:       "test_validated_item_id",
+		TypeName:     "TestValidatedItem",
+		TableName:    "test_validated_items",
+		URLParamUUID: "id",
+		ModelType:    reflect.TypeOf(TestValidatedItem{}),
+		Validator:    validator,
+	}
+
+	// Make request with invalid priority
+	body := []byte(`{"name":"Test","status":"active","priority":10}`)
+	req := httptest.NewRequest(http.MethodPost, "/items", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), metadata.MetadataKey, validatedMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Create[TestValidatedItem]()(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
+	}
+
+	// Check that the response contains our validation message
+	if !bytes.Contains(w.Body.Bytes(), []byte("priority must be between 1 and 5")) {
+		t.Errorf("Expected body to contain validation message, got: %s", w.Body.String())
+	}
+}
+
+// TestHandler_ValidationError_Update tests that Update returns 400 with validation message
+func TestHandler_ValidationError_Update(t *testing.T) {
+	// Create table for validated items
+	db, _ := datastore.Get()
+	_, err := db.GetDB().NewCreateTable().Model((*TestValidatedItem)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_validated_items table:", err)
+	}
+	defer func() {
+		db.GetDB().NewDropTable().Model((*TestValidatedItem)(nil)).IfExists().Exec(context.Background())
+	}()
+
+	// Clean and insert test item
+	db.GetDB().NewDelete().Model((*TestValidatedItem)(nil)).Where("1=1").Exec(context.Background())
+	item := &TestValidatedItem{Name: "Test", Status: "pending", Priority: 3}
+	_, err = db.GetDB().NewInsert().Model(item).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to insert test item:", err)
+	}
+
+	// Create validator that rejects status transitions from pending to completed
+	var validator metadata.ValidatorFunc[TestValidatedItem] = func(vc metadata.ValidationContext[TestValidatedItem]) error {
+		if vc.Operation == metadata.OpUpdate {
+			if vc.Old.Status == "pending" && vc.New.Status == "completed" {
+				return apperrors.NewValidationError("cannot skip from pending to completed")
+			}
+		}
+		return nil
+	}
+
+	// Create metadata with validator
+	validatedMeta := &metadata.TypeMetadata{
+		TypeID:       "test_validated_item_update_id",
+		TypeName:     "TestValidatedItem",
+		TableName:    "test_validated_items",
+		URLParamUUID: "id",
+		ModelType:    reflect.TypeOf(TestValidatedItem{}),
+		Validator:    validator,
+	}
+
+	// Make request with invalid transition
+	body := []byte(`{"id":1,"name":"Test","status":"completed","priority":3}`)
+	req := httptest.NewRequest(http.MethodPut, "/items/1", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "1")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, validatedMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Update[TestValidatedItem]()(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
+	}
+
+	// Check that the response contains our validation message
+	if !bytes.Contains(w.Body.Bytes(), []byte("cannot skip from pending to completed")) {
+		t.Errorf("Expected body to contain validation message, got: %s", w.Body.String())
+	}
+}
+
+// TestHandler_ValidationError_Delete tests that Delete returns 400 with validation message
+func TestHandler_ValidationError_Delete(t *testing.T) {
+	// Create table for validated items
+	db, _ := datastore.Get()
+	_, err := db.GetDB().NewCreateTable().Model((*TestValidatedItem)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_validated_items table:", err)
+	}
+	defer func() {
+		db.GetDB().NewDropTable().Model((*TestValidatedItem)(nil)).IfExists().Exec(context.Background())
+	}()
+
+	// Clean and insert test item
+	db.GetDB().NewDelete().Model((*TestValidatedItem)(nil)).Where("1=1").Exec(context.Background())
+	item := &TestValidatedItem{Name: "Test", Status: "completed", Priority: 3}
+	_, err = db.GetDB().NewInsert().Model(item).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to insert test item:", err)
+	}
+
+	// Create validator that rejects deleting completed items
+	var validator metadata.ValidatorFunc[TestValidatedItem] = func(vc metadata.ValidationContext[TestValidatedItem]) error {
+		if vc.Operation == metadata.OpDelete {
+			if vc.Old.Status == "completed" {
+				return apperrors.NewValidationError("cannot delete completed items")
+			}
+		}
+		return nil
+	}
+
+	// Create metadata with validator
+	validatedMeta := &metadata.TypeMetadata{
+		TypeID:       "test_validated_item_delete_id",
+		TypeName:     "TestValidatedItem",
+		TableName:    "test_validated_items",
+		URLParamUUID: "id",
+		ModelType:    reflect.TypeOf(TestValidatedItem{}),
+		Validator:    validator,
+	}
+
+	// Make delete request
+	req := httptest.NewRequest(http.MethodDelete, "/items/1", nil)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "1")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, validatedMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Delete[TestValidatedItem]()(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
+	}
+
+	// Check that the response contains our validation message
+	if !bytes.Contains(w.Body.Bytes(), []byte("cannot delete completed items")) {
+		t.Errorf("Expected body to contain validation message, got: %s", w.Body.String())
+	}
+}

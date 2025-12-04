@@ -1,0 +1,24 @@
+meta {
+  name: Transition - Pending to Completed (invalid, must go through in_progress)
+  type: http
+  seq: 15
+}
+
+put {
+  url: {{baseUrl}}/tasks/{{invalidTransitionTaskId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "Task for Invalid Transition",
+    "status": "completed",
+    "priority": 1
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body: contains invalid status transition
+}

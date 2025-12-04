@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sjgoldie/go-restgen/datastore"
+	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/router"
 	"github.com/uptrace/bun"
 )
@@ -1032,4 +1034,234 @@ func TestBuilder_ParentValidation(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected status 404 for wrong user's post, got %d", w.Code)
 	}
+}
+
+// Job is a test model for validation testing with status transitions
+type Job struct {
+	bun.BaseModel `bun:"table:test_jobs"`
+	ID            int    `bun:"id,pk,autoincrement" json:"id"`
+	Title         string `bun:"title,notnull" json:"title"`
+	Status        string `bun:"status,notnull" json:"status"`
+	Priority      int    `bun:"priority" json:"priority"`
+}
+
+func setupJobTable() {
+	ds, err := datastore.Get()
+	if err != nil {
+		panic("failed to get datastore: " + err.Error())
+	}
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	// Drop and recreate table
+	_, _ = db.NewDropTable().Model((*Job)(nil)).IfExists().Exec(ctx)
+	_, err = db.NewCreateTable().Model((*Job)(nil)).IfNotExists().Exec(ctx)
+	if err != nil {
+		panic("failed to create jobs table: " + err.Error())
+	}
+}
+
+// TestBuilder_ValidationCreate tests validation on create operations
+func TestBuilder_ValidationCreate(t *testing.T) {
+	setupJobTable()
+
+	r := chi.NewRouter()
+	b := router.NewBuilder(r)
+
+	// Register with validator: new jobs must have status "pending" and priority 1-5
+	router.RegisterRoutes[Job](b, "/jobs",
+		router.AuthConfig{
+			Methods: []string{router.MethodAll},
+			Scopes:  []string{router.ScopePublic},
+		},
+		router.WithValidator(func(vc metadata.ValidationContext[Job]) error {
+			if vc.Operation == metadata.OpCreate {
+				if vc.New.Status != "pending" {
+					return errors.New("new jobs must have status 'pending'")
+				}
+				if vc.New.Priority < 1 || vc.New.Priority > 5 {
+					return errors.New("priority must be between 1 and 5")
+				}
+			}
+			return nil
+		}),
+	)
+
+	t.Run("valid create", func(t *testing.T) {
+		body := `{"title":"Test Job","status":"pending","priority":3}`
+		req := httptest.NewRequest("POST", "/jobs", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("invalid status rejected", func(t *testing.T) {
+		body := `{"title":"Test Job","status":"complete","priority":3}`
+		req := httptest.NewRequest("POST", "/jobs", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte("pending")) {
+			t.Errorf("expected error about pending status, got: %s", w.Body.String())
+		}
+	})
+
+	t.Run("invalid priority rejected", func(t *testing.T) {
+		body := `{"title":"Test Job","status":"pending","priority":10}`
+		req := httptest.NewRequest("POST", "/jobs", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte("priority")) {
+			t.Errorf("expected error about priority, got: %s", w.Body.String())
+		}
+	})
+}
+
+// TestBuilder_ValidationUpdate tests validation on update with state transitions
+func TestBuilder_ValidationUpdate(t *testing.T) {
+	setupJobTable()
+
+	// Insert a job directly for testing updates
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	job := &Job{Title: "Existing Job", Status: "pending", Priority: 2}
+	_, err := db.NewInsert().Model(job).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("failed to insert test job:", err)
+	}
+
+	r := chi.NewRouter()
+	b := router.NewBuilder(r)
+
+	// Validator: can only move to "in_progress" from "pending", and to "complete" from "in_progress"
+	router.RegisterRoutes[Job](b, "/jobs",
+		router.AuthConfig{
+			Methods: []string{router.MethodAll},
+			Scopes:  []string{router.ScopePublic},
+		},
+		router.WithValidator(func(vc metadata.ValidationContext[Job]) error {
+			if vc.Operation == metadata.OpUpdate {
+				oldStatus := vc.Old.Status
+				newStatus := vc.New.Status
+
+				// Define valid transitions
+				validTransitions := map[string][]string{
+					"pending":     {"pending", "in_progress"},
+					"in_progress": {"in_progress", "complete"},
+					"complete":    {"complete"}, // can't change once complete
+				}
+
+				allowed := validTransitions[oldStatus]
+				valid := false
+				for _, s := range allowed {
+					if s == newStatus {
+						valid = true
+						break
+					}
+				}
+				if !valid {
+					return errors.New("invalid status transition from " + oldStatus + " to " + newStatus)
+				}
+			}
+			return nil
+		}),
+	)
+
+	t.Run("valid transition pending to in_progress", func(t *testing.T) {
+		body := `{"id":1,"title":"Existing Job","status":"in_progress","priority":2}`
+		req := httptest.NewRequest("PUT", "/jobs/1", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("invalid transition pending to complete", func(t *testing.T) {
+		// Reset job to pending
+		_, _ = db.NewUpdate().Model(&Job{ID: 1, Status: "pending"}).Column("status").WherePK().Exec(context.Background())
+
+		body := `{"id":1,"title":"Existing Job","status":"complete","priority":2}`
+		req := httptest.NewRequest("PUT", "/jobs/1", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte("invalid status transition")) {
+			t.Errorf("expected transition error, got: %s", w.Body.String())
+		}
+	})
+}
+
+// TestBuilder_ValidationDelete tests validation on delete operations
+func TestBuilder_ValidationDelete(t *testing.T) {
+	setupJobTable()
+
+	// Insert jobs with different statuses
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	pendingJob := &Job{Title: "Pending Job", Status: "pending", Priority: 1}
+	inProgressJob := &Job{Title: "In Progress Job", Status: "in_progress", Priority: 2}
+	_, _ = db.NewInsert().Model(pendingJob).Returning("*").Exec(context.Background())
+	_, _ = db.NewInsert().Model(inProgressJob).Returning("*").Exec(context.Background())
+
+	r := chi.NewRouter()
+	b := router.NewBuilder(r)
+
+	// Validator: can't delete jobs that are in_progress
+	router.RegisterRoutes[Job](b, "/jobs",
+		router.AuthConfig{
+			Methods: []string{router.MethodAll},
+			Scopes:  []string{router.ScopePublic},
+		},
+		router.WithValidator(func(vc metadata.ValidationContext[Job]) error {
+			if vc.Operation == metadata.OpDelete {
+				if vc.Old.Status == "in_progress" {
+					return errors.New("cannot delete jobs that are in progress")
+				}
+			}
+			return nil
+		}),
+	)
+
+	t.Run("can delete pending job", func(t *testing.T) {
+		req := httptest.NewRequest("DELETE", "/jobs/1", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNoContent {
+			t.Errorf("expected 204, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("cannot delete in_progress job", func(t *testing.T) {
+		req := httptest.NewRequest("DELETE", "/jobs/2", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte("in progress")) {
+			t.Errorf("expected error about in progress, got: %s", w.Body.String())
+		}
+	})
 }

@@ -1,0 +1,25 @@
+meta {
+  name: Modify Completed Task - Rejected
+  type: http
+  seq: 9
+}
+
+put {
+  url: {{baseUrl}}/tasks/{{taskId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "Updated Title",
+    "description": "Trying to modify completed task",
+    "status": "completed",
+    "priority": 5
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body: contains completed
+}

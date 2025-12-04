@@ -45,6 +45,12 @@ func handleMutationError(w http.ResponseWriter, err error, operation string) {
 		http.Error(w, "request timeout", http.StatusGatewayTimeout)
 		return
 	}
+	// Check for validation error - return custom message to client
+	var validationErr *apperrors.ValidationError
+	if errors.As(err, &validationErr) {
+		http.Error(w, validationErr.Message, http.StatusBadRequest)
+		return
+	}
 	if errors.Is(err, apperrors.ErrDuplicate) {
 		http.Error(w, "resource already exists", http.StatusBadRequest)
 		return
@@ -379,6 +385,12 @@ func Delete[T any]() http.HandlerFunc {
 			}
 			if errors.Is(err, context.DeadlineExceeded) {
 				http.Error(w, "request timeout", http.StatusGatewayTimeout)
+				return
+			}
+			// Check for validation error - return custom message to client
+			var validationErr *apperrors.ValidationError
+			if errors.As(err, &validationErr) {
+				http.Error(w, validationErr.Message, http.StatusBadRequest)
 				return
 			}
 			if errors.Is(err, apperrors.ErrNotFound) {

@@ -1,0 +1,23 @@
+meta {
+  name: Create Task - Invalid Priority (too low)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/tasks
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "Invalid Task",
+    "priority": 0
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body: contains priority
+}

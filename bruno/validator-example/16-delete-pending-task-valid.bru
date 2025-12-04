@@ -1,0 +1,15 @@
+meta {
+  name: Delete Pending Task - Valid
+  type: http
+  seq: 16
+}
+
+delete {
+  url: {{baseUrl}}/tasks/{{invalidTransitionTaskId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 204
+}

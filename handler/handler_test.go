@@ -964,3 +964,122 @@ func TestHandler_GetAll_QueryParams(t *testing.T) {
 		})
 	}
 }
+
+// TestHandler_GetAll_FilterOperators tests filter operator parsing (filter[field][op]=value)
+func TestHandler_GetAll_FilterOperators(t *testing.T) {
+	cleanTable(t)
+
+	// Insert test data with different names for testing operators
+	db, _ := datastore.Get()
+	users := []TestUser{
+		{Name: "Xander", Email: "xander@example.com"},
+		{Name: "Yara", Email: "yara@example.com"},
+		{Name: "Zoe", Email: "zoe@example.com"},
+	}
+	for _, user := range users {
+		_, err := db.GetDB().NewInsert().Model(&user).Exec(context.Background())
+		if err != nil {
+			t.Fatal("Failed to insert test user:", err)
+		}
+	}
+
+	// Update metadata to allow filtering
+	queryMeta := &metadata.TypeMetadata{
+		TypeID:           "test_user_filter_op_id",
+		TypeName:         "TestUser",
+		TableName:        "users",
+		URLParamUUID:     "id",
+		ModelType:        reflect.TypeOf(TestUser{}),
+		FilterableFields: []string{"Name", "Email", "ID"},
+		SortableFields:   []string{"Name", "Email"},
+		DefaultLimit:     10,
+		MaxLimit:         100,
+	}
+
+	tests := []struct {
+		name          string
+		queryString   string
+		expectedCount int
+		checkNames    []string
+	}{
+		{
+			name:          "filter with eq operator",
+			queryString:   "filter[Name][eq]=Xander",
+			expectedCount: 1,
+			checkNames:    []string{"Xander"},
+		},
+		{
+			name:          "filter with neq operator",
+			queryString:   "filter[Name][neq]=Xander",
+			expectedCount: 2,
+			checkNames:    []string{"Yara", "Zoe"},
+		},
+		{
+			name:          "filter with gt operator on ID",
+			queryString:   "filter[ID][gt]=1",
+			expectedCount: 2,
+		},
+		{
+			name:          "filter with gte operator on ID",
+			queryString:   "filter[ID][gte]=2",
+			expectedCount: 2,
+		},
+		{
+			name:          "filter with lt operator on ID",
+			queryString:   "filter[ID][lt]=3",
+			expectedCount: 2,
+		},
+		{
+			name:          "filter with lte operator on ID",
+			queryString:   "filter[ID][lte]=2",
+			expectedCount: 2,
+		},
+		{
+			name:          "filter with like operator",
+			queryString:   "filter[Name][like]=%25ander",
+			expectedCount: 1,
+			checkNames:    []string{"Xander"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := chi.NewRouter()
+			r.Use(withMeta(queryMeta))
+			r.Get(testUsersPath, handler.GetAll[TestUser]())
+
+			url := testUsersPath + "?" + tt.queryString
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			w := httptest.NewRecorder()
+
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+				return
+			}
+
+			var results []TestUser
+			if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+				t.Fatal("Failed to unmarshal response:", err)
+			}
+
+			if len(results) != tt.expectedCount {
+				t.Errorf("Expected %d results, got %d", tt.expectedCount, len(results))
+			}
+
+			// Check specific names if provided
+			if len(tt.checkNames) > 0 {
+				names := make(map[string]bool)
+				for _, r := range results {
+					names[r.Name] = true
+				}
+				for _, expected := range tt.checkNames {
+					if !names[expected] {
+						t.Errorf("Expected result to contain %s", expected)
+					}
+				}
+			}
+		})
+	}
+}

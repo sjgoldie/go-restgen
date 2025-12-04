@@ -638,3 +638,131 @@ func TestQuery_MultipleSort(t *testing.T) {
 		t.Errorf("Expected first result to be %s, got %s", productApple, results[0].Name)
 	}
 }
+
+func TestQuery_Filter_Neq(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Filter by category != Fruit
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Category": {Value: "Fruit", Operator: "neq"},
+		},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	results, _, err := wrapper.GetAll(ctx, []string{})
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(results) != 3 {
+		t.Errorf("Expected 3 non-Fruit products, got %d", len(results))
+	}
+
+	for _, p := range results {
+		if p.Category == "Fruit" {
+			t.Errorf("Expected non-Fruit category, got %s", p.Category)
+		}
+	}
+}
+
+func TestQuery_Filter_Gte(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Filter by price >= 80
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Price": {Value: "80", Operator: "gte"},
+		},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	results, _, err := wrapper.GetAll(ctx, []string{})
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(results) != 3 {
+		t.Errorf("Expected 3 products with price >= 80 (Apple=100, Eggplant=80, Donut=150), got %d", len(results))
+	}
+
+	for _, p := range results {
+		if p.Price < 80 {
+			t.Errorf("Expected price >= 80, got %d", p.Price)
+		}
+	}
+}
+
+func TestQuery_Filter_Lt(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Filter by price < 80
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Price": {Value: "80", Operator: "lt"},
+		},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	results, _, err := wrapper.GetAll(ctx, []string{})
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(results) != 2 {
+		t.Errorf("Expected 2 products with price < 80 (Banana=50, Carrot=30), got %d", len(results))
+	}
+
+	for _, p := range results {
+		if p.Price >= 80 {
+			t.Errorf("Expected price < 80, got %d", p.Price)
+		}
+	}
+}
+
+func TestQuery_Filter_Lte(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Filter by price <= 80
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Price": {Value: "80", Operator: "lte"},
+		},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	results, _, err := wrapper.GetAll(ctx, []string{})
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(results) != 3 {
+		t.Errorf("Expected 3 products with price <= 80 (Banana=50, Carrot=30, Eggplant=80), got %d", len(results))
+	}
+
+	for _, p := range results {
+		if p.Price > 80 {
+			t.Errorf("Expected price <= 80, got %d", p.Price)
+		}
+	}
+}

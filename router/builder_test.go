@@ -863,6 +863,119 @@ func TestMultiReg_DifferentBypassScopesPerRegistration(t *testing.T) {
 	})
 }
 
+// TestBuilder_QueryConfigOptions tests that query config options are properly merged
+func TestBuilder_QueryConfigOptions(t *testing.T) {
+	multiRegTablesOnce.Do(setupMultiRegTables)
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	cleanMultiRegTables(db)
+	ctx := context.Background()
+
+	// Create test items with different prices
+	items := []MultiRegItem{
+		{Title: "Cheap Item", CreatorID: "alice"},
+		{Title: "Mid Item", CreatorID: "bob"},
+		{Title: "Expensive Item", CreatorID: "charlie"},
+	}
+	for i := range items {
+		db.NewInsert().Model(&items[i]).Returning("*").Exec(ctx)
+	}
+
+	// Setup router with query config options
+	r := chi.NewRouter()
+	b := router.NewBuilder(r)
+
+	router.RegisterRoutes[MultiRegItem](b, "/items",
+		router.AuthConfig{
+			Methods: []string{router.MethodAll},
+			Scopes:  []string{router.ScopePublic},
+		},
+		router.WithFilters("Title", "CreatorID"),
+		router.WithSorts("Title", "ID"),
+		router.WithDefaultSort("-ID"),
+		router.WithPagination(10, 50),
+	)
+
+	t.Run("Filter_ByTitle", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/items?filter[Title]=Cheap%20Item", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var result []MultiRegItem
+		json.Unmarshal(w.Body.Bytes(), &result)
+		if len(result) != 1 {
+			t.Errorf("expected 1 item filtered by title, got %d", len(result))
+		}
+		if len(result) > 0 && result[0].Title != "Cheap Item" {
+			t.Errorf("expected 'Cheap Item', got %q", result[0].Title)
+		}
+	})
+
+	t.Run("Sort_Ascending", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/items?sort=Title", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var result []MultiRegItem
+		json.Unmarshal(w.Body.Bytes(), &result)
+		if len(result) != 3 {
+			t.Errorf("expected 3 items, got %d", len(result))
+		}
+		// Alphabetically: Cheap, Expensive, Mid
+		if len(result) >= 3 {
+			if result[0].Title != "Cheap Item" {
+				t.Errorf("expected first item 'Cheap Item', got %q", result[0].Title)
+			}
+			if result[1].Title != "Expensive Item" {
+				t.Errorf("expected second item 'Expensive Item', got %q", result[1].Title)
+			}
+		}
+	})
+
+	t.Run("Pagination_Limit", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/items?limit=2", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var result []MultiRegItem
+		json.Unmarshal(w.Body.Bytes(), &result)
+		if len(result) != 2 {
+			t.Errorf("expected 2 items with limit=2, got %d", len(result))
+		}
+	})
+
+	t.Run("InvalidFilter_Ignored", func(t *testing.T) {
+		// Filter by ID which is not in FilterableFields
+		req := httptest.NewRequest("GET", "/items?filter[ID]=1", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var result []MultiRegItem
+		json.Unmarshal(w.Body.Bytes(), &result)
+		// Should return all 3 items (invalid filter ignored)
+		if len(result) != 3 {
+			t.Errorf("expected 3 items (invalid filter ignored), got %d", len(result))
+		}
+	})
+}
+
 func TestBuilder_ParentValidation(t *testing.T) {
 	r, db := setupBuilderTest(t)
 	ctx := context.Background()

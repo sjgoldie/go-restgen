@@ -150,6 +150,11 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 		return nil, err
 	}
 
+	// Run custom validation (after ownership is set so validator sees final state)
+	if err := w.runValidation(ctx, meta, metadata.OpCreate, nil, &item); err != nil {
+		return nil, err
+	}
+
 	// Use Returning to get the created record back with generated fields
 	_, err = w.Store.GetDB().NewInsert().Model(&item).Returning("*").Exec(ctx)
 	if err != nil {
@@ -189,10 +194,21 @@ func (w *Wrapper[T]) Update(ctx context.Context, id int, item T) (*T, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
-	// Validate item exists (and belongs to parent chain if applicable)
-	// This also provides a hook for future authorization checks
-	_, err := w.Get(ctx, id, []string{})
+	// Get metadata from context
+	meta, err := metadata.FromContext(ctx)
 	if err != nil {
+		return nil, err
+	}
+
+	// Validate item exists (and belongs to parent chain if applicable)
+	// This also provides the old value for validation
+	existing, err := w.Get(ctx, id, []string{})
+	if err != nil {
+		return nil, err
+	}
+
+	// Run custom validation with old and new values
+	if err := w.runValidation(ctx, meta, metadata.OpUpdate, existing, &item); err != nil {
 		return nil, err
 	}
 
@@ -230,10 +246,21 @@ func (w *Wrapper[T]) Delete(ctx context.Context, id int) error {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
-	// Validate item exists (and belongs to parent chain if applicable)
-	// This also provides a hook for future authorization checks
-	_, err := w.Get(ctx, id, []string{})
+	// Get metadata from context
+	meta, err := metadata.FromContext(ctx)
 	if err != nil {
+		return err
+	}
+
+	// Validate item exists (and belongs to parent chain if applicable)
+	// This also provides the item for validation
+	existing, err := w.Get(ctx, id, []string{})
+	if err != nil {
+		return err
+	}
+
+	// Run custom validation with old value (new is nil for delete)
+	if err := w.runValidation(ctx, meta, metadata.OpDelete, existing, nil); err != nil {
 		return err
 	}
 
@@ -669,4 +696,34 @@ func (w *Wrapper[T]) applyQueryPagination(query *bun.SelectQuery, opts *metadata
 	}
 
 	return query
+}
+
+// runValidation executes the validator function if one is configured in metadata
+// Returns a ValidationError if validation fails, nil otherwise
+func (w *Wrapper[T]) runValidation(ctx context.Context, meta *metadata.TypeMetadata, op metadata.Operation, old, new *T) error {
+	if meta.Validator == nil {
+		return nil
+	}
+
+	// Type assert the validator function
+	validator, ok := meta.Validator.(metadata.ValidatorFunc[T])
+	if !ok {
+		return nil // validator type mismatch, skip (shouldn't happen)
+	}
+
+	// Build validation context
+	vc := metadata.ValidationContext[T]{
+		Operation: op,
+		Old:       old,
+		New:       new,
+		Ctx:       ctx,
+	}
+
+	// Run the validator
+	if err := validator(vc); err != nil {
+		// Wrap the error in a ValidationError to preserve the message
+		return apperrors.NewValidationError(err.Error())
+	}
+
+	return nil
 }

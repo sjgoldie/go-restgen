@@ -31,12 +31,13 @@ func NewBuilder(r chi.Router) *Builder {
 }
 
 // RegisterRoutes registers CRUD routes for a resource type T
-// Accepts optional auth configs, query configs, and nested function for child routes
+// Accepts optional auth configs, query configs, validator, and nested function for child routes
 // Configs can be mixed with nested function in any order
 func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
-	// Separate auth configs, query configs, and nested function
+	// Separate auth configs, query configs, validator, and nested function
 	var authConfigs []AuthConfig
 	var queryConfigs []QueryConfig
+	var validator metadata.ValidatorFunc[T]
 	var nested NestedFunc
 
 	for _, opt := range options {
@@ -45,16 +46,18 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			authConfigs = append(authConfigs, v)
 		case QueryConfig:
 			queryConfigs = append(queryConfigs, v)
+		case ValidatorConfig[T]:
+			validator = v.Fn
 		case func(*Builder):
 			nested = v
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator)
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig) {
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T]) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -152,6 +155,11 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 		if qc.MaxLimit > 0 {
 			meta.MaxLimit = qc.MaxLimit
 		}
+	}
+
+	// Set validator if provided
+	if validator != nil {
+		meta.Validator = validator
 	}
 
 	// Create middleware to inject metadata into context

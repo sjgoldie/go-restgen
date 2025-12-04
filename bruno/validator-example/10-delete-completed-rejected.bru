@@ -1,0 +1,16 @@
+meta {
+  name: Delete Completed Task - Rejected
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{baseUrl}}/tasks/{{taskId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 400
+  res.body: contains completed
+}

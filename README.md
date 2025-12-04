@@ -459,6 +459,92 @@ router.RegisterRoutes[Project](b, "/projects",
 - Ownership and auth configs are per-registration
 - No conflicts between registrations of the same type
 
+## Validation
+
+go-restgen supports custom validation for create, update, and delete operations. Validation runs **after** authentication and authorization checks, ensuring validators only see authorized requests.
+
+### Basic Usage
+
+```go
+router.RegisterRoutes[Task](b, "/tasks",
+    router.AllPublic(),
+    router.WithValidator(func(vc metadata.ValidationContext[Task]) error {
+        switch vc.Operation {
+        case metadata.OpCreate:
+            if vc.New.Priority < 1 || vc.New.Priority > 5 {
+                return errors.New("priority must be between 1 and 5")
+            }
+        case metadata.OpUpdate:
+            // Access both old and new values for transition validation
+            if vc.Old.Status == "completed" {
+                return errors.New("cannot modify completed tasks")
+            }
+        case metadata.OpDelete:
+            if vc.Old.Status == "completed" {
+                return errors.New("cannot delete completed tasks")
+            }
+        }
+        return nil
+    }),
+)
+```
+
+### ValidationContext
+
+The validator receives a `ValidationContext[T]` with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Operation` | `metadata.Operation` | One of `OpCreate`, `OpUpdate`, `OpDelete` |
+| `New` | `*T` | The incoming item (nil for delete) |
+| `Old` | `*T` | The existing item (nil for create) |
+| `Ctx` | `context.Context` | Request context (contains AuthInfo, parent IDs, etc.) |
+
+### State Machine Example
+
+Validate status transitions using the old and new values:
+
+```go
+var validTransitions = map[string][]string{
+    "pending":     {"in_progress", "cancelled"},
+    "in_progress": {"completed", "cancelled"},
+    "completed":   {},  // Final state
+    "cancelled":   {},  // Final state
+}
+
+func isValidTransition(from, to string) bool {
+    if from == to { return true }
+    for _, allowed := range validTransitions[from] {
+        if allowed == to { return true }
+    }
+    return false
+}
+
+router.WithValidator(func(vc metadata.ValidationContext[Task]) error {
+    if vc.Operation == metadata.OpUpdate {
+        if !isValidTransition(vc.Old.Status, vc.New.Status) {
+            return fmt.Errorf("invalid transition from '%s' to '%s'",
+                vc.Old.Status, vc.New.Status)
+        }
+    }
+    return nil
+})
+```
+
+### Error Handling
+
+- Return an `error` to reject the operation with a 400 Bad Request
+- The error message is returned to the client
+- Return `nil` to allow the operation to proceed
+
+**Important Notes:**
+- Validators are **read-only** - they cannot modify the input
+- Validators run **after** auth checks (so you know the request is authorized)
+- For create operations, ownership fields are already set when the validator runs
+- Validators should be fast (no database queries) as they run on every mutation
+
+See the [validator example](./examples/validator) for a complete working example with state machine validation.
+
 ## Architecture
 
 go-restgen follows a clean layered architecture:
@@ -576,6 +662,7 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[Simple CRUD](./examples/simple)** - Basic CRUD operations with SQLite
 - **[Nested Routes](./examples/nested_routes)** - 3-level nesting (Users → Posts → Comments) with automatic parent validation
 - **[Authentication & Authorization](./examples/auth)** - Comprehensive auth patterns including scopes, ownership, admin bypass, and multi-ownership
+- **[Validation](./examples/validator)** - Business rule validation with state machine transitions
 
 All examples include comprehensive Bruno API tests. See [`bruno/README.md`](./bruno/README.md) for details.
 
@@ -637,6 +724,7 @@ go-restgen builds on these excellent projects:
 - [x] Multi-registration support (same model at different routes with different configs)
 - [x] Query parameter filtering and sorting
 - [x] Pagination with limit/offset and total count
+- [x] Custom validation for business rules
 - [ ] Optionally retrieve an object's relations when retrieving the object itself
 - [ ] MySQL support
 - [ ] OpenAPI/Swagger generation

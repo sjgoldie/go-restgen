@@ -1,0 +1,25 @@
+meta {
+  name: Create Task - Invalid Status (must be pending)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/tasks
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "Invalid Task",
+    "description": "Trying to create as completed",
+    "status": "completed",
+    "priority": 3
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body: contains pending
+}

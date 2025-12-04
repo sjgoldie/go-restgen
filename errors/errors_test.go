@@ -40,6 +40,20 @@ func TestErrors(t *testing.T) {
 				return e != nil && e.Error() != ""
 			},
 		},
+		{
+			name: "ErrMetadataNotFound is defined",
+			err:  apperrors.ErrMetadataNotFound,
+			check: func(e error) bool {
+				return e != nil && e.Error() != ""
+			},
+		},
+		{
+			name: "ErrValidation is defined",
+			err:  apperrors.ErrValidation,
+			check: func(e error) bool {
+				return e != nil && e.Error() != ""
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -57,6 +71,8 @@ func TestErrors_Distinct(t *testing.T) {
 		apperrors.ErrDuplicate,
 		apperrors.ErrInvalidReference,
 		apperrors.ErrUnavailable,
+		apperrors.ErrMetadataNotFound,
+		apperrors.ErrValidation,
 	}
 
 	// Verify all errors are distinct
@@ -95,6 +111,16 @@ func TestErrors_Messages(t *testing.T) {
 			err:     apperrors.ErrUnavailable,
 			message: "service temporarily unavailable",
 		},
+		{
+			name:    "ErrMetadataNotFound message",
+			err:     apperrors.ErrMetadataNotFound,
+			message: "metadata not found in context",
+		},
+		{
+			name:    "ErrValidation message",
+			err:     apperrors.ErrValidation,
+			message: "validation failed",
+		},
 	}
 
 	for _, tt := range tests {
@@ -104,4 +130,34 @@ func TestErrors_Messages(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidationError(t *testing.T) {
+	t.Run("NewValidationError creates error with message", func(t *testing.T) {
+		err := apperrors.NewValidationError("priority must be between 1 and 5")
+		if err.Message != "priority must be between 1 and 5" {
+			t.Errorf("Expected message 'priority must be between 1 and 5', got '%s'", err.Message)
+		}
+	})
+
+	t.Run("Error returns message", func(t *testing.T) {
+		err := apperrors.NewValidationError("invalid status")
+		if err.Error() != "invalid status" {
+			t.Errorf("Expected Error() to return 'invalid status', got '%s'", err.Error())
+		}
+	})
+
+	t.Run("Is matches ErrValidation", func(t *testing.T) {
+		err := apperrors.NewValidationError("test error")
+		if !err.Is(apperrors.ErrValidation) {
+			t.Error("Expected ValidationError.Is(ErrValidation) to return true")
+		}
+	})
+
+	t.Run("Is does not match other errors", func(t *testing.T) {
+		err := apperrors.NewValidationError("test error")
+		if err.Is(apperrors.ErrNotFound) {
+			t.Error("Expected ValidationError.Is(ErrNotFound) to return false")
+		}
+	})
 }

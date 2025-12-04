@@ -1,4 +1,4 @@
-//nolint:staticcheck // Test code - string context keys are acceptable
+//nolint:staticcheck,goconst // Test code - string context keys and test data strings are acceptable
 package datastore_test
 
 import (

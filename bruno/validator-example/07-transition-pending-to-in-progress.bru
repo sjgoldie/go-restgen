@@ -1,0 +1,25 @@
+meta {
+  name: Transition - Pending to In Progress (valid)
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{baseUrl}}/tasks/{{taskId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "Test Task",
+    "description": "A task for testing",
+    "status": "in_progress",
+    "priority": 3
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq in_progress
+}

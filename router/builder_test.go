@@ -18,6 +18,7 @@ import (
 	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/router"
+	"github.com/sjgoldie/go-restgen/service"
 	"github.com/uptrace/bun"
 )
 
@@ -1263,6 +1264,131 @@ func TestBuilder_ValidationDelete(t *testing.T) {
 		}
 		if !bytes.Contains(w.Body.Bytes(), []byte("in progress")) {
 			t.Errorf("expected error about in progress, got: %s", w.Body.String())
+		}
+	})
+}
+
+// TestBuilder_CustomHandlers tests that all custom handler options are properly parsed in RegisterRoutes
+func TestBuilder_CustomHandlers(t *testing.T) {
+	multiRegTablesOnce.Do(setupMultiRegTables)
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	cleanMultiRegTables(db)
+	ctx := context.Background()
+
+	// Create test item
+	item := &MultiRegItem{Title: "Test Item"}
+	db.NewInsert().Model(item).Returning("*").Exec(ctx)
+
+	// Setup router with ALL custom handler options
+	r := chi.NewRouter()
+	b := router.NewBuilder(r)
+
+	customGetCalled := false
+	customGetAllCalled := false
+	customCreateCalled := false
+	customUpdateCalled := false
+	customDeleteCalled := false
+
+	router.RegisterRoutes[MultiRegItem](b, "/items",
+		router.AuthConfig{
+			Methods: []string{router.MethodAll},
+			Scopes:  []string{router.ScopePublic},
+		},
+		router.WithCustomGet(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*MultiRegItem, error) {
+			customGetCalled = true
+			return svc.Get(ctx, id, relations)
+		}),
+		router.WithCustomGetAll(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions, relations []string) ([]*MultiRegItem, int, error) {
+			customGetAllCalled = true
+			return svc.GetAll(ctx, relations)
+		}),
+		router.WithCustomCreate(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item MultiRegItem) (*MultiRegItem, error) {
+			customCreateCalled = true
+			return svc.Create(ctx, item)
+		}),
+		router.WithCustomUpdate(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, item MultiRegItem) (*MultiRegItem, error) {
+			customUpdateCalled = true
+			return svc.Update(ctx, id, item)
+		}),
+		router.WithCustomDelete(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) error {
+			customDeleteCalled = true
+			return svc.Delete(ctx, id)
+		}),
+	)
+
+	// Test GetAll
+	t.Run("CustomGetAll", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/items", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		if !customGetAllCalled {
+			t.Error("custom GetAll was not called")
+		}
+	})
+
+	// Test Get
+	t.Run("CustomGet", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/items/1", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		if !customGetCalled {
+			t.Error("custom Get was not called")
+		}
+	})
+
+	// Test Create
+	t.Run("CustomCreate", func(t *testing.T) {
+		body := `{"title":"New Item"}`
+		req := httptest.NewRequest("POST", "/items", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+		if !customCreateCalled {
+			t.Error("custom Create was not called")
+		}
+	})
+
+	// Test Update
+	t.Run("CustomUpdate", func(t *testing.T) {
+		body := `{"id":1,"title":"Updated Item"}`
+		req := httptest.NewRequest("PUT", "/items/1", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		if !customUpdateCalled {
+			t.Error("custom Update was not called")
+		}
+	})
+
+	// Test Delete
+	t.Run("CustomDelete", func(t *testing.T) {
+		req := httptest.NewRequest("DELETE", "/items/1", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNoContent {
+			t.Errorf("expected 204, got %d: %s", w.Code, w.Body.String())
+		}
+		if !customDeleteCalled {
+			t.Error("custom Delete was not called")
 		}
 	})
 }

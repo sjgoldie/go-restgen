@@ -36,6 +36,7 @@ The easiest way to run all Bruno tests is using the automated script:
 # Run specific example tests
 ./scripts/run-bruno-tests.sh simple
 ./scripts/run-bruno-tests.sh nested
+./scripts/run-bruno-tests.sh uuid
 ./scripts/run-bruno-tests.sh auth
 ```
 
@@ -166,9 +167,60 @@ go run main.go
 - `user:charlie:user,publisher` - Publisher user
 - `user:diana:user,moderator` - Moderator user
 
+### UUID Example Tests
+
+Tests UUID primary keys with nested resources.
+
+**Start the server:**
+```bash
+cd examples/uuid_pk
+go run main.go
+```
+
+**Run tests in Bruno:**
+- Open the `uuid-example` folder
+- Click "Run Collection" to run all tests in sequence
+
+**Tests cover (14 tests):**
+1. **Blog CRUD** - Create, read, update, delete blogs with UUID PKs
+2. **Nested Posts** - Create posts under blogs with UUID foreign keys
+3. **Parent Validation** - Posts are filtered by parent blog UUID
+4. **UUID in URLs** - Full UUID support in route parameters
+
+### Validator Example Tests
+
+Tests custom validation with state machine transitions.
+
+**Start the server:**
+```bash
+cd examples/validator
+go run main.go
+```
+
+**Tests cover (16 tests):**
+- Create validation (status must be pending, priority 1-5)
+- Status transitions (pending → in_progress → completed)
+- Invalid transitions rejected
+- Delete restrictions on completed tasks
+
+### Audit Example Tests
+
+Tests transactional audit logging.
+
+**Start the server:**
+```bash
+cd examples/audit
+go run main.go
+```
+
+**Tests cover (8 tests):**
+- Audit records created for all mutations
+- Old and new state captured
+- Audit runs in same transaction
+
 ## Test Coverage
 
-**Total: 58 end-to-end API tests** across all example applications.
+**Total: 96 end-to-end API tests** across all example applications.
 
 These Bruno tests provide **end-to-end API coverage** for the example applications. They complement the unit tests by:
 

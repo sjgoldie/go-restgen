@@ -1,0 +1,29 @@
+meta {
+  name: Create Post under Blog
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/blogs/{{blogId}}/posts
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "First Post",
+    "content": "Hello World with UUID PKs!"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.blog_id: eq {{blogId}}
+  res.body.title: eq First Post
+}
+
+script:post-response {
+  bru.setVar("postId", res.body.id);
+}

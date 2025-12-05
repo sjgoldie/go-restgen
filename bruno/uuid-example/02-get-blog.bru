@@ -1,0 +1,17 @@
+meta {
+  name: Get Blog by UUID
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{blogId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{blogId}}
+  res.body.name: eq Tech Blog
+}

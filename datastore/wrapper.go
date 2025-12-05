@@ -92,7 +92,8 @@ func (w *Wrapper[T]) GetAll(ctx context.Context, relations []string) ([]*T, int,
 
 // Get retrieves a single item of type T by ID from the datastore
 // Filters from context (parent IDs) are applied automatically
-func (w *Wrapper[T]) Get(ctx context.Context, id int, relations []string) (*T, error) {
+// The id parameter is a string to support both integer and UUID primary keys
+func (w *Wrapper[T]) Get(ctx context.Context, id string, relations []string) (*T, error) {
 	// Get metadata from context
 	meta, err := metadata.FromContext(ctx)
 	if err != nil {
@@ -121,7 +122,7 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 		parentMeta := meta.ParentMeta
 
 		// Extract parent ID from context
-		parentIDs, ok := ctx.Value("parentIDs").(map[string]int)
+		parentIDs, ok := ctx.Value("parentIDs").(map[string]string)
 		if !ok || parentIDs == nil {
 			return nil, fmt.Errorf("parent context missing for nested resource")
 		}
@@ -134,13 +135,13 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 		// Validate parent exists by calling getByType on it
 		// This validates the full parent chain automatically
 		// Parent validation will use the parent's own ownership config from metadata
-		_, err = w.getWithMeta(ctx, parentMeta, parentID, []string{})
+		parentItem, err := w.getWithMeta(ctx, parentMeta, parentID, []string{})
 		if err != nil {
 			return nil, err
 		}
 
-		// Set the foreign key field on the item
-		if err := w.setForeignKey(&item, meta.ForeignKeyCol, parentID); err != nil {
+		// Set the foreign key field on the item using the parent's actual PK value
+		if err := w.setForeignKey(&item, meta.ForeignKeyCol, parentItem); err != nil {
 			return nil, err
 		}
 	}
@@ -204,7 +205,8 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 }
 
 // Update updates an existing item of type T in the datastore
-func (w *Wrapper[T]) Update(ctx context.Context, id int, item T) (*T, error) {
+// The id parameter is a string to support both integer and UUID primary keys
+func (w *Wrapper[T]) Update(ctx context.Context, id string, item T) (*T, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -270,7 +272,8 @@ func (w *Wrapper[T]) Update(ctx context.Context, id int, item T) (*T, error) {
 }
 
 // Delete removes an item of type T from the datastore by ID
-func (w *Wrapper[T]) Delete(ctx context.Context, id int) error {
+// The id parameter is a string to support both integer and UUID primary keys
+func (w *Wrapper[T]) Delete(ctx context.Context, id string) error {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -298,9 +301,9 @@ func (w *Wrapper[T]) Delete(ctx context.Context, id int) error {
 	// If audit is configured, wrap in transaction
 	if meta.Auditor != nil {
 		err = w.Store.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-			// Delete the item
+			// Delete the item using ?TablePKs to support any PK type
 			var txErr error
-			result, txErr = tx.NewDelete().Model(&item).Where("? = ?", bun.Ident("id"), id).Exec(ctx)
+			result, txErr = tx.NewDelete().Model(&item).Where("?TablePKs = ?", id).Exec(ctx)
 			if txErr != nil {
 				return txErr
 			}
@@ -308,8 +311,8 @@ func (w *Wrapper[T]) Delete(ctx context.Context, id int) error {
 			return w.runAudit(ctx, tx, meta, metadata.OpDelete, existing, nil)
 		})
 	} else {
-		// No audit, just delete directly
-		result, err = w.Store.GetDB().NewDelete().Model(&item).Where("? = ?", bun.Ident("id"), id).Exec(ctx)
+		// No audit, just delete directly using ?TablePKs to support any PK type
+		result, err = w.Store.GetDB().NewDelete().Model(&item).Where("?TablePKs = ?", id).Exec(ctx)
 	}
 
 	if err != nil {
@@ -338,7 +341,8 @@ func (w *Wrapper[T]) Delete(ctx context.Context, id int) error {
 
 // getWithMeta retrieves a single item by ID using metadata
 // This allows validating parent existence with full chain validation
-func (w *Wrapper[T]) getWithMeta(ctx context.Context, meta *metadata.TypeMetadata, id int, relations []string) (interface{}, error) {
+// The id parameter is a string to support both integer and UUID primary keys
+func (w *Wrapper[T]) getWithMeta(ctx context.Context, meta *metadata.TypeMetadata, id string, relations []string) (interface{}, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -385,7 +389,8 @@ func (w *Wrapper[T]) getWithMeta(ctx context.Context, meta *metadata.TypeMetadat
 }
 
 // setForeignKey sets the foreign key field on the item using reflection
-func (w *Wrapper[T]) setForeignKey(item *T, foreignKeyCol string, parentID int) error {
+// parentItem is the parent object from which we extract the ID value
+func (w *Wrapper[T]) setForeignKey(item *T, foreignKeyCol string, parentItem interface{}) error {
 	// Convert column name to field name (e.g., "author_id" -> "AuthorID")
 	fieldName := fieldNameFromColumn(foreignKeyCol)
 
@@ -395,7 +400,38 @@ func (w *Wrapper[T]) setForeignKey(item *T, foreignKeyCol string, parentID int) 
 	if !fkField.IsValid() || !fkField.CanSet() {
 		return fmt.Errorf("cannot set foreign key field %s", fieldName)
 	}
-	fkField.SetInt(int64(parentID))
+
+	// Extract the ID from the parent item
+	parentValue := reflect.ValueOf(parentItem)
+	if parentValue.Kind() == reflect.Ptr {
+		parentValue = parentValue.Elem()
+	}
+	parentIDField := parentValue.FieldByName("ID")
+	if !parentIDField.IsValid() {
+		return fmt.Errorf("parent item has no ID field")
+	}
+
+	// Set the foreign key based on its type
+	switch fkField.Kind() {
+	case reflect.Int, reflect.Int64:
+		// FK is int, parent ID should be int
+		if parentIDField.Kind() == reflect.Int || parentIDField.Kind() == reflect.Int64 {
+			fkField.SetInt(parentIDField.Int())
+		} else {
+			return fmt.Errorf("foreign key field %s is int but parent ID is %s", fieldName, parentIDField.Type())
+		}
+	case reflect.String:
+		// FK is string (for UUID stored as string)
+		fkField.SetString(fmt.Sprintf("%v", parentIDField.Interface()))
+	default:
+		// For uuid.UUID or other types, try direct assignment if types match
+		if fkField.Type() == parentIDField.Type() {
+			fkField.Set(parentIDField)
+		} else {
+			return fmt.Errorf("cannot set foreign key field %s: type mismatch (field: %s, parent: %s)",
+				fieldName, fkField.Type(), parentIDField.Type())
+		}
+	}
 
 	return nil
 }
@@ -430,7 +466,7 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 	}
 
 	// Extract parent IDs from context
-	parentIDs, ok := ctx.Value("parentIDs").(map[string]int)
+	parentIDs, ok := ctx.Value("parentIDs").(map[string]string)
 	if !ok || parentIDs == nil {
 		return query, nil
 	}

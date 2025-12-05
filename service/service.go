@@ -19,7 +19,8 @@ func (s *Common[T]) GetAll(ctx context.Context, relations []string) ([]*T, int, 
 }
 
 // Get retrieves a single item of type T by ID
-func (s *Common[T]) Get(ctx context.Context, id int, relations []string) (*T, error) {
+// The id parameter is a string to support both integer and UUID primary keys
+func (s *Common[T]) Get(ctx context.Context, id string, relations []string) (*T, error) {
 	return s.store.Get(ctx, id, relations)
 }
 
@@ -29,11 +30,13 @@ func (s *Common[T]) Create(ctx context.Context, item T) (*T, error) {
 }
 
 // Update updates an existing item of type T
-func (s *Common[T]) Update(ctx context.Context, id int, item T) (*T, error) {
+// The id parameter is a string to support both integer and UUID primary keys
+func (s *Common[T]) Update(ctx context.Context, id string, item T) (*T, error) {
 	return s.store.Update(ctx, id, item)
 }
 
 // Delete deletes an item of type T by ID
-func (s *Common[T]) Delete(ctx context.Context, id int) error {
+// The id parameter is a string to support both integer and UUID primary keys
+func (s *Common[T]) Delete(ctx context.Context, id string) error {
 	return s.store.Delete(ctx, id)
 }

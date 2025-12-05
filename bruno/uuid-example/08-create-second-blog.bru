@@ -1,0 +1,28 @@
+meta {
+  name: Create Second Blog
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/blogs
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Travel Blog",
+    "description": "Adventures around the world"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.name: eq Travel Blog
+}
+
+script:post-response {
+  bru.setVar("blog2Id", res.body.id);
+}

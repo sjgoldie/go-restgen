@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sjgoldie/go-restgen/datastore"
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/metadata"
@@ -108,7 +110,7 @@ func TestWrapper_Get(t *testing.T) {
 	}
 
 	// Get the user
-	retrieved, err := wrapper.Get(ctx, created.ID, []string{})
+	retrieved, err := wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
 	if err != nil {
 		t.Fatal("Failed to get user:", err)
 	}
@@ -173,7 +175,7 @@ func TestWrapper_Update(t *testing.T) {
 
 	// Update the user
 	created.Name = "Updated Name"
-	updated, err := wrapper.Update(ctx, created.ID, *created)
+	updated, err := wrapper.Update(ctx, strconv.Itoa(created.ID), *created)
 	if err != nil {
 		t.Fatal("Failed to update user:", err)
 	}
@@ -202,12 +204,12 @@ func TestWrapper_Delete(t *testing.T) {
 	}
 
 	// Delete the user
-	if err := wrapper.Delete(ctx, created.ID); err != nil {
+	if err := wrapper.Delete(ctx, strconv.Itoa(created.ID)); err != nil {
 		t.Fatal("Failed to delete user:", err)
 	}
 
 	// Verify deletion
-	_, err = wrapper.Get(ctx, created.ID, []string{})
+	_, err = wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
 	if err == nil {
 		t.Error("Expected error when getting deleted user")
 	}
@@ -222,7 +224,7 @@ func TestWrapper_Get_NotFound(t *testing.T) {
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
 	ctx := ctxWithMeta(testUserMeta)
 
-	_, err := wrapper.Get(ctx, 999, []string{})
+	_, err := wrapper.Get(ctx, "999", []string{})
 	if err == nil {
 		t.Error("Expected error when getting non-existent user")
 	}
@@ -241,7 +243,7 @@ func TestWrapper_Update_NotFound(t *testing.T) {
 		Email: "notexist@example.com",
 	}
 
-	_, err := wrapper.Update(ctx, 999, user)
+	_, err := wrapper.Update(ctx, "999", user)
 	if err == nil {
 		t.Error("Expected error when updating non-existent user")
 	}
@@ -254,7 +256,7 @@ func TestWrapper_Delete_NotFound(t *testing.T) {
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
 	ctx := ctxWithMeta(testUserMeta)
 
-	err := wrapper.Delete(ctx, 999)
+	err := wrapper.Delete(ctx, "999")
 	if err == nil {
 		t.Error("Expected error when deleting non-existent user")
 	}
@@ -303,7 +305,7 @@ func TestWrapper_Get_WithRelations(t *testing.T) {
 
 	// Get with relations (even though we don't have any relations in this test model)
 	// This tests that the relations parameter is properly handled
-	retrieved, err := wrapper.Get(ctx, created.ID, []string{})
+	retrieved, err := wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
 	if err != nil {
 		t.Fatal("Failed to get user with relations:", err)
 	}
@@ -364,7 +366,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 	}
 
 	// Get
-	retrieved, err := wrapper.Get(ctx, created.ID, []string{})
+	retrieved, err := wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
 	if err != nil {
 		t.Fatal("Failed to get user:", err)
 	}
@@ -374,7 +376,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 
 	// Update
 	retrieved.Name = "Updated Lifecycle"
-	updated, err := wrapper.Update(ctx, retrieved.ID, *retrieved)
+	updated, err := wrapper.Update(ctx, strconv.Itoa(retrieved.ID), *retrieved)
 	if err != nil {
 		t.Fatal("Failed to update user:", err)
 	}
@@ -392,13 +394,13 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 	}
 
 	// Delete
-	err = wrapper.Delete(ctx, created.ID)
+	err = wrapper.Delete(ctx, strconv.Itoa(created.ID))
 	if err != nil {
 		t.Fatal("Failed to delete user:", err)
 	}
 
 	// Verify deletion
-	_, err = wrapper.Get(ctx, created.ID, []string{})
+	_, err = wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
 	if err == nil {
 		t.Error("Expected error when getting deleted user")
 	}
@@ -570,7 +572,7 @@ func TestOwnership_SingleField_Get(t *testing.T) {
 	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
 	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
 
-	retrieved, err := wrapper.Get(ctxAlice, created.ID, []string{})
+	retrieved, err := wrapper.Get(ctxAlice, strconv.Itoa(created.ID), []string{})
 	if err != nil {
 		t.Fatal("Failed to get blog as alice:", err)
 	}
@@ -582,7 +584,7 @@ func TestOwnership_SingleField_Get(t *testing.T) {
 	ctxBob := context.WithValue(ctx, "ownershipEnforced", true)
 	ctxBob = context.WithValue(ctxBob, "ownershipUserID", "bob")
 
-	_, err = wrapper.Get(ctxBob, created.ID, []string{})
+	_, err = wrapper.Get(ctxBob, strconv.Itoa(created.ID), []string{})
 	if err == nil {
 		t.Error("Expected error when bob tries to get alice's blog")
 	}
@@ -606,8 +608,8 @@ func TestOwnership_MultipleFields_GetAll(t *testing.T) {
 
 	// Create posts with different ownership combinations
 	// Add parent context for nested resource creation
-	parentIDs := map[string]int{
-		"blog_id": createdBlog.ID,
+	parentIDs := map[string]string{
+		"blog_id": strconv.Itoa(createdBlog.ID),
 	}
 	ctxWithParent := context.WithValue(ctxPost, "parentIDs", parentIDs)
 
@@ -846,8 +848,8 @@ func TestOwnership_NestedResourceValidation(t *testing.T) {
 	ctxBob = context.WithValue(ctxBob, "ownershipUserID", "bob")
 
 	// Add parent ID to context
-	parentIDs := map[string]int{
-		"blog_id": createdBlog.ID,
+	parentIDs := map[string]string{
+		"blog_id": strconv.Itoa(createdBlog.ID),
 	}
 	ctxBob = context.WithValue(ctxBob, "parentIDs", parentIDs)
 
@@ -1018,7 +1020,7 @@ func TestValidation_Update_Success(t *testing.T) {
 
 	// Update to inactive (should succeed)
 	created.Status = "inactive"
-	updated, err := wrapper.Update(ctx, created.ID, *created)
+	updated, err := wrapper.Update(ctx, strconv.Itoa(created.ID), *created)
 	if err != nil {
 		t.Fatal("Expected update to succeed:", err)
 	}
@@ -1059,7 +1061,7 @@ func TestValidation_Update_Failure(t *testing.T) {
 
 	// Try to update (should fail)
 	created.Name = "Updated"
-	_, err = wrapper.Update(ctx, created.ID, *created)
+	_, err = wrapper.Update(ctx, strconv.Itoa(created.ID), *created)
 	if err == nil {
 		t.Fatal("Expected update to fail validation")
 	}
@@ -1101,7 +1103,7 @@ func TestValidation_Delete_Success(t *testing.T) {
 	}
 
 	// Delete (should succeed)
-	err = wrapper.Delete(ctx, created.ID)
+	err = wrapper.Delete(ctx, strconv.Itoa(created.ID))
 	if err != nil {
 		t.Fatal("Expected delete to succeed:", err)
 	}
@@ -1138,7 +1140,7 @@ func TestValidation_Delete_Failure(t *testing.T) {
 	}
 
 	// Try to delete (should fail)
-	err = wrapper.Delete(ctx, created.ID)
+	err = wrapper.Delete(ctx, strconv.Itoa(created.ID))
 	if err == nil {
 		t.Fatal("Expected delete to fail validation")
 	}
@@ -1173,12 +1175,12 @@ func TestValidation_NoValidator(t *testing.T) {
 	}
 
 	created.Name = "Updated"
-	_, err = wrapper.Update(ctx, created.ID, *created)
+	_, err = wrapper.Update(ctx, strconv.Itoa(created.ID), *created)
 	if err != nil {
 		t.Fatal("Update should succeed without validator:", err)
 	}
 
-	err = wrapper.Delete(ctx, created.ID)
+	err = wrapper.Delete(ctx, strconv.Itoa(created.ID))
 	if err != nil {
 		t.Fatal("Delete should succeed without validator:", err)
 	}
@@ -1356,7 +1358,7 @@ func TestAudit_Update(t *testing.T) {
 
 	// Update the item
 	item.Status = "active"
-	_, err = wrapper.Update(ctx, item.ID, item)
+	_, err = wrapper.Update(ctx, strconv.Itoa(item.ID), item)
 	if err != nil {
 		t.Fatal("Expected update to succeed:", err)
 	}
@@ -1416,7 +1418,7 @@ func TestAudit_Delete(t *testing.T) {
 	}
 
 	// Delete the item
-	err = wrapper.Delete(ctx, item.ID)
+	err = wrapper.Delete(ctx, strconv.Itoa(item.ID))
 	if err != nil {
 		t.Fatal("Expected delete to succeed:", err)
 	}
@@ -1553,5 +1555,275 @@ func TestAudit_WrongAuditorType(t *testing.T) {
 
 	if len(logs) != 0 {
 		t.Fatalf("Expected 0 audit logs, got %d", len(logs))
+	}
+}
+
+// ============================================================================
+// UUID Primary Key and Foreign Key Tests
+// ============================================================================
+
+// TestUUIDBlog is a parent model with UUID primary key
+type TestUUIDBlog struct {
+	bun.BaseModel `bun:"table:uuid_blogs"`
+	ID            uuid.UUID `bun:"id,pk,type:uuid" json:"id"`
+	Name          string    `bun:"name,notnull" json:"name"`
+	CreatedAt     time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at,omitempty"`
+}
+
+// BeforeAppendModel generates UUID for new blogs
+func (b *TestUUIDBlog) BeforeAppendModel(_ context.Context, query bun.Query) error {
+	if _, ok := query.(*bun.InsertQuery); ok {
+		if b.ID == uuid.Nil {
+			b.ID = uuid.New()
+		}
+	}
+	return nil
+}
+
+// TestUUIDPost is a child model with UUID primary key and UUID foreign key
+type TestUUIDPost struct {
+	bun.BaseModel `bun:"table:uuid_posts"`
+	ID            uuid.UUID     `bun:"id,pk,type:uuid" json:"id"`
+	BlogID        uuid.UUID     `bun:"blog_id,notnull,type:uuid" json:"blog_id"`
+	Blog          *TestUUIDBlog `bun:"rel:belongs-to,join:blog_id=id" json:"-"`
+	Title         string        `bun:"title,notnull" json:"title"`
+	CreatedAt     time.Time     `bun:"created_at,notnull,default:current_timestamp" json:"created_at,omitempty"`
+}
+
+// BeforeAppendModel generates UUID for new posts
+func (p *TestUUIDPost) BeforeAppendModel(_ context.Context, query bun.Query) error {
+	if _, ok := query.(*bun.InsertQuery); ok {
+		if p.ID == uuid.Nil {
+			p.ID = uuid.New()
+		}
+	}
+	return nil
+}
+
+func setupUUIDTestDB(t *testing.T) (*datastore.SQLite, func()) {
+	t.Helper()
+
+	db, err := datastore.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal("Failed to create test database:", err)
+	}
+
+	if err := datastore.Initialize(db); err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to initialize datastore:", err)
+	}
+
+	// Create UUID tables
+	_, err = db.GetDB().NewCreateTable().Model((*TestUUIDBlog)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create uuid_blogs table:", err)
+	}
+
+	_, err = db.GetDB().NewCreateTable().Model((*TestUUIDPost)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create uuid_posts table:", err)
+	}
+
+	cleanup := func() {
+		db.GetDB().NewDropTable().Model((*TestUUIDPost)(nil)).IfExists().Exec(context.Background())
+		db.GetDB().NewDropTable().Model((*TestUUIDBlog)(nil)).IfExists().Exec(context.Background())
+		datastore.Cleanup()
+		db.Cleanup()
+	}
+
+	return db, cleanup
+}
+
+// TestWrapper_UUID_NestedCreate tests creating nested resources with UUID foreign keys
+func TestWrapper_UUID_NestedCreate(t *testing.T) {
+	db, cleanup := setupUUIDTestDB(t)
+	defer cleanup()
+
+	// Create parent blog metadata
+	blogMeta := &metadata.TypeMetadata{
+		TypeID:       "test_uuid_blog",
+		TypeName:     "TestUUIDBlog",
+		TableName:    "uuid_blogs",
+		URLParamUUID: "blogId",
+		ModelType:    reflect.TypeOf(TestUUIDBlog{}),
+	}
+
+	// Create parent blog first
+	blogWrapper := &datastore.Wrapper[TestUUIDBlog]{Store: db}
+	blogCtx := context.WithValue(context.Background(), metadata.MetadataKey, blogMeta)
+
+	blog := TestUUIDBlog{Name: "Test Blog"}
+	createdBlog, err := blogWrapper.Create(blogCtx, blog)
+	if err != nil {
+		t.Fatal("Failed to create blog:", err)
+	}
+
+	if createdBlog.ID == uuid.Nil {
+		t.Error("Expected blog UUID to be generated")
+	}
+
+	// Create post metadata with parent reference
+	postMeta := &metadata.TypeMetadata{
+		TypeID:        "test_uuid_post",
+		TypeName:      "TestUUIDPost",
+		TableName:     "uuid_posts",
+		URLParamUUID:  "postId",
+		ModelType:     reflect.TypeOf(TestUUIDPost{}),
+		ParentType:    reflect.TypeOf(TestUUIDBlog{}),
+		ParentMeta:    blogMeta,
+		ForeignKeyCol: "blog_id",
+	}
+
+	// Create post under blog with parent IDs in context
+	postWrapper := &datastore.Wrapper[TestUUIDPost]{Store: db}
+	parentIDs := map[string]string{"blogId": createdBlog.ID.String()}
+	postCtx := context.WithValue(context.Background(), metadata.MetadataKey, postMeta)
+	postCtx = context.WithValue(postCtx, "parentIDs", parentIDs)
+
+	post := TestUUIDPost{Title: "Test Post"}
+	createdPost, err := postWrapper.Create(postCtx, post)
+	if err != nil {
+		t.Fatal("Failed to create post:", err)
+	}
+
+	// Verify UUID FK was set correctly
+	if createdPost.BlogID != createdBlog.ID {
+		t.Errorf("Expected BlogID %s, got %s", createdBlog.ID, createdPost.BlogID)
+	}
+
+	// Verify we can get the post with parent chain validation
+	gotPost, err := postWrapper.Get(postCtx, createdPost.ID.String(), []string{})
+	if err != nil {
+		t.Fatal("Failed to get post:", err)
+	}
+
+	if gotPost.ID != createdPost.ID {
+		t.Errorf("Expected post ID %s, got %s", createdPost.ID, gotPost.ID)
+	}
+}
+
+// TestWrapper_UUID_GetAll tests getting all items with UUID primary keys
+func TestWrapper_UUID_GetAll(t *testing.T) {
+	db, cleanup := setupUUIDTestDB(t)
+	defer cleanup()
+
+	blogMeta := &metadata.TypeMetadata{
+		TypeID:       "test_uuid_blog_getall",
+		TypeName:     "TestUUIDBlog",
+		TableName:    "uuid_blogs",
+		URLParamUUID: "blogId",
+		ModelType:    reflect.TypeOf(TestUUIDBlog{}),
+	}
+
+	wrapper := &datastore.Wrapper[TestUUIDBlog]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, blogMeta)
+
+	// Create multiple blogs
+	for i := 0; i < 3; i++ {
+		blog := TestUUIDBlog{Name: "Blog " + strconv.Itoa(i)}
+		_, err := wrapper.Create(ctx, blog)
+		if err != nil {
+			t.Fatal("Failed to create blog:", err)
+		}
+	}
+
+	// Get all blogs
+	blogs, count, err := wrapper.GetAll(ctx, []string{})
+	if err != nil {
+		t.Fatal("Failed to get all blogs:", err)
+	}
+
+	if len(blogs) != 3 {
+		t.Errorf("Expected 3 blogs, got %d", len(blogs))
+	}
+
+	// Count should be 0 when not requested
+	if count != 0 {
+		t.Errorf("Expected count 0 (not requested), got %d", count)
+	}
+
+	// Verify each blog has a valid UUID
+	for _, blog := range blogs {
+		if blog.ID == uuid.Nil {
+			t.Error("Blog has nil UUID")
+		}
+	}
+}
+
+// TestWrapper_UUID_Update tests updating items with UUID primary keys
+func TestWrapper_UUID_Update(t *testing.T) {
+	db, cleanup := setupUUIDTestDB(t)
+	defer cleanup()
+
+	blogMeta := &metadata.TypeMetadata{
+		TypeID:       "test_uuid_blog_update",
+		TypeName:     "TestUUIDBlog",
+		TableName:    "uuid_blogs",
+		URLParamUUID: "blogId",
+		ModelType:    reflect.TypeOf(TestUUIDBlog{}),
+	}
+
+	wrapper := &datastore.Wrapper[TestUUIDBlog]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, blogMeta)
+
+	// Create blog
+	blog := TestUUIDBlog{Name: "Original Name"}
+	created, err := wrapper.Create(ctx, blog)
+	if err != nil {
+		t.Fatal("Failed to create blog:", err)
+	}
+
+	// Update blog - ID must be set for WherePK() to work
+	updated := TestUUIDBlog{ID: created.ID, Name: "Updated Name"}
+	result, err := wrapper.Update(ctx, created.ID.String(), updated)
+	if err != nil {
+		t.Fatal("Failed to update blog:", err)
+	}
+
+	if result.Name != "Updated Name" {
+		t.Errorf("Expected name 'Updated Name', got '%s'", result.Name)
+	}
+
+	// ID should be preserved
+	if result.ID != created.ID {
+		t.Errorf("Expected ID %s to be preserved, got %s", created.ID, result.ID)
+	}
+}
+
+// TestWrapper_UUID_Delete tests deleting items with UUID primary keys
+func TestWrapper_UUID_Delete(t *testing.T) {
+	db, cleanup := setupUUIDTestDB(t)
+	defer cleanup()
+
+	blogMeta := &metadata.TypeMetadata{
+		TypeID:       "test_uuid_blog_delete",
+		TypeName:     "TestUUIDBlog",
+		TableName:    "uuid_blogs",
+		URLParamUUID: "blogId",
+		ModelType:    reflect.TypeOf(TestUUIDBlog{}),
+	}
+
+	wrapper := &datastore.Wrapper[TestUUIDBlog]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, blogMeta)
+
+	// Create blog
+	blog := TestUUIDBlog{Name: "To Be Deleted"}
+	created, err := wrapper.Create(ctx, blog)
+	if err != nil {
+		t.Fatal("Failed to create blog:", err)
+	}
+
+	// Delete blog
+	err = wrapper.Delete(ctx, created.ID.String())
+	if err != nil {
+		t.Fatal("Failed to delete blog:", err)
+	}
+
+	// Verify deletion
+	_, err = wrapper.Get(ctx, created.ID.String(), []string{})
+	if !errors.Is(err, apperrors.ErrNotFound) {
+		t.Errorf("Expected ErrNotFound after deletion, got: %v", err)
 	}
 }

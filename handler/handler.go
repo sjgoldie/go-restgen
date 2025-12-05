@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/service"
@@ -231,10 +232,10 @@ func Get[T any]() http.HandlerFunc {
 			return
 		}
 
-		// Parse ID from URL parameter
-		id, err := strconv.Atoi(chi.URLParam(r, meta.URLParamUUID))
-		if err != nil {
-			slog.Warn("invalid id parameter", "error", err, "paramUUID", meta.URLParamUUID)
+		// Get ID from URL parameter (passed as string to support both int and UUID PKs)
+		id := chi.URLParam(r, meta.URLParamUUID)
+		if id == "" {
+			slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -320,10 +321,10 @@ func Update[T any]() http.HandlerFunc {
 			return
 		}
 
-		// Parse ID from URL parameter
-		id, err := strconv.Atoi(chi.URLParam(r, meta.URLParamUUID))
-		if err != nil {
-			slog.Warn("invalid id parameter", "error", err, "paramUUID", meta.URLParamUUID)
+		// Get ID from URL parameter (passed as string to support both int and UUID PKs)
+		id := chi.URLParam(r, meta.URLParamUUID)
+		if id == "" {
+			slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -336,7 +337,12 @@ func Update[T any]() http.HandlerFunc {
 		}
 
 		// Set ID from path onto the struct (overwrite any ID from JSON)
-		reflect.ValueOf(&item).Elem().FieldByName("ID").SetInt(int64(id))
+		// This ensures the path ID takes precedence and is required for Bun's WherePK()
+		if err := setIDField(&item, id); err != nil {
+			slog.Warn("failed to set ID field", "error", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
 
 		savedItem, err := svc.Update(r.Context(), id, item)
 		if err != nil {
@@ -371,10 +377,10 @@ func Delete[T any]() http.HandlerFunc {
 			return
 		}
 
-		// Parse ID from URL parameter
-		id, err := strconv.Atoi(chi.URLParam(r, meta.URLParamUUID))
-		if err != nil {
-			slog.Warn("invalid id parameter", "error", err, "paramUUID", meta.URLParamUUID)
+		// Get ID from URL parameter (passed as string to support both int and UUID PKs)
+		id := chi.URLParam(r, meta.URLParamUUID)
+		if id == "" {
+			slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -409,4 +415,38 @@ func Delete[T any]() http.HandlerFunc {
 
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// setIDField sets the ID field on a struct from a string value
+// Handles int, int64, string, and uuid.UUID field types
+func setIDField[T any](item *T, id string) error {
+	idField := reflect.ValueOf(item).Elem().FieldByName("ID")
+	if !idField.IsValid() || !idField.CanSet() {
+		return errors.New("ID field not found or not settable")
+	}
+
+	switch idField.Kind() {
+	case reflect.Int, reflect.Int64:
+		// Parse string to int
+		intID, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			return err
+		}
+		idField.SetInt(intID)
+	case reflect.String:
+		idField.SetString(id)
+	default:
+		// Check for uuid.UUID type (which is [16]byte array)
+		if idField.Type() == reflect.TypeOf(uuid.UUID{}) {
+			parsed, err := uuid.Parse(id)
+			if err != nil {
+				return err
+			}
+			idField.Set(reflect.ValueOf(parsed))
+		} else {
+			return errors.New("unsupported ID field type: " + idField.Type().String())
+		}
+	}
+
+	return nil
 }

@@ -1,0 +1,15 @@
+meta {
+  name: Delete Post
+  type: http
+  seq: 11
+}
+
+delete {
+  url: {{baseUrl}}/blogs/{{blogId}}/posts/{{postId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 204
+}

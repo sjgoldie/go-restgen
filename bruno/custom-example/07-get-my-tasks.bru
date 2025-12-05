@@ -1,0 +1,23 @@
+meta {
+  name: Get My Tasks (Custom GetAll)
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/my-tasks
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 2
+  res.body[0].priority: eq 10
+  res.body[1].priority: eq 5
+}

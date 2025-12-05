@@ -693,6 +693,170 @@ router.WithAudit(func(ac metadata.AuditContext[Job]) any {
 
 See the [audit example](./examples/audit) for a complete working example.
 
+## Custom Handlers
+
+go-restgen allows you to override the default CRUD behavior with custom handler functions while still benefiting from the framework's request parsing, authentication, error handling, and response formatting.
+
+### Use Cases
+
+- **`/me` endpoint**: Get the current user from auth token instead of URL parameter
+- **Auto-set ownership**: Automatically set `owner_id` from authenticated user on create
+- **Custom filtering**: Filter GetAll results based on the authenticated user
+- **Custom validation**: Add business logic validation in the handler
+- **Prevent operations**: Block certain operations (e.g., prevent deletion of audit logs)
+
+### Custom Function Signatures
+
+Each custom function receives the service, metadata, auth info, and parsed inputs:
+
+```go
+// CustomGetFunc - for GET /resource/{id}
+type CustomGetFunc[T any] func(
+    ctx context.Context,
+    svc *service.Common[T],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,  // nil if not authenticated
+    id string,
+    relations []string,
+) (*T, error)
+
+// CustomGetAllFunc - for GET /resource
+type CustomGetAllFunc[T any] func(
+    ctx context.Context,
+    svc *service.Common[T],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    opts *metadata.QueryOptions,
+    relations []string,
+) ([]*T, int, error)
+
+// CustomCreateFunc - for POST /resource
+type CustomCreateFunc[T any] func(
+    ctx context.Context,
+    svc *service.Common[T],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    item T,
+) (*T, error)
+
+// CustomUpdateFunc - for PUT /resource/{id}
+type CustomUpdateFunc[T any] func(
+    ctx context.Context,
+    svc *service.Common[T],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    item T,
+) (*T, error)
+
+// CustomDeleteFunc - for DELETE /resource/{id}
+type CustomDeleteFunc[T any] func(
+    ctx context.Context,
+    svc *service.Common[T],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+) error
+```
+
+### Example: /me Endpoint
+
+Get the current user from auth token instead of URL parameter:
+
+```go
+// Custom Get that uses auth.UserID instead of URL id
+func customGetMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*User, error) {
+    if auth == nil {
+        return nil, fmt.Errorf("not authenticated")
+    }
+    // Find user by external_id (auth UserID) instead of primary key
+    var user User
+    err := db.GetDB().NewSelect().Model(&user).Where("external_id = ?", auth.UserID).Scan(ctx)
+    return &user, err
+}
+
+router.RegisterRoutes[User](b, "/me",
+    router.IsAuthenticated(),
+    router.WithCustomGet(customGetMe),
+)
+```
+
+### Example: Auto-Set Owner on Create
+
+```go
+func customCreateTask(ctx context.Context, svc *service.Common[Task], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item Task) (*Task, error) {
+    if auth == nil {
+        return nil, fmt.Errorf("not authenticated")
+    }
+    // Auto-set owner to current user
+    item.OwnerID = auth.UserID
+    return svc.Create(ctx, item)
+}
+
+router.RegisterRoutes[Task](b, "/tasks",
+    router.IsAuthenticated(),
+    router.WithCustomCreate(customCreateTask),
+)
+```
+
+### Example: Filter GetAll by Owner
+
+```go
+func customGetMyTasks(ctx context.Context, svc *service.Common[Task], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions, relations []string) ([]*Task, int, error) {
+    if auth == nil {
+        return nil, 0, fmt.Errorf("not authenticated")
+    }
+    // Return only tasks owned by current user
+    tasks := []*Task{}
+    err := db.GetDB().NewSelect().Model(&tasks).Where("owner_id = ?", auth.UserID).Scan(ctx)
+    return tasks, len(tasks), err
+}
+
+router.RegisterRoutes[Task](b, "/my-tasks",
+    router.IsAuthenticated(),
+    router.WithCustomGetAll(customGetMyTasks),
+)
+```
+
+### Example: Prevent Deletion
+
+```go
+func customDeleteAuditLog(ctx context.Context, svc *service.Common[AuditLog], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) error {
+    return fmt.Errorf("audit logs cannot be deleted")
+}
+
+router.RegisterRoutes[AuditLog](b, "/audit-logs",
+    router.IsAuthenticated(),
+    router.WithCustomDelete(customDeleteAuditLog),
+)
+```
+
+### Combining Custom Handlers
+
+You can mix custom handlers with standard behavior and other options:
+
+```go
+router.RegisterRoutes[Project](b, "/projects",
+    router.IsAuthenticated(),
+    router.WithCustomCreate(customCreateProject),  // Custom create
+    router.WithFilters("Status", "Name"),          // Standard filtering
+    func(b *router.Builder) {
+        router.RegisterRoutes[Item](b, "/items",
+            router.IsAuthenticated(),
+            router.WithCustomUpdate(customUpdateItem),  // Custom update with validation
+        )
+    },
+)
+```
+
+**Key Points:**
+- Custom handlers receive the service (`svc`) so you can still use standard operations
+- Auth info is passed explicitly - check for `nil` if the route allows unauthenticated access
+- The framework handles JSON parsing, response encoding, and error formatting
+- Custom handlers work with nested routes, auth configs, validators, and auditors
+
+See the [custom handlers example](./examples/custom) for a complete working example.
+
 ## Architecture
 
 go-restgen follows a clean layered architecture:

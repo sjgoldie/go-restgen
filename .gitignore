@@ -15,12 +15,14 @@ examples/auth/auth
 examples/validator/validator
 examples/audit/audit
 examples/uuid_pk/uuid_pk
+examples/custom/custom
 /simple
 /nested_routes
 /auth
 /validator
 /audit
 /uuid_pk
+/custom
 
 # Test binary, built with `go test -c`
 *.test

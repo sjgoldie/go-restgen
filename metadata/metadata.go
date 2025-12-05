@@ -58,6 +58,9 @@ type AuthInfo struct {
 	Scopes []string // List of scopes/permissions the user has
 }
 
+// AuthInfoKey is the context key for storing AuthInfo
+const AuthInfoKey = "authInfo"
+
 // TypeMetadata contains all metadata for a registered type
 type TypeMetadata struct {
 	TypeID          string        // Unique UUID for this type

@@ -1,0 +1,31 @@
+meta {
+  name: Update Me (Custom Update)
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/me/999
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer user:alice:user
+}
+
+body:json {
+  {
+    "name": "Alice Smith Updated",
+    "email": "alice.updated@example.com",
+    "bio": "Updated bio"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.name: eq Alice Smith Updated
+  res.body.email: eq alice.updated@example.com
+  res.body.bio: eq Updated bio
+  res.body.external_id: eq alice
+}

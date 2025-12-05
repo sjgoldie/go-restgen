@@ -1,0 +1,34 @@
+meta {
+  name: Create Item in Project
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/projects/{{projectId}}/items
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer user:alice:user
+}
+
+body:json {
+  {
+    "name": "Widget",
+    "quantity": 5,
+    "notes": "Test item"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.name: eq Widget
+  res.body.quantity: eq 5
+}
+
+script:post-response {
+  bru.setVar("itemId", res.body.id);
+}

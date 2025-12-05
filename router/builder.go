@@ -29,15 +29,25 @@ func NewBuilder(r chi.Router) *Builder {
 	}
 }
 
+// customHandlers holds optional custom handler functions for a route registration
+type customHandlers[T any] struct {
+	get    handler.CustomGetFunc[T]
+	getAll handler.CustomGetAllFunc[T]
+	create handler.CustomCreateFunc[T]
+	update handler.CustomUpdateFunc[T]
+	delete handler.CustomDeleteFunc[T]
+}
+
 // RegisterRoutes registers CRUD routes for a resource type T
-// Accepts optional auth configs, query configs, validator, auditor, and nested function for child routes
+// Accepts optional auth configs, query configs, validator, auditor, custom handlers, and nested function for child routes
 // Configs can be mixed with nested function in any order
 func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
-	// Separate auth configs, query configs, validator, auditor, and nested function
+	// Separate auth configs, query configs, validator, auditor, custom handlers, and nested function
 	var authConfigs []AuthConfig
 	var queryConfigs []QueryConfig
 	var validator metadata.ValidatorFunc[T]
 	var auditor metadata.AuditFunc[T]
+	var custom customHandlers[T]
 	var nested NestedFunc
 
 	for _, opt := range options {
@@ -50,16 +60,26 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			validator = v.Fn
 		case AuditConfig[T]:
 			auditor = v.Fn
+		case CustomGetConfig[T]:
+			custom.get = v.Fn
+		case CustomGetAllConfig[T]:
+			custom.getAll = v.Fn
+		case CustomCreateConfig[T]:
+			custom.create = v.Fn
+		case CustomUpdateConfig[T]:
+			custom.update = v.Fn
+		case CustomDeleteConfig[T]:
+			custom.delete = v.Fn
 		case func(*Builder):
 			nested = v
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom)
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T]) {
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T]) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -178,22 +198,18 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 		r.Use(metadataMiddleware)
 
 		// List endpoint - GET /resources
-		listHandler := http.Handler(handler.GetAll[T]())
-		if authConfig := authMap[MethodList]; authConfig != nil {
-			listHandler = wrapWithAuth(listHandler, authConfig)
-		} else {
-			listHandler = blockUnauthorized(listHandler)
+		getAllFunc := custom.getAll
+		if getAllFunc == nil {
+			getAllFunc = handler.StandardGetAll[T]
 		}
-		r.Method("GET", "/", listHandler)
+		r.Method("GET", "/", wrapHandler(handler.GetAll[T](getAllFunc), authMap[MethodList]))
 
 		// Create endpoint - POST /resources
-		createHandler := http.Handler(handler.Create[T]())
-		if authConfig := authMap[MethodPost]; authConfig != nil {
-			createHandler = wrapWithAuth(createHandler, authConfig)
-		} else {
-			createHandler = blockUnauthorized(createHandler)
+		createFunc := custom.create
+		if createFunc == nil {
+			createFunc = handler.StandardCreate[T]
 		}
-		r.Method("POST", "/", createHandler)
+		r.Method("POST", "/", wrapHandler(handler.Create[T](createFunc), authMap[MethodPost]))
 
 		// Register item routes and nested routes under /{id}
 		r.Route("/{"+urlParamUUID+"}", func(r chi.Router) {
@@ -204,31 +220,25 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 			}
 
 			// Get endpoint - GET /resources/{id}
-			getHandler := http.Handler(handler.Get[T]())
-			if authConfig := authMap[MethodGet]; authConfig != nil {
-				getHandler = wrapWithAuth(getHandler, authConfig)
-			} else {
-				getHandler = blockUnauthorized(getHandler)
+			getFunc := custom.get
+			if getFunc == nil {
+				getFunc = handler.StandardGet[T]
 			}
-			r.Method("GET", "/", getHandler)
+			r.Method("GET", "/", wrapHandler(handler.Get[T](getFunc), authMap[MethodGet]))
 
 			// Update endpoint - PUT /resources/{id}
-			updateHandler := http.Handler(handler.Update[T]())
-			if authConfig := authMap[MethodPut]; authConfig != nil {
-				updateHandler = wrapWithAuth(updateHandler, authConfig)
-			} else {
-				updateHandler = blockUnauthorized(updateHandler)
+			updateFunc := custom.update
+			if updateFunc == nil {
+				updateFunc = handler.StandardUpdate[T]
 			}
-			r.Method("PUT", "/", updateHandler)
+			r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), authMap[MethodPut]))
 
 			// Delete endpoint - DELETE /resources/{id}
-			deleteHandler := http.Handler(handler.Delete[T]())
-			if authConfig := authMap[MethodDelete]; authConfig != nil {
-				deleteHandler = wrapWithAuth(deleteHandler, authConfig)
-			} else {
-				deleteHandler = blockUnauthorized(deleteHandler)
+			deleteFunc := custom.delete
+			if deleteFunc == nil {
+				deleteFunc = handler.StandardDelete[T]
 			}
-			r.Method("DELETE", "/", deleteHandler)
+			r.Method("DELETE", "/", wrapHandler(handler.Delete[T](deleteFunc), authMap[MethodDelete]))
 
 			// Register nested routes
 			if nested != nil {
@@ -252,6 +262,14 @@ func createMetadataMiddleware(meta *metadata.TypeMetadata) func(http.Handler) ht
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// wrapHandler wraps a handler with auth middleware if configured, otherwise blocks unauthorized access
+func wrapHandler(h http.Handler, authConfig *AuthConfig) http.Handler {
+	if authConfig != nil {
+		return wrapWithAuth(h, authConfig)
+	}
+	return blockUnauthorized(h)
 }
 
 // createParentIDMiddleware creates middleware that extracts a parent ID from URL

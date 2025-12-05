@@ -1,0 +1,27 @@
+meta {
+  name: Update Item Quantity Too Large (Custom Validation)
+  type: http
+  seq: 13
+}
+
+put {
+  url: {{baseUrl}}/projects/{{projectId}}/items/{{itemId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer user:alice:user
+}
+
+body:json {
+  {
+    "name": "Widget",
+    "quantity": 5000,
+    "notes": "Invalid"
+  }
+}
+
+assert {
+  res.status: eq 500
+}

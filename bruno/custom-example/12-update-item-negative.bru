@@ -1,0 +1,27 @@
+meta {
+  name: Update Item Negative Quantity (Custom Validation)
+  type: http
+  seq: 12
+}
+
+put {
+  url: {{baseUrl}}/projects/{{projectId}}/items/{{itemId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer user:alice:user
+}
+
+body:json {
+  {
+    "name": "Widget",
+    "quantity": -5,
+    "notes": "Invalid"
+  }
+}
+
+assert {
+  res.status: eq 500
+}

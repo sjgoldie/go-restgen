@@ -1,0 +1,29 @@
+meta {
+  name: Update Item Valid Quantity (Custom Update)
+  type: http
+  seq: 11
+}
+
+put {
+  url: {{baseUrl}}/projects/{{projectId}}/items/{{itemId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer user:alice:user
+}
+
+body:json {
+  {
+    "name": "Widget Updated",
+    "quantity": 100,
+    "notes": "Updated notes"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.name: eq Widget Updated
+  res.body.quantity: eq 100
+}

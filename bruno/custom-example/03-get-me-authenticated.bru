@@ -1,0 +1,26 @@
+meta {
+  name: Get Me Authenticated (Custom Get)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/me/999
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.external_id: eq alice
+  res.body.name: eq Alice Smith
+  res.body.email: eq alice@example.com
+}
+
+script:post-response {
+  bru.setVar("userId", res.body.id);
+}

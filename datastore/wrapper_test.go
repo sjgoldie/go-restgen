@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sjgoldie/go-restgen/datastore"
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/metadata"
@@ -1554,5 +1555,275 @@ func TestAudit_WrongAuditorType(t *testing.T) {
 
 	if len(logs) != 0 {
 		t.Fatalf("Expected 0 audit logs, got %d", len(logs))
+	}
+}
+
+// ============================================================================
+// UUID Primary Key and Foreign Key Tests
+// ============================================================================
+
+// TestUUIDBlog is a parent model with UUID primary key
+type TestUUIDBlog struct {
+	bun.BaseModel `bun:"table:uuid_blogs"`
+	ID            uuid.UUID `bun:"id,pk,type:uuid" json:"id"`
+	Name          string    `bun:"name,notnull" json:"name"`
+	CreatedAt     time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at,omitempty"`
+}
+
+// BeforeAppendModel generates UUID for new blogs
+func (b *TestUUIDBlog) BeforeAppendModel(_ context.Context, query bun.Query) error {
+	if _, ok := query.(*bun.InsertQuery); ok {
+		if b.ID == uuid.Nil {
+			b.ID = uuid.New()
+		}
+	}
+	return nil
+}
+
+// TestUUIDPost is a child model with UUID primary key and UUID foreign key
+type TestUUIDPost struct {
+	bun.BaseModel `bun:"table:uuid_posts"`
+	ID            uuid.UUID     `bun:"id,pk,type:uuid" json:"id"`
+	BlogID        uuid.UUID     `bun:"blog_id,notnull,type:uuid" json:"blog_id"`
+	Blog          *TestUUIDBlog `bun:"rel:belongs-to,join:blog_id=id" json:"-"`
+	Title         string        `bun:"title,notnull" json:"title"`
+	CreatedAt     time.Time     `bun:"created_at,notnull,default:current_timestamp" json:"created_at,omitempty"`
+}
+
+// BeforeAppendModel generates UUID for new posts
+func (p *TestUUIDPost) BeforeAppendModel(_ context.Context, query bun.Query) error {
+	if _, ok := query.(*bun.InsertQuery); ok {
+		if p.ID == uuid.Nil {
+			p.ID = uuid.New()
+		}
+	}
+	return nil
+}
+
+func setupUUIDTestDB(t *testing.T) (*datastore.SQLite, func()) {
+	t.Helper()
+
+	db, err := datastore.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal("Failed to create test database:", err)
+	}
+
+	if err := datastore.Initialize(db); err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to initialize datastore:", err)
+	}
+
+	// Create UUID tables
+	_, err = db.GetDB().NewCreateTable().Model((*TestUUIDBlog)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create uuid_blogs table:", err)
+	}
+
+	_, err = db.GetDB().NewCreateTable().Model((*TestUUIDPost)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create uuid_posts table:", err)
+	}
+
+	cleanup := func() {
+		db.GetDB().NewDropTable().Model((*TestUUIDPost)(nil)).IfExists().Exec(context.Background())
+		db.GetDB().NewDropTable().Model((*TestUUIDBlog)(nil)).IfExists().Exec(context.Background())
+		datastore.Cleanup()
+		db.Cleanup()
+	}
+
+	return db, cleanup
+}
+
+// TestWrapper_UUID_NestedCreate tests creating nested resources with UUID foreign keys
+func TestWrapper_UUID_NestedCreate(t *testing.T) {
+	db, cleanup := setupUUIDTestDB(t)
+	defer cleanup()
+
+	// Create parent blog metadata
+	blogMeta := &metadata.TypeMetadata{
+		TypeID:       "test_uuid_blog",
+		TypeName:     "TestUUIDBlog",
+		TableName:    "uuid_blogs",
+		URLParamUUID: "blogId",
+		ModelType:    reflect.TypeOf(TestUUIDBlog{}),
+	}
+
+	// Create parent blog first
+	blogWrapper := &datastore.Wrapper[TestUUIDBlog]{Store: db}
+	blogCtx := context.WithValue(context.Background(), metadata.MetadataKey, blogMeta)
+
+	blog := TestUUIDBlog{Name: "Test Blog"}
+	createdBlog, err := blogWrapper.Create(blogCtx, blog)
+	if err != nil {
+		t.Fatal("Failed to create blog:", err)
+	}
+
+	if createdBlog.ID == uuid.Nil {
+		t.Error("Expected blog UUID to be generated")
+	}
+
+	// Create post metadata with parent reference
+	postMeta := &metadata.TypeMetadata{
+		TypeID:        "test_uuid_post",
+		TypeName:      "TestUUIDPost",
+		TableName:     "uuid_posts",
+		URLParamUUID:  "postId",
+		ModelType:     reflect.TypeOf(TestUUIDPost{}),
+		ParentType:    reflect.TypeOf(TestUUIDBlog{}),
+		ParentMeta:    blogMeta,
+		ForeignKeyCol: "blog_id",
+	}
+
+	// Create post under blog with parent IDs in context
+	postWrapper := &datastore.Wrapper[TestUUIDPost]{Store: db}
+	parentIDs := map[string]string{"blogId": createdBlog.ID.String()}
+	postCtx := context.WithValue(context.Background(), metadata.MetadataKey, postMeta)
+	postCtx = context.WithValue(postCtx, "parentIDs", parentIDs)
+
+	post := TestUUIDPost{Title: "Test Post"}
+	createdPost, err := postWrapper.Create(postCtx, post)
+	if err != nil {
+		t.Fatal("Failed to create post:", err)
+	}
+
+	// Verify UUID FK was set correctly
+	if createdPost.BlogID != createdBlog.ID {
+		t.Errorf("Expected BlogID %s, got %s", createdBlog.ID, createdPost.BlogID)
+	}
+
+	// Verify we can get the post with parent chain validation
+	gotPost, err := postWrapper.Get(postCtx, createdPost.ID.String(), []string{})
+	if err != nil {
+		t.Fatal("Failed to get post:", err)
+	}
+
+	if gotPost.ID != createdPost.ID {
+		t.Errorf("Expected post ID %s, got %s", createdPost.ID, gotPost.ID)
+	}
+}
+
+// TestWrapper_UUID_GetAll tests getting all items with UUID primary keys
+func TestWrapper_UUID_GetAll(t *testing.T) {
+	db, cleanup := setupUUIDTestDB(t)
+	defer cleanup()
+
+	blogMeta := &metadata.TypeMetadata{
+		TypeID:       "test_uuid_blog_getall",
+		TypeName:     "TestUUIDBlog",
+		TableName:    "uuid_blogs",
+		URLParamUUID: "blogId",
+		ModelType:    reflect.TypeOf(TestUUIDBlog{}),
+	}
+
+	wrapper := &datastore.Wrapper[TestUUIDBlog]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, blogMeta)
+
+	// Create multiple blogs
+	for i := 0; i < 3; i++ {
+		blog := TestUUIDBlog{Name: "Blog " + strconv.Itoa(i)}
+		_, err := wrapper.Create(ctx, blog)
+		if err != nil {
+			t.Fatal("Failed to create blog:", err)
+		}
+	}
+
+	// Get all blogs
+	blogs, count, err := wrapper.GetAll(ctx, []string{})
+	if err != nil {
+		t.Fatal("Failed to get all blogs:", err)
+	}
+
+	if len(blogs) != 3 {
+		t.Errorf("Expected 3 blogs, got %d", len(blogs))
+	}
+
+	// Count should be 0 when not requested
+	if count != 0 {
+		t.Errorf("Expected count 0 (not requested), got %d", count)
+	}
+
+	// Verify each blog has a valid UUID
+	for _, blog := range blogs {
+		if blog.ID == uuid.Nil {
+			t.Error("Blog has nil UUID")
+		}
+	}
+}
+
+// TestWrapper_UUID_Update tests updating items with UUID primary keys
+func TestWrapper_UUID_Update(t *testing.T) {
+	db, cleanup := setupUUIDTestDB(t)
+	defer cleanup()
+
+	blogMeta := &metadata.TypeMetadata{
+		TypeID:       "test_uuid_blog_update",
+		TypeName:     "TestUUIDBlog",
+		TableName:    "uuid_blogs",
+		URLParamUUID: "blogId",
+		ModelType:    reflect.TypeOf(TestUUIDBlog{}),
+	}
+
+	wrapper := &datastore.Wrapper[TestUUIDBlog]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, blogMeta)
+
+	// Create blog
+	blog := TestUUIDBlog{Name: "Original Name"}
+	created, err := wrapper.Create(ctx, blog)
+	if err != nil {
+		t.Fatal("Failed to create blog:", err)
+	}
+
+	// Update blog - ID must be set for WherePK() to work
+	updated := TestUUIDBlog{ID: created.ID, Name: "Updated Name"}
+	result, err := wrapper.Update(ctx, created.ID.String(), updated)
+	if err != nil {
+		t.Fatal("Failed to update blog:", err)
+	}
+
+	if result.Name != "Updated Name" {
+		t.Errorf("Expected name 'Updated Name', got '%s'", result.Name)
+	}
+
+	// ID should be preserved
+	if result.ID != created.ID {
+		t.Errorf("Expected ID %s to be preserved, got %s", created.ID, result.ID)
+	}
+}
+
+// TestWrapper_UUID_Delete tests deleting items with UUID primary keys
+func TestWrapper_UUID_Delete(t *testing.T) {
+	db, cleanup := setupUUIDTestDB(t)
+	defer cleanup()
+
+	blogMeta := &metadata.TypeMetadata{
+		TypeID:       "test_uuid_blog_delete",
+		TypeName:     "TestUUIDBlog",
+		TableName:    "uuid_blogs",
+		URLParamUUID: "blogId",
+		ModelType:    reflect.TypeOf(TestUUIDBlog{}),
+	}
+
+	wrapper := &datastore.Wrapper[TestUUIDBlog]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, blogMeta)
+
+	// Create blog
+	blog := TestUUIDBlog{Name: "To Be Deleted"}
+	created, err := wrapper.Create(ctx, blog)
+	if err != nil {
+		t.Fatal("Failed to create blog:", err)
+	}
+
+	// Delete blog
+	err = wrapper.Delete(ctx, created.ID.String())
+	if err != nil {
+		t.Fatal("Failed to delete blog:", err)
+	}
+
+	// Verify deletion
+	_, err = wrapper.Get(ctx, created.ID.String(), []string{})
+	if !errors.Is(err, apperrors.ErrNotFound) {
+		t.Errorf("Expected ErrNotFound after deletion, got: %v", err)
 	}
 }

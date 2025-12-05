@@ -1,0 +1,30 @@
+meta {
+  name: Create Second Task
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/my-tasks
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer user:alice:user
+}
+
+body:json {
+  {
+    "title": "High Priority Task",
+    "description": "Important work",
+    "status": "in_progress",
+    "priority": 10
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.owner_id: eq alice
+  res.body.priority: eq 10
+}

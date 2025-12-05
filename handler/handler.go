@@ -37,6 +37,63 @@ func init() {
 	slog.SetDefault(logger)
 }
 
+// Custom handler function types
+// These allow developers to provide custom logic while the framework handles
+// parsing, validation, error handling, and response formatting.
+
+// CustomGetFunc is the signature for custom Get handlers.
+// The custom function receives all parsed/validated inputs and returns the item.
+type CustomGetFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	id string,
+	relations []string,
+) (*T, error)
+
+// CustomGetAllFunc is the signature for custom GetAll handlers.
+// The custom function receives all parsed/validated inputs and returns items with count.
+type CustomGetAllFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	opts *metadata.QueryOptions,
+	relations []string,
+) ([]*T, int, error)
+
+// CustomCreateFunc is the signature for custom Create handlers.
+// The custom function receives the decoded item and returns the created item.
+type CustomCreateFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	item T,
+) (*T, error)
+
+// CustomUpdateFunc is the signature for custom Update handlers.
+// The custom function receives the ID and decoded item, returns the updated item.
+type CustomUpdateFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	id string,
+	item T,
+) (*T, error)
+
+// CustomDeleteFunc is the signature for custom Delete handlers.
+// The custom function receives the ID and performs the deletion.
+type CustomDeleteFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	id string,
+) error
+
 // handleMutationError handles errors from Create/Update operations
 func handleMutationError(w http.ResponseWriter, err error, operation string) {
 	if errors.Is(err, context.Canceled) {
@@ -73,13 +130,21 @@ func handleMutationError(w http.ResponseWriter, err error, operation string) {
 	http.Error(w, "internal server error", http.StatusInternalServerError)
 }
 
-// GetAll handles GET requests to retrieve all items of type T
+// StandardGetAll is the default GetAll implementation that calls svc.GetAll.
+// Use this when no custom logic is needed.
+func StandardGetAll[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions, relations []string) ([]*T, int, error) {
+	return svc.GetAll(ctx, relations)
+}
+
+// GetAll handles GET requests to retrieve all items of type T.
+// The getAllFunc parameter controls how items are fetched - use StandardGetAll for default behavior
+// or provide a custom function for specialized logic.
 // Supports query parameters for filtering, sorting, and pagination:
 //   - filter[field]=value or filter[field][op]=value (ops: eq, neq, gt, gte, lt, lte, like)
 //   - sort=field1,-field2 (prefix with - for descending)
 //   - limit=N, offset=N for pagination
 //   - count=true to include X-Total-Count header
-func GetAll[T any]() http.HandlerFunc {
+func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svc, err := service.New[T]()
 		if err != nil {
@@ -95,13 +160,25 @@ func GetAll[T any]() http.HandlerFunc {
 			relations = []string{}
 		}
 
+		// Get metadata from context
+		meta, err := metadata.FromContext(ctx)
+		if err != nil {
+			slog.Warn("metadata not found in context", "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
 		// Parse query parameters into QueryOptions
 		opts := parseQueryOptions(r.URL.Query())
 
 		// Add QueryOptions to context
 		ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-		items, totalCount, err := svc.GetAll(ctx, relations)
+		// Get auth from context (may be nil if not authenticated)
+		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
+
+		// Call the provided function
+		items, totalCount, err := getAllFunc(ctx, svc, meta, auth, opts, relations)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return // Client disconnected, no response needed
@@ -207,8 +284,16 @@ func parseQueryOptions(query url.Values) *metadata.QueryOptions {
 	return opts
 }
 
-// Get handles GET requests to retrieve a single item of type T by ID
-func Get[T any]() http.HandlerFunc {
+// StandardGet is the default Get implementation that calls svc.Get.
+// Use this when no custom logic is needed.
+func StandardGet[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*T, error) {
+	return svc.Get(ctx, id, relations)
+}
+
+// Get handles GET requests to retrieve a single item of type T by ID.
+// The getFunc parameter controls how the item is fetched - use StandardGet for default behavior
+// or provide a custom function for specialized logic (e.g., getting user from auth token).
+func Get[T any](getFunc CustomGetFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svc, err := service.New[T]()
 		if err != nil {
@@ -240,7 +325,11 @@ func Get[T any]() http.HandlerFunc {
 			return
 		}
 
-		item, err := svc.Get(r.Context(), id, relations)
+		// Get auth from context (may be nil if not authenticated)
+		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
+
+		// Call the provided function
+		item, err := getFunc(ctx, svc, meta, auth, id, relations)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return // Client disconnected, no response needed
@@ -271,8 +360,16 @@ func Get[T any]() http.HandlerFunc {
 	}
 }
 
-// Create handles POST requests to create a new item of type T
-func Create[T any]() http.HandlerFunc {
+// StandardCreate is the default Create implementation that calls svc.Create.
+// Use this when no custom logic is needed.
+func StandardCreate[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item T) (*T, error) {
+	return svc.Create(ctx, item)
+}
+
+// Create handles POST requests to create a new item of type T.
+// The createFunc parameter controls how the item is created - use StandardCreate for default behavior
+// or provide a custom function for specialized logic.
+func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svc, err := service.New[T]()
 		if err != nil {
@@ -281,6 +378,19 @@ func Create[T any]() http.HandlerFunc {
 			return
 		}
 
+		ctx := r.Context()
+
+		// Get metadata from context
+		meta, err := metadata.FromContext(ctx)
+		if err != nil {
+			slog.Warn("metadata not found in context", "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Get auth from context (may be nil if not authenticated)
+		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
+
 		var item T
 		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
 			slog.Warn("failed to decode request body", "error", err)
@@ -288,7 +398,8 @@ func Create[T any]() http.HandlerFunc {
 			return
 		}
 
-		savedItem, err := svc.Create(r.Context(), item)
+		// Call the provided function
+		savedItem, err := createFunc(ctx, svc, meta, auth, item)
 		if err != nil {
 			handleMutationError(w, err, "create")
 			return
@@ -302,8 +413,16 @@ func Create[T any]() http.HandlerFunc {
 	}
 }
 
-// Update handles PUT requests to update an existing item of type T
-func Update[T any]() http.HandlerFunc {
+// StandardUpdate is the default Update implementation that calls svc.Update.
+// Use this when no custom logic is needed.
+func StandardUpdate[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, item T) (*T, error) {
+	return svc.Update(ctx, id, item)
+}
+
+// Update handles PUT requests to update an existing item of type T.
+// The updateFunc parameter controls how the item is updated - use StandardUpdate for default behavior
+// or provide a custom function for specialized logic.
+func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svc, err := service.New[T]()
 		if err != nil {
@@ -328,6 +447,9 @@ func Update[T any]() http.HandlerFunc {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
+
+		// Get auth from context (may be nil if not authenticated)
+		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
 
 		var item T
 		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
@@ -344,7 +466,8 @@ func Update[T any]() http.HandlerFunc {
 			return
 		}
 
-		savedItem, err := svc.Update(r.Context(), id, item)
+		// Call the provided function
+		savedItem, err := updateFunc(ctx, svc, meta, auth, id, item)
 		if err != nil {
 			handleMutationError(w, err, "update")
 			return
@@ -358,8 +481,16 @@ func Update[T any]() http.HandlerFunc {
 	}
 }
 
-// Delete handles DELETE requests to delete an item of type T by ID
-func Delete[T any]() http.HandlerFunc {
+// StandardDelete is the default Delete implementation that calls svc.Delete.
+// Use this when no custom logic is needed.
+func StandardDelete[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) error {
+	return svc.Delete(ctx, id)
+}
+
+// Delete handles DELETE requests to delete an item of type T by ID.
+// The deleteFunc parameter controls how the item is deleted - use StandardDelete for default behavior
+// or provide a custom function for specialized logic.
+func Delete[T any](deleteFunc CustomDeleteFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svc, err := service.New[T]()
 		if err != nil {
@@ -385,7 +516,11 @@ func Delete[T any]() http.HandlerFunc {
 			return
 		}
 
-		if err := svc.Delete(r.Context(), id); err != nil {
+		// Get auth from context (may be nil if not authenticated)
+		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
+
+		// Call the provided function
+		if err := deleteFunc(ctx, svc, meta, auth, id); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return // Client disconnected, no response needed
 			}

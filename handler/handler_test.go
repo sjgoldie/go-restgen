@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,7 @@ import (
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/handler"
 	"github.com/sjgoldie/go-restgen/metadata"
+	"github.com/sjgoldie/go-restgen/service"
 	"github.com/uptrace/bun"
 )
 
@@ -172,7 +174,7 @@ func TestHandler_GetAll(t *testing.T) {
 			// Make request
 			r := chi.NewRouter()
 			r.Use(withMeta(userMeta))
-			r.Get("/users", handler.GetAll[TestUser]())
+			r.Get("/users", handler.GetAll[TestUser](handler.StandardGetAll[TestUser]))
 
 			req := httptest.NewRequest(http.MethodGet, "/users", nil)
 			w := httptest.NewRecorder()
@@ -240,7 +242,7 @@ func TestHandler_Get(t *testing.T) {
 			// Make request
 			r := chi.NewRouter()
 			r.Use(withMeta(userMeta))
-			r.Get("/users/{id}", handler.Get[TestUser]())
+			r.Get("/users/{id}", handler.Get[TestUser](handler.StandardGet[TestUser]))
 
 			req := httptest.NewRequest(http.MethodGet, "/users/"+tt.requestID, nil)
 			rctx := chi.NewRouteContext()
@@ -319,7 +321,7 @@ func TestHandler_Create(t *testing.T) {
 			// Make request
 			r := chi.NewRouter()
 			r.Use(withMeta(userMeta))
-			r.Post("/users", handler.Create[TestUser]())
+			r.Post("/users", handler.Create[TestUser](handler.StandardCreate[TestUser]))
 
 			req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
@@ -406,7 +408,7 @@ func TestHandler_Update(t *testing.T) {
 			// Make request
 			r := chi.NewRouter()
 			r.Use(withMeta(userMeta))
-			r.Put("/users/{id}", handler.Update[TestUser]())
+			r.Put("/users/{id}", handler.Update[TestUser](handler.StandardUpdate[TestUser]))
 
 			req := httptest.NewRequest(http.MethodPut, "/users/"+tt.requestID, bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
@@ -478,7 +480,7 @@ func TestHandler_Delete(t *testing.T) {
 			// Make request
 			r := chi.NewRouter()
 			r.Use(withMeta(userMeta))
-			r.Delete("/users/{id}", handler.Delete[TestUser]())
+			r.Delete("/users/{id}", handler.Delete[TestUser](handler.StandardDelete[TestUser]))
 
 			req := httptest.NewRequest(http.MethodDelete, "/users/"+tt.requestID, nil)
 			rctx := chi.NewRouteContext()
@@ -523,6 +525,53 @@ func TestHandler_ErrorTypes(t *testing.T) {
 	}
 }
 
+// handlerTestCase represents a test case for handler context tests
+type handlerTestCase struct {
+	name    string
+	handler http.HandlerFunc
+	method  string
+	path    string
+	body    []byte
+}
+
+// getContextTestCases returns common test cases for context-related tests
+func getContextTestCases(prefix string) []handlerTestCase {
+	return []handlerTestCase{
+		{
+			name:    fmt.Sprintf("GetAll with %s", prefix),
+			handler: handler.GetAll[TestUser](handler.StandardGetAll[TestUser]),
+			method:  http.MethodGet,
+			path:    "/users",
+		},
+		{
+			name:    fmt.Sprintf("Get with %s", prefix),
+			handler: handler.Get[TestUser](handler.StandardGet[TestUser]),
+			method:  http.MethodGet,
+			path:    "/users/1",
+		},
+		{
+			name:    fmt.Sprintf("Create with %s", prefix),
+			handler: handler.Create[TestUser](handler.StandardCreate[TestUser]),
+			method:  http.MethodPost,
+			path:    "/users",
+			body:    []byte(`{"name":"New User","email":"new@example.com"}`),
+		},
+		{
+			name:    fmt.Sprintf("Update with %s", prefix),
+			handler: handler.Update[TestUser](handler.StandardUpdate[TestUser]),
+			method:  http.MethodPut,
+			path:    "/users/1",
+			body:    []byte(`{"name":"Updated","email":"updated@example.com"}`),
+		},
+		{
+			name:    fmt.Sprintf("Delete with %s", prefix),
+			handler: handler.Delete[TestUser](handler.StandardDelete[TestUser]),
+			method:  http.MethodDelete,
+			path:    "/users/1",
+		},
+	}
+}
+
 // TestHandler_ContextCancellation tests context cancellation handling
 func TestHandler_ContextCancellation(t *testing.T) {
 	cleanTable(t)
@@ -535,46 +584,7 @@ func TestHandler_ContextCancellation(t *testing.T) {
 		t.Fatal("Failed to insert test user:", err)
 	}
 
-	tests := []struct {
-		name    string
-		handler http.HandlerFunc
-		method  string
-		path    string
-		body    []byte
-	}{
-		{
-			name:    "GetAll with canceled context",
-			handler: handler.GetAll[TestUser](),
-			method:  http.MethodGet,
-			path:    "/users",
-		},
-		{
-			name:    "Get with canceled context",
-			handler: handler.Get[TestUser](),
-			method:  http.MethodGet,
-			path:    "/users/1",
-		},
-		{
-			name:    "Create with canceled context",
-			handler: handler.Create[TestUser](),
-			method:  http.MethodPost,
-			path:    "/users",
-			body:    []byte(`{"name":"New User","email":"new@example.com"}`),
-		},
-		{
-			name:    "Update with canceled context",
-			handler: handler.Update[TestUser](),
-			method:  http.MethodPut,
-			path:    "/users/1",
-			body:    []byte(`{"name":"Updated","email":"updated@example.com"}`),
-		},
-		{
-			name:    "Delete with canceled context",
-			handler: handler.Delete[TestUser](),
-			method:  http.MethodDelete,
-			path:    "/users/1",
-		},
-	}
+	tests := getContextTestCases("canceled context")
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -624,46 +634,7 @@ func TestHandler_ContextTimeout(t *testing.T) {
 		t.Fatal("Failed to insert test user:", err)
 	}
 
-	tests := []struct {
-		name    string
-		handler http.HandlerFunc
-		method  string
-		path    string
-		body    []byte
-	}{
-		{
-			name:    "GetAll with timeout",
-			handler: handler.GetAll[TestUser](),
-			method:  http.MethodGet,
-			path:    "/users",
-		},
-		{
-			name:    "Get with timeout",
-			handler: handler.Get[TestUser](),
-			method:  http.MethodGet,
-			path:    "/users/1",
-		},
-		{
-			name:    "Create with timeout",
-			handler: handler.Create[TestUser](),
-			method:  http.MethodPost,
-			path:    "/users",
-			body:    []byte(`{"name":"New User","email":"new@example.com"}`),
-		},
-		{
-			name:    "Update with timeout",
-			handler: handler.Update[TestUser](),
-			method:  http.MethodPut,
-			path:    "/users/1",
-			body:    []byte(`{"name":"Updated","email":"updated@example.com"}`),
-		},
-		{
-			name:    "Delete with timeout",
-			handler: handler.Delete[TestUser](),
-			method:  http.MethodDelete,
-			path:    "/users/1",
-		},
-	}
+	tests := getContextTestCases("timeout")
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -721,7 +692,7 @@ func TestHandler_GetAllWithRelations(t *testing.T) {
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
-	handler.GetAll[TestUser]()(w, req)
+	handler.GetAll[TestUser](handler.StandardGetAll[TestUser])(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
@@ -759,7 +730,7 @@ func TestHandler_GetWithRelations(t *testing.T) {
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
-	handler.Get[TestUser]()(w, req)
+	handler.Get[TestUser](handler.StandardGet[TestUser])(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
@@ -790,7 +761,7 @@ func TestHandler_UpdateInvalidID(t *testing.T) {
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
-	handler.Update[TestUser]()(w, req)
+	handler.Update[TestUser](handler.StandardUpdate[TestUser])(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, w.Code)
@@ -813,7 +784,7 @@ func TestHandler_MissingMetadata(t *testing.T) {
 			name:         "Get without metadata",
 			method:       http.MethodGet,
 			path:         "/users/1",
-			handler:      handler.Get[TestUser](),
+			handler:      handler.Get[TestUser](handler.StandardGet[TestUser]),
 			expectedCode: http.StatusInternalServerError,
 		},
 		{
@@ -821,14 +792,14 @@ func TestHandler_MissingMetadata(t *testing.T) {
 			method:       http.MethodPut,
 			path:         "/users/1",
 			body:         []byte(`{"name":"Test","email":"test@example.com"}`),
-			handler:      handler.Update[TestUser](),
+			handler:      handler.Update[TestUser](handler.StandardUpdate[TestUser]),
 			expectedCode: http.StatusInternalServerError,
 		},
 		{
 			name:         "Delete without metadata",
 			method:       http.MethodDelete,
 			path:         "/users/1",
-			handler:      handler.Delete[TestUser](),
+			handler:      handler.Delete[TestUser](handler.StandardDelete[TestUser]),
 			expectedCode: http.StatusInternalServerError,
 		},
 	}
@@ -930,7 +901,7 @@ func TestHandler_GetAll_QueryParams(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := chi.NewRouter()
 			r.Use(withMeta(queryMeta))
-			r.Get("/users", handler.GetAll[TestUser]())
+			r.Get("/users", handler.GetAll[TestUser](handler.StandardGetAll[TestUser]))
 
 			url := "/users"
 			if tt.queryString != "" {
@@ -1047,7 +1018,7 @@ func TestHandler_GetAll_FilterOperators(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := chi.NewRouter()
 			r.Use(withMeta(queryMeta))
-			r.Get(testUsersPath, handler.GetAll[TestUser]())
+			r.Get(testUsersPath, handler.GetAll[TestUser](handler.StandardGetAll[TestUser]))
 
 			url := testUsersPath + "?" + tt.queryString
 			req := httptest.NewRequest(http.MethodGet, url, nil)
@@ -1135,7 +1106,7 @@ func TestHandler_ValidationError_Create(t *testing.T) {
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
-	handler.Create[TestValidatedItem]()(w, req)
+	handler.Create[TestValidatedItem](handler.StandardCreate[TestValidatedItem])(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status %d, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
@@ -1199,7 +1170,7 @@ func TestHandler_ValidationError_Update(t *testing.T) {
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
-	handler.Update[TestValidatedItem]()(w, req)
+	handler.Update[TestValidatedItem](handler.StandardUpdate[TestValidatedItem])(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status %d, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
@@ -1261,7 +1232,7 @@ func TestHandler_ValidationError_Delete(t *testing.T) {
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
-	handler.Delete[TestValidatedItem]()(w, req)
+	handler.Delete[TestValidatedItem](handler.StandardDelete[TestValidatedItem])(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status %d, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
@@ -1343,7 +1314,7 @@ func TestHandler_UUID_CRUD(t *testing.T) {
 		req = req.WithContext(ctx)
 
 		w := httptest.NewRecorder()
-		handler.Create[TestUUIDBlog]()(w, req)
+		handler.Create[TestUUIDBlog](handler.StandardCreate[TestUUIDBlog])(w, req)
 
 		if w.Code != http.StatusCreated {
 			t.Fatalf("Expected status %d, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
@@ -1372,7 +1343,7 @@ func TestHandler_UUID_CRUD(t *testing.T) {
 			req = req.WithContext(ctx)
 
 			w := httptest.NewRecorder()
-			handler.Get[TestUUIDBlog]()(w, req)
+			handler.Get[TestUUIDBlog](handler.StandardGet[TestUUIDBlog])(w, req)
 
 			if w.Code != http.StatusOK {
 				t.Fatalf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
@@ -1401,7 +1372,7 @@ func TestHandler_UUID_CRUD(t *testing.T) {
 			req = req.WithContext(ctx)
 
 			w := httptest.NewRecorder()
-			handler.Update[TestUUIDBlog]()(w, req)
+			handler.Update[TestUUIDBlog](handler.StandardUpdate[TestUUIDBlog])(w, req)
 
 			if w.Code != http.StatusOK {
 				t.Fatalf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
@@ -1428,7 +1399,7 @@ func TestHandler_UUID_CRUD(t *testing.T) {
 			req = req.WithContext(ctx)
 
 			w := httptest.NewRecorder()
-			handler.Delete[TestUUIDBlog]()(w, req)
+			handler.Delete[TestUUIDBlog](handler.StandardDelete[TestUUIDBlog])(w, req)
 
 			if w.Code != http.StatusNoContent {
 				t.Fatalf("Expected status %d, got %d: %s", http.StatusNoContent, w.Code, w.Body.String())
@@ -1446,7 +1417,7 @@ func TestHandler_UUID_CRUD(t *testing.T) {
 			req = req.WithContext(ctx)
 
 			w := httptest.NewRecorder()
-			handler.Get[TestUUIDBlog]()(w, req)
+			handler.Get[TestUUIDBlog](handler.StandardGet[TestUUIDBlog])(w, req)
 
 			if w.Code != http.StatusNotFound {
 				t.Errorf("Expected status %d, got %d", http.StatusNotFound, w.Code)
@@ -1486,7 +1457,7 @@ func TestHandler_UUID_InvalidFormat(t *testing.T) {
 		req = req.WithContext(ctx)
 
 		w := httptest.NewRecorder()
-		handler.Update[TestUUIDBlog]()(w, req)
+		handler.Update[TestUUIDBlog](handler.StandardUpdate[TestUUIDBlog])(w, req)
 
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("Expected status %d for invalid UUID, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
@@ -1530,7 +1501,7 @@ func TestHandler_UUID_StringPK(t *testing.T) {
 		req = req.WithContext(ctx)
 
 		w := httptest.NewRecorder()
-		handler.Create[TestStringPKModel]()(w, req)
+		handler.Create[TestStringPKModel](handler.StandardCreate[TestStringPKModel])(w, req)
 
 		if w.Code != http.StatusCreated {
 			t.Fatalf("Expected status %d, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
@@ -1557,7 +1528,7 @@ func TestHandler_UUID_StringPK(t *testing.T) {
 		req = req.WithContext(ctx)
 
 		w := httptest.NewRecorder()
-		handler.Get[TestStringPKModel]()(w, req)
+		handler.Get[TestStringPKModel](handler.StandardGet[TestStringPKModel])(w, req)
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
@@ -1577,7 +1548,7 @@ func TestHandler_UUID_StringPK(t *testing.T) {
 		req = req.WithContext(ctx)
 
 		w := httptest.NewRecorder()
-		handler.Update[TestStringPKModel]()(w, req)
+		handler.Update[TestStringPKModel](handler.StandardUpdate[TestStringPKModel])(w, req)
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
@@ -1607,7 +1578,7 @@ func TestHandler_UUID_StringPK(t *testing.T) {
 		req = req.WithContext(ctx)
 
 		w := httptest.NewRecorder()
-		handler.Delete[TestStringPKModel]()(w, req)
+		handler.Delete[TestStringPKModel](handler.StandardDelete[TestStringPKModel])(w, req)
 
 		if w.Code != http.StatusNoContent {
 			t.Errorf("Expected status %d, got %d: %s", http.StatusNoContent, w.Code, w.Body.String())
@@ -1635,7 +1606,7 @@ func TestHandler_MissingID(t *testing.T) {
 		req = req.WithContext(ctx)
 
 		w := httptest.NewRecorder()
-		handler.Get[TestUser]()(w, req)
+		handler.Get[TestUser](handler.StandardGet[TestUser])(w, req)
 
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("Expected status %d for missing ID, got %d", http.StatusBadRequest, w.Code)
@@ -1654,7 +1625,7 @@ func TestHandler_MissingID(t *testing.T) {
 		req = req.WithContext(ctx)
 
 		w := httptest.NewRecorder()
-		handler.Update[TestUser]()(w, req)
+		handler.Update[TestUser](handler.StandardUpdate[TestUser])(w, req)
 
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("Expected status %d for missing ID, got %d", http.StatusBadRequest, w.Code)
@@ -1671,7 +1642,7 @@ func TestHandler_MissingID(t *testing.T) {
 		req = req.WithContext(ctx)
 
 		w := httptest.NewRecorder()
-		handler.Delete[TestUser]()(w, req)
+		handler.Delete[TestUser](handler.StandardDelete[TestUser])(w, req)
 
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("Expected status %d for missing ID, got %d", http.StatusBadRequest, w.Code)
@@ -1716,9 +1687,286 @@ func TestHandler_UnsupportedIDType(t *testing.T) {
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
-	handler.Update[TestFloatIDModel]()(w, req)
+	handler.Update[TestFloatIDModel](handler.StandardUpdate[TestFloatIDModel])(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status %d for unsupported ID type, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
+	}
+}
+
+// TestCustomGet tests that CustomGet correctly uses a custom function
+func TestCustomGet(t *testing.T) {
+	// Create a user first
+	_, err := testDB.GetDB().NewInsert().Model(&TestUser{ID: 100, Name: "Original", Email: "original@test.com"}).Exec(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	defer testDB.GetDB().NewDelete().Model((*TestUser)(nil)).Where("id = 100").Exec(context.Background())
+
+	// Custom function that always returns a specific user regardless of ID
+	customGet := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*TestUser, error) {
+		// Ignore the id parameter, always fetch user 100
+		return svc.Get(ctx, "100", relations)
+	}
+
+	// Request for user 999 (doesn't exist) but custom func will return user 100
+	req := httptest.NewRequest(http.MethodGet, "/users/999", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(userMeta.URLParamUUID, "999")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, userMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Get[TestUser](customGet)(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		return
+	}
+
+	var user TestUser
+	if err := json.Unmarshal(w.Body.Bytes(), &user); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if user.ID != 100 {
+		t.Errorf("Expected user ID 100, got %d", user.ID)
+	}
+	if user.Name != "Original" {
+		t.Errorf("Expected user name 'Original', got %s", user.Name)
+	}
+}
+
+// TestCustomGet_WithAuth tests that auth info is passed to custom function
+func TestCustomGet_WithAuth(t *testing.T) {
+	// Create a user
+	_, err := testDB.GetDB().NewInsert().Model(&TestUser{ID: 101, Name: "AuthUser", Email: "auth@test.com"}).Exec(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	defer testDB.GetDB().NewDelete().Model((*TestUser)(nil)).Where("id = 101").Exec(context.Background())
+
+	var receivedAuth *metadata.AuthInfo
+
+	// Custom function that captures the auth info
+	customGet := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*TestUser, error) {
+		receivedAuth = auth
+		return svc.Get(ctx, id, relations)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/users/101", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(userMeta.URLParamUUID, "101")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, userMeta)
+
+	// Add auth info to context
+	authInfo := &metadata.AuthInfo{UserID: "test-user-123", Scopes: []string{"read", "write"}}
+	ctx = context.WithValue(ctx, metadata.AuthInfoKey, authInfo)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Get[TestUser](customGet)(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		return
+	}
+
+	if receivedAuth == nil {
+		t.Error("Expected auth info to be passed to custom function, got nil")
+		return
+	}
+
+	if receivedAuth.UserID != "test-user-123" {
+		t.Errorf("Expected UserID 'test-user-123', got '%s'", receivedAuth.UserID)
+	}
+
+	if len(receivedAuth.Scopes) != 2 || receivedAuth.Scopes[0] != "read" {
+		t.Errorf("Expected scopes ['read', 'write'], got %v", receivedAuth.Scopes)
+	}
+}
+
+// TestCustomCreate tests that CustomCreate correctly uses a custom function
+func TestCustomCreate(t *testing.T) {
+	// Custom function that modifies the item before creating
+	customCreate := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item TestUser) (*TestUser, error) {
+		// Modify name before creating
+		item.Name = "Custom-" + item.Name
+		return svc.Create(ctx, item)
+	}
+
+	body := []byte(`{"name":"Test","email":"customcreate@test.com"}`)
+	req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), metadata.MetadataKey, userMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Create[TestUser](customCreate)(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
+		return
+	}
+
+	var user TestUser
+	if err := json.Unmarshal(w.Body.Bytes(), &user); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Clean up
+	defer testDB.GetDB().NewDelete().Model((*TestUser)(nil)).Where("id = ?", user.ID).Exec(context.Background())
+
+	if user.Name != "Custom-Test" {
+		t.Errorf("Expected name 'Custom-Test', got '%s'", user.Name)
+	}
+}
+
+// TestCustomUpdate tests that CustomUpdate correctly uses a custom function
+func TestCustomUpdate(t *testing.T) {
+	// Create a user first
+	_, err := testDB.GetDB().NewInsert().Model(&TestUser{ID: 102, Name: "Original", Email: "update@test.com"}).Exec(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	defer testDB.GetDB().NewDelete().Model((*TestUser)(nil)).Where("id = 102").Exec(context.Background())
+
+	// Custom function that appends to the name
+	customUpdate := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, item TestUser) (*TestUser, error) {
+		item.Name += "-Updated"
+		return svc.Update(ctx, id, item)
+	}
+
+	body := []byte(`{"name":"Test","email":"update@test.com"}`)
+	req := httptest.NewRequest(http.MethodPut, "/users/102", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(userMeta.URLParamUUID, "102")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, userMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Update[TestUser](customUpdate)(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		return
+	}
+
+	var user TestUser
+	if err := json.Unmarshal(w.Body.Bytes(), &user); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if user.Name != "Test-Updated" {
+		t.Errorf("Expected name 'Test-Updated', got '%s'", user.Name)
+	}
+}
+
+// TestCustomDelete tests that CustomDelete correctly uses a custom function
+func TestCustomDelete(t *testing.T) {
+	// Create a user first
+	_, err := testDB.GetDB().NewInsert().Model(&TestUser{ID: 103, Name: "ToDelete", Email: "delete@test.com"}).Exec(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+
+	var deletedID string
+
+	// Custom function that captures the ID being deleted
+	customDelete := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) error {
+		deletedID = id
+		return svc.Delete(ctx, id)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/users/103", nil)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(userMeta.URLParamUUID, "103")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, userMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Delete[TestUser](customDelete)(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusNoContent, w.Code, w.Body.String())
+		return
+	}
+
+	if deletedID != "103" {
+		t.Errorf("Expected deleted ID '103', got '%s'", deletedID)
+	}
+
+	// Verify it's actually deleted
+	var count int
+	count, err = testDB.GetDB().NewSelect().Model((*TestUser)(nil)).Where("id = 103").Count(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to check user existence: %v", err)
+	}
+	if count != 0 {
+		t.Error("User should have been deleted but still exists")
+	}
+}
+
+// TestCustomGetAll tests that CustomGetAll correctly uses a custom function
+func TestCustomGetAll(t *testing.T) {
+	// Create some users
+	users := []TestUser{
+		{ID: 201, Name: "User1", Email: "user1@test.com"},
+		{ID: 202, Name: "User2", Email: "user2@test.com"},
+		{ID: 203, Name: "User3", Email: "user3@test.com"},
+	}
+	for _, u := range users {
+		testDB.GetDB().NewInsert().Model(&u).Exec(context.Background())
+	}
+	defer func() {
+		for _, u := range users {
+			testDB.GetDB().NewDelete().Model((*TestUser)(nil)).Where("id = ?", u.ID).Exec(context.Background())
+		}
+	}()
+
+	// Custom function that filters to only return users with ID > 201
+	customGetAll := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions, relations []string) ([]*TestUser, int, error) {
+		// Get all, then filter
+		all, _, err := svc.GetAll(ctx, relations)
+		if err != nil {
+			return nil, 0, err
+		}
+		var filtered []*TestUser
+		for _, u := range all {
+			if u.ID > 201 {
+				filtered = append(filtered, u)
+			}
+		}
+		return filtered, len(filtered), nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/users", nil)
+	ctx := context.WithValue(req.Context(), metadata.MetadataKey, userMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.GetAll[TestUser](customGetAll)(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		return
+	}
+
+	var result []*TestUser
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Should only have users 202 and 203
+	if len(result) != 2 {
+		t.Errorf("Expected 2 users, got %d", len(result))
 	}
 }

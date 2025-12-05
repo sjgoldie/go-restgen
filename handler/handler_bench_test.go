@@ -413,19 +413,19 @@ func BenchmarkNestedDepth(b *testing.B) {
 			switch tt.depth {
 			case 1:
 				path = fmt.Sprintf(tt.path, blogID)
-				h = handler.Get[BenchBlog]()
+				h = handler.Get[BenchBlog](handler.StandardGet[BenchBlog])
 				meta = benchBlogMeta
 			case 2:
 				path = fmt.Sprintf(tt.path, blogID, postID)
-				h = handler.Get[BenchPost]()
+				h = handler.Get[BenchPost](handler.StandardGet[BenchPost])
 				meta = benchPostMeta
 			case 3:
 				path = fmt.Sprintf(tt.path, blogID, postID, commentID)
-				h = handler.Get[BenchComment]()
+				h = handler.Get[BenchComment](handler.StandardGet[BenchComment])
 				meta = benchCommentMeta
 			case 4:
 				path = fmt.Sprintf(tt.path, blogID, postID, commentID, reactionID)
-				h = handler.Get[BenchReaction]()
+				h = handler.Get[BenchReaction](handler.StandardGet[BenchReaction])
 				meta = benchReactionMeta
 			}
 
@@ -487,7 +487,7 @@ func BenchmarkAuthPermutations(b *testing.B) {
 	for _, scenario := range authScenarios {
 		b.Run(scenario.name, func(b *testing.B) {
 			// Setup handler
-			h := handler.Get[BenchBlog]()
+			h := handler.Get[BenchBlog](handler.StandardGet[BenchBlog])
 
 			// Create request with scenario auth and metadata
 			req := httptest.NewRequest("GET", fmt.Sprintf("/blogs/%d", blogID), nil)
@@ -678,14 +678,14 @@ func BenchmarkOperations(b *testing.B) {
 				switch tt.method {
 				case "GET":
 					if len(path) > 7 && path[:7] == "/blogs/" && path[7:] != "" {
-						handler.Get[BenchBlog]()(w, req)
+						handler.Get[BenchBlog](handler.StandardGet[BenchBlog])(w, req)
 					} else {
-						handler.GetAll[BenchBlog]()(w, req)
+						handler.GetAll[BenchBlog](handler.StandardGetAll[BenchBlog])(w, req)
 					}
 				case "POST":
-					handler.Create[BenchBlog]()(w, req)
+					handler.Create[BenchBlog](handler.StandardCreate[BenchBlog])(w, req)
 				case "PUT":
-					handler.Update[BenchBlog]()(w, req)
+					handler.Update[BenchBlog](handler.StandardUpdate[BenchBlog])(w, req)
 				}
 
 				b.StopTimer()
@@ -720,7 +720,7 @@ func BenchmarkNestedCollections(b *testing.B) {
 			blogIDs, _, _, _ := seedBenchData(b, 1, tt.numPosts, 0, 0)
 			blogID := blogIDs[0]
 
-			h := handler.GetAll[BenchPost]()
+			h := handler.GetAll[BenchPost](handler.StandardGetAll[BenchPost])
 
 			req := httptest.NewRequest("GET", fmt.Sprintf("/blogs/%d/posts", blogID), nil)
 			req = addAuthToRequest(req, "user-0", []string{"user"})

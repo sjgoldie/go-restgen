@@ -5,8 +5,8 @@ import "github.com/sjgoldie/go-restgen/metadata"
 // AuthInfo is re-exported from metadata package for convenience
 type AuthInfo = metadata.AuthInfo
 
-// Context key for AuthInfo
-const AuthInfoKey = "authInfo"
+// AuthInfoKey is re-exported from metadata package for convenience
+const AuthInfoKey = metadata.AuthInfoKey
 
 // HTTP methods for auth configuration
 const (

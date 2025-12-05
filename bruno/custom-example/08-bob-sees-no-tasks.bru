@@ -1,0 +1,21 @@
+meta {
+  name: Bob Sees No Tasks (Different User)
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/my-tasks
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer user:bob:user
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 0
+}

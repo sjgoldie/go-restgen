@@ -1614,3 +1614,111 @@ func TestHandler_UUID_StringPK(t *testing.T) {
 		}
 	})
 }
+
+// TestHandler_MissingID tests that missing ID parameter returns 400
+func TestHandler_MissingID(t *testing.T) {
+	// Create test table
+	db, _ := datastore.Get()
+	_, err := db.GetDB().NewCreateTable().Model((*TestUser)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create users table:", err)
+	}
+
+	t.Run("GetMissingID", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/users/", nil)
+
+		rctx := chi.NewRouteContext()
+		// Don't add the ID parameter - simulating empty ID
+		rctx.URLParams.Add("id", "")
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		ctx = context.WithValue(ctx, metadata.MetadataKey, userMeta)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.Get[TestUser]()(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status %d for missing ID, got %d", http.StatusBadRequest, w.Code)
+		}
+	})
+
+	t.Run("UpdateMissingID", func(t *testing.T) {
+		body := []byte(`{"name":"Test"}`)
+		req := httptest.NewRequest(http.MethodPut, "/users/", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "")
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		ctx = context.WithValue(ctx, metadata.MetadataKey, userMeta)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.Update[TestUser]()(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status %d for missing ID, got %d", http.StatusBadRequest, w.Code)
+		}
+	})
+
+	t.Run("DeleteMissingID", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/users/", nil)
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "")
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		ctx = context.WithValue(ctx, metadata.MetadataKey, userMeta)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.Delete[TestUser]()(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status %d for missing ID, got %d", http.StatusBadRequest, w.Code)
+		}
+	})
+}
+
+// TestHandler_UnsupportedIDType tests setIDField with unsupported types
+func TestHandler_UnsupportedIDType(t *testing.T) {
+	// Model with float ID (unsupported type)
+	type TestFloatIDModel struct {
+		bun.BaseModel `bun:"table:float_id_models"`
+		ID            float64   `bun:"id,pk" json:"id"`
+		Name          string    `bun:"name,notnull" json:"name"`
+		CreatedAt     time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at,omitempty"`
+	}
+
+	db, _ := datastore.Get()
+	_, err := db.GetDB().NewCreateTable().Model((*TestFloatIDModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create float_id_models table:", err)
+	}
+	defer db.GetDB().NewDropTable().Model((*TestFloatIDModel)(nil)).IfExists().Exec(context.Background())
+
+	floatIDMeta := &metadata.TypeMetadata{
+		TypeID:       "test_float_id",
+		TypeName:     "TestFloatIDModel",
+		TableName:    "float_id_models",
+		URLParamUUID: "id",
+		ModelType:    reflect.TypeOf(TestFloatIDModel{}),
+	}
+
+	// Try to update - setIDField should fail on float type
+	body := []byte(`{"name":"Test"}`)
+	req := httptest.NewRequest(http.MethodPut, "/models/1", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "1")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, floatIDMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Update[TestFloatIDModel]()(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d for unsupported ID type, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
+	}
+}

@@ -65,6 +65,58 @@ defer datastore.Cleanup()
 db, err := datastore.NewSQLite("./data.db")
 ```
 
+## Primary Key Types
+
+go-restgen supports both integer and UUID primary keys. The framework automatically detects and handles the PK type based on your model definition.
+
+### Integer Primary Keys (Default)
+
+```go
+type Blog struct {
+    bun.BaseModel `bun:"table:blogs"`
+    ID            int       `bun:"id,pk,autoincrement" json:"id"`
+    Name          string    `bun:"name,notnull" json:"name"`
+}
+```
+
+### UUID Primary Keys
+
+```go
+import "github.com/google/uuid"
+
+type Blog struct {
+    bun.BaseModel `bun:"table:blogs"`
+    ID            uuid.UUID `bun:"id,pk,type:uuid" json:"id"`
+    Name          string    `bun:"name,notnull" json:"name"`
+}
+
+// Use BeforeAppendModel hook to generate UUIDs
+func (b *Blog) BeforeAppendModel(ctx context.Context, query bun.Query) error {
+    if _, ok := query.(*bun.InsertQuery); ok {
+        if b.ID == uuid.Nil {
+            b.ID = uuid.New()
+        }
+    }
+    return nil
+}
+```
+
+**Important for nested resources with UUID foreign keys:**
+
+Foreign key fields must include `skipupdate` to prevent them being overwritten during updates:
+
+```go
+type Post struct {
+    bun.BaseModel `bun:"table:posts"`
+    ID            uuid.UUID `bun:"id,pk,type:uuid" json:"id"`
+    BlogID        uuid.UUID `bun:"blog_id,notnull,type:uuid,skipupdate" json:"blog_id"`  // Note: skipupdate
+    Blog          *Blog     `bun:"rel:belongs-to,join:blog_id=id" json:"blog,omitempty"`
+    Title         string    `bun:"title,notnull" json:"title"`
+}
+```
+
+See the [UUID example](./examples/uuid_pk) for a complete working example with UUID primary keys and nested routes.
+
 ## Nested Resources
 
 go-restgen automatically handles parent-child relationships with full chain validation:
@@ -757,6 +809,7 @@ See the [`examples/`](./examples) directory for complete working examples:
 
 - **[Simple CRUD](./examples/simple)** - Basic CRUD operations with SQLite
 - **[Nested Routes](./examples/nested_routes)** - 3-level nesting (Users → Posts → Comments) with automatic parent validation
+- **[UUID Primary Keys](./examples/uuid_pk)** - Using UUID primary keys instead of auto-increment integers
 - **[Authentication & Authorization](./examples/auth)** - Comprehensive auth patterns including scopes, ownership, admin bypass, and multi-ownership
 - **[Validation](./examples/validator)** - Business rule validation with state machine transitions
 - **[Audit](./examples/audit)** - Audit logging with transactional consistency
@@ -823,6 +876,7 @@ go-restgen builds on these excellent projects:
 - [x] Pagination with limit/offset and total count
 - [x] Custom validation for business rules
 - [x] Transactional audit logging
+- [x] UUID primary key support
 - [ ] Optionally retrieve an object's relations when retrieving the object itself
 - [ ] MySQL support
 - [ ] OpenAPI/Swagger generation

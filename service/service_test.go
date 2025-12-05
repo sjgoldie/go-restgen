@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/sjgoldie/go-restgen/datastore"
@@ -163,21 +164,21 @@ func TestService_Get(t *testing.T) {
 	tests := []struct {
 		name         string
 		setupItem    *TestModel
-		getID        int
+		getID        string
 		wantErr      bool
 		expectedName string
 	}{
 		{
 			name:         "existing item",
 			setupItem:    &TestModel{Name: "Test Item", Email: "test@example.com"},
-			getID:        1,
+			getID:        "1",
 			wantErr:      false,
 			expectedName: "Test Item",
 		},
 		{
 			name:      "not found",
 			setupItem: nil,
-			getID:     999,
+			getID:     "999",
 			wantErr:   true,
 		},
 	}
@@ -298,7 +299,7 @@ func TestService_Update(t *testing.T) {
 				t.Fatal("Failed to create service:", err)
 			}
 
-			updated, err := svc.Update(ctxWithMeta(testModelMeta), tt.updateItem.ID, tt.updateItem)
+			updated, err := svc.Update(ctxWithMeta(testModelMeta), strconv.Itoa(tt.updateItem.ID), tt.updateItem)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Update() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -315,19 +316,19 @@ func TestService_Delete(t *testing.T) {
 	tests := []struct {
 		name      string
 		setupItem *TestModel
-		deleteID  int
+		deleteID  string
 		wantErr   bool
 	}{
 		{
 			name:      "valid delete",
 			setupItem: &TestModel{Name: "To Delete", Email: "delete@example.com"},
-			deleteID:  1,
+			deleteID:  "1",
 			wantErr:   false,
 		},
 		{
 			name:      "not found",
 			setupItem: nil,
-			deleteID:  999,
+			deleteID:  "999",
 			wantErr:   true,
 		},
 	}

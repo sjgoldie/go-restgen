@@ -1,0 +1,24 @@
+meta {
+  name: Update Blog
+  type: http
+  seq: 10
+}
+
+put {
+  url: {{baseUrl}}/blogs/{{blogId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Updated Tech Blog",
+    "description": "Now with more tech!"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{blogId}}
+  res.body.name: eq Updated Tech Blog
+}

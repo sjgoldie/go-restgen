@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/sjgoldie/go-restgen/datastore"
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/handler"
@@ -216,10 +217,10 @@ func TestHandler_Get(t *testing.T) {
 			expectedCode: http.StatusNotFound,
 		},
 		{
-			name:         "invalid id",
+			name:         "invalid id (string IDs return not found)",
 			setupUser:    nil,
 			requestID:    "invalid",
-			expectedCode: http.StatusBadRequest,
+			expectedCode: http.StatusNotFound, // With string IDs, any string is valid but won't be found
 		},
 	}
 
@@ -454,10 +455,10 @@ func TestHandler_Delete(t *testing.T) {
 			expectedCode: http.StatusNotFound,
 		},
 		{
-			name:         "invalid id",
+			name:         "invalid id (string IDs return not found)",
 			setupUser:    nil,
 			requestID:    "invalid",
-			expectedCode: http.StatusBadRequest,
+			expectedCode: http.StatusNotFound, // With string IDs, any string is valid but won't be found
 		},
 	}
 
@@ -1270,4 +1271,346 @@ func TestHandler_ValidationError_Delete(t *testing.T) {
 	if !bytes.Contains(w.Body.Bytes(), []byte("cannot delete completed items")) {
 		t.Errorf("Expected body to contain validation message, got: %s", w.Body.String())
 	}
+}
+
+// ============================================================================
+// UUID Primary Key Tests
+// ============================================================================
+
+// TestUUIDBlog is a test model with UUID primary key
+type TestUUIDBlog struct {
+	bun.BaseModel `bun:"table:uuid_blogs"`
+	ID            uuid.UUID `bun:"id,pk,type:uuid" json:"id"`
+	Name          string    `bun:"name,notnull" json:"name"`
+	CreatedAt     time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at,omitempty"`
+}
+
+// BeforeAppendModel generates UUID for new blogs
+func (b *TestUUIDBlog) BeforeAppendModel(_ context.Context, query bun.Query) error {
+	if _, ok := query.(*bun.InsertQuery); ok {
+		if b.ID == uuid.Nil {
+			b.ID = uuid.New()
+		}
+	}
+	return nil
+}
+
+// TestUUIDPost is a child model with UUID primary key and UUID foreign key
+type TestUUIDPost struct {
+	bun.BaseModel `bun:"table:uuid_posts"`
+	ID            uuid.UUID     `bun:"id,pk,type:uuid" json:"id"`
+	BlogID        uuid.UUID     `bun:"blog_id,notnull,type:uuid" json:"blog_id"`
+	Blog          *TestUUIDBlog `bun:"rel:belongs-to,join:blog_id=id" json:"-"`
+	Title         string        `bun:"title,notnull" json:"title"`
+	CreatedAt     time.Time     `bun:"created_at,notnull,default:current_timestamp" json:"created_at,omitempty"`
+}
+
+// BeforeAppendModel generates UUID for new posts
+func (p *TestUUIDPost) BeforeAppendModel(_ context.Context, query bun.Query) error {
+	if _, ok := query.(*bun.InsertQuery); ok {
+		if p.ID == uuid.Nil {
+			p.ID = uuid.New()
+		}
+	}
+	return nil
+}
+
+// TestHandler_UUID_CRUD tests full CRUD operations with UUID primary keys
+func TestHandler_UUID_CRUD(t *testing.T) {
+	// Create UUID tables
+	db, _ := datastore.Get()
+	_, err := db.GetDB().NewCreateTable().Model((*TestUUIDBlog)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create uuid_blogs table:", err)
+	}
+	defer db.GetDB().NewDropTable().Model((*TestUUIDBlog)(nil)).IfExists().Exec(context.Background())
+
+	uuidBlogMeta := &metadata.TypeMetadata{
+		TypeID:       "test_uuid_blog_id",
+		TypeName:     "TestUUIDBlog",
+		TableName:    "uuid_blogs",
+		URLParamUUID: "blogId",
+		ModelType:    reflect.TypeOf(TestUUIDBlog{}),
+	}
+
+	// Test Create
+	t.Run("Create", func(t *testing.T) {
+		body := []byte(`{"name":"Test UUID Blog"}`)
+		req := httptest.NewRequest(http.MethodPost, "/blogs", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		ctx := context.WithValue(req.Context(), metadata.MetadataKey, uuidBlogMeta)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.Create[TestUUIDBlog]()(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("Expected status %d, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
+		}
+
+		var created TestUUIDBlog
+		if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+
+		if created.ID == uuid.Nil {
+			t.Error("Expected UUID to be generated, got nil UUID")
+		}
+		if created.Name != "Test UUID Blog" {
+			t.Errorf("Expected name 'Test UUID Blog', got '%s'", created.Name)
+		}
+
+		// Test Get with UUID
+		t.Run("Get", func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/blogs/"+created.ID.String(), nil)
+
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("blogId", created.ID.String())
+			ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+			ctx = context.WithValue(ctx, metadata.MetadataKey, uuidBlogMeta)
+			req = req.WithContext(ctx)
+
+			w := httptest.NewRecorder()
+			handler.Get[TestUUIDBlog]()(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+			}
+
+			var got TestUUIDBlog
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatalf("Failed to unmarshal response: %v", err)
+			}
+
+			if got.ID != created.ID {
+				t.Errorf("Expected ID %s, got %s", created.ID, got.ID)
+			}
+		})
+
+		// Test Update with UUID
+		t.Run("Update", func(t *testing.T) {
+			body := []byte(`{"name":"Updated UUID Blog"}`)
+			req := httptest.NewRequest(http.MethodPut, "/blogs/"+created.ID.String(), bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("blogId", created.ID.String())
+			ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+			ctx = context.WithValue(ctx, metadata.MetadataKey, uuidBlogMeta)
+			req = req.WithContext(ctx)
+
+			w := httptest.NewRecorder()
+			handler.Update[TestUUIDBlog]()(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+			}
+
+			var updated TestUUIDBlog
+			if err := json.Unmarshal(w.Body.Bytes(), &updated); err != nil {
+				t.Fatalf("Failed to unmarshal response: %v", err)
+			}
+
+			if updated.Name != "Updated UUID Blog" {
+				t.Errorf("Expected name 'Updated UUID Blog', got '%s'", updated.Name)
+			}
+		})
+
+		// Test Delete with UUID
+		t.Run("Delete", func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodDelete, "/blogs/"+created.ID.String(), nil)
+
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("blogId", created.ID.String())
+			ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+			ctx = context.WithValue(ctx, metadata.MetadataKey, uuidBlogMeta)
+			req = req.WithContext(ctx)
+
+			w := httptest.NewRecorder()
+			handler.Delete[TestUUIDBlog]()(w, req)
+
+			if w.Code != http.StatusNoContent {
+				t.Fatalf("Expected status %d, got %d: %s", http.StatusNoContent, w.Code, w.Body.String())
+			}
+		})
+
+		// Verify deletion
+		t.Run("VerifyDeleted", func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/blogs/"+created.ID.String(), nil)
+
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("blogId", created.ID.String())
+			ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+			ctx = context.WithValue(ctx, metadata.MetadataKey, uuidBlogMeta)
+			req = req.WithContext(ctx)
+
+			w := httptest.NewRecorder()
+			handler.Get[TestUUIDBlog]()(w, req)
+
+			if w.Code != http.StatusNotFound {
+				t.Errorf("Expected status %d, got %d", http.StatusNotFound, w.Code)
+			}
+		})
+	})
+}
+
+// TestHandler_UUID_InvalidFormat tests that invalid UUID format returns 400
+func TestHandler_UUID_InvalidFormat(t *testing.T) {
+	// Create UUID table
+	db, _ := datastore.Get()
+	_, err := db.GetDB().NewCreateTable().Model((*TestUUIDBlog)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create uuid_blogs table:", err)
+	}
+	defer db.GetDB().NewDropTable().Model((*TestUUIDBlog)(nil)).IfExists().Exec(context.Background())
+
+	uuidBlogMeta := &metadata.TypeMetadata{
+		TypeID:       "test_uuid_blog_invalid_id",
+		TypeName:     "TestUUIDBlog",
+		TableName:    "uuid_blogs",
+		URLParamUUID: "blogId",
+		ModelType:    reflect.TypeOf(TestUUIDBlog{}),
+	}
+
+	// Test Update with invalid UUID format
+	t.Run("UpdateInvalidUUID", func(t *testing.T) {
+		body := []byte(`{"name":"Test"}`)
+		req := httptest.NewRequest(http.MethodPut, "/blogs/not-a-valid-uuid", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("blogId", "not-a-valid-uuid")
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		ctx = context.WithValue(ctx, metadata.MetadataKey, uuidBlogMeta)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.Update[TestUUIDBlog]()(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status %d for invalid UUID, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
+		}
+	})
+}
+
+// TestHandler_UUID_StringPK tests models with string primary keys
+func TestHandler_UUID_StringPK(t *testing.T) {
+	// TestStringPKModel uses string as primary key
+	type TestStringPKModel struct {
+		bun.BaseModel `bun:"table:string_pk_models"`
+		ID            string    `bun:"id,pk" json:"id"`
+		Name          string    `bun:"name,notnull" json:"name"`
+		CreatedAt     time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at,omitempty"`
+	}
+
+	// Create table
+	db, _ := datastore.Get()
+	_, err := db.GetDB().NewCreateTable().Model((*TestStringPKModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create string_pk_models table:", err)
+	}
+	defer db.GetDB().NewDropTable().Model((*TestStringPKModel)(nil)).IfExists().Exec(context.Background())
+
+	stringPKMeta := &metadata.TypeMetadata{
+		TypeID:       "test_string_pk_id",
+		TypeName:     "TestStringPKModel",
+		TableName:    "string_pk_models",
+		URLParamUUID: "id",
+		ModelType:    reflect.TypeOf(TestStringPKModel{}),
+	}
+
+	// Create with string ID
+	t.Run("CreateWithStringID", func(t *testing.T) {
+		body := []byte(`{"id":"custom-string-id","name":"Test String PK"}`)
+		req := httptest.NewRequest(http.MethodPost, "/models", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		ctx := context.WithValue(req.Context(), metadata.MetadataKey, stringPKMeta)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.Create[TestStringPKModel]()(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("Expected status %d, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
+		}
+
+		var created TestStringPKModel
+		if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+
+		if created.ID != "custom-string-id" {
+			t.Errorf("Expected ID 'custom-string-id', got '%s'", created.ID)
+		}
+	})
+
+	// Get with string ID
+	t.Run("GetWithStringID", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/models/custom-string-id", nil)
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "custom-string-id")
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		ctx = context.WithValue(ctx, metadata.MetadataKey, stringPKMeta)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.Get[TestStringPKModel]()(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		}
+	})
+
+	// Update with string ID
+	t.Run("UpdateWithStringID", func(t *testing.T) {
+		body := []byte(`{"name":"Updated String PK"}`)
+		req := httptest.NewRequest(http.MethodPut, "/models/custom-string-id", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "custom-string-id")
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		ctx = context.WithValue(ctx, metadata.MetadataKey, stringPKMeta)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.Update[TestStringPKModel]()(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		}
+
+		var updated TestStringPKModel
+		if err := json.Unmarshal(w.Body.Bytes(), &updated); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+
+		if updated.ID != "custom-string-id" {
+			t.Errorf("Expected ID 'custom-string-id', got '%s'", updated.ID)
+		}
+		if updated.Name != "Updated String PK" {
+			t.Errorf("Expected name 'Updated String PK', got '%s'", updated.Name)
+		}
+	})
+
+	// Delete with string ID
+	t.Run("DeleteWithStringID", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/models/custom-string-id", nil)
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "custom-string-id")
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		ctx = context.WithValue(ctx, metadata.MetadataKey, stringPKMeta)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.Delete[TestStringPKModel]()(w, req)
+
+		if w.Code != http.StatusNoContent {
+			t.Errorf("Expected status %d, got %d: %s", http.StatusNoContent, w.Code, w.Body.String())
+		}
+	})
 }

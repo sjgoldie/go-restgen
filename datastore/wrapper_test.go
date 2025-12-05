@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -108,7 +109,7 @@ func TestWrapper_Get(t *testing.T) {
 	}
 
 	// Get the user
-	retrieved, err := wrapper.Get(ctx, created.ID, []string{})
+	retrieved, err := wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
 	if err != nil {
 		t.Fatal("Failed to get user:", err)
 	}
@@ -173,7 +174,7 @@ func TestWrapper_Update(t *testing.T) {
 
 	// Update the user
 	created.Name = "Updated Name"
-	updated, err := wrapper.Update(ctx, created.ID, *created)
+	updated, err := wrapper.Update(ctx, strconv.Itoa(created.ID), *created)
 	if err != nil {
 		t.Fatal("Failed to update user:", err)
 	}
@@ -202,12 +203,12 @@ func TestWrapper_Delete(t *testing.T) {
 	}
 
 	// Delete the user
-	if err := wrapper.Delete(ctx, created.ID); err != nil {
+	if err := wrapper.Delete(ctx, strconv.Itoa(created.ID)); err != nil {
 		t.Fatal("Failed to delete user:", err)
 	}
 
 	// Verify deletion
-	_, err = wrapper.Get(ctx, created.ID, []string{})
+	_, err = wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
 	if err == nil {
 		t.Error("Expected error when getting deleted user")
 	}
@@ -222,7 +223,7 @@ func TestWrapper_Get_NotFound(t *testing.T) {
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
 	ctx := ctxWithMeta(testUserMeta)
 
-	_, err := wrapper.Get(ctx, 999, []string{})
+	_, err := wrapper.Get(ctx, "999", []string{})
 	if err == nil {
 		t.Error("Expected error when getting non-existent user")
 	}
@@ -241,7 +242,7 @@ func TestWrapper_Update_NotFound(t *testing.T) {
 		Email: "notexist@example.com",
 	}
 
-	_, err := wrapper.Update(ctx, 999, user)
+	_, err := wrapper.Update(ctx, "999", user)
 	if err == nil {
 		t.Error("Expected error when updating non-existent user")
 	}
@@ -254,7 +255,7 @@ func TestWrapper_Delete_NotFound(t *testing.T) {
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
 	ctx := ctxWithMeta(testUserMeta)
 
-	err := wrapper.Delete(ctx, 999)
+	err := wrapper.Delete(ctx, "999")
 	if err == nil {
 		t.Error("Expected error when deleting non-existent user")
 	}
@@ -303,7 +304,7 @@ func TestWrapper_Get_WithRelations(t *testing.T) {
 
 	// Get with relations (even though we don't have any relations in this test model)
 	// This tests that the relations parameter is properly handled
-	retrieved, err := wrapper.Get(ctx, created.ID, []string{})
+	retrieved, err := wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
 	if err != nil {
 		t.Fatal("Failed to get user with relations:", err)
 	}
@@ -364,7 +365,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 	}
 
 	// Get
-	retrieved, err := wrapper.Get(ctx, created.ID, []string{})
+	retrieved, err := wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
 	if err != nil {
 		t.Fatal("Failed to get user:", err)
 	}
@@ -374,7 +375,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 
 	// Update
 	retrieved.Name = "Updated Lifecycle"
-	updated, err := wrapper.Update(ctx, retrieved.ID, *retrieved)
+	updated, err := wrapper.Update(ctx, strconv.Itoa(retrieved.ID), *retrieved)
 	if err != nil {
 		t.Fatal("Failed to update user:", err)
 	}
@@ -392,13 +393,13 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 	}
 
 	// Delete
-	err = wrapper.Delete(ctx, created.ID)
+	err = wrapper.Delete(ctx, strconv.Itoa(created.ID))
 	if err != nil {
 		t.Fatal("Failed to delete user:", err)
 	}
 
 	// Verify deletion
-	_, err = wrapper.Get(ctx, created.ID, []string{})
+	_, err = wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
 	if err == nil {
 		t.Error("Expected error when getting deleted user")
 	}
@@ -570,7 +571,7 @@ func TestOwnership_SingleField_Get(t *testing.T) {
 	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
 	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
 
-	retrieved, err := wrapper.Get(ctxAlice, created.ID, []string{})
+	retrieved, err := wrapper.Get(ctxAlice, strconv.Itoa(created.ID), []string{})
 	if err != nil {
 		t.Fatal("Failed to get blog as alice:", err)
 	}
@@ -582,7 +583,7 @@ func TestOwnership_SingleField_Get(t *testing.T) {
 	ctxBob := context.WithValue(ctx, "ownershipEnforced", true)
 	ctxBob = context.WithValue(ctxBob, "ownershipUserID", "bob")
 
-	_, err = wrapper.Get(ctxBob, created.ID, []string{})
+	_, err = wrapper.Get(ctxBob, strconv.Itoa(created.ID), []string{})
 	if err == nil {
 		t.Error("Expected error when bob tries to get alice's blog")
 	}
@@ -606,8 +607,8 @@ func TestOwnership_MultipleFields_GetAll(t *testing.T) {
 
 	// Create posts with different ownership combinations
 	// Add parent context for nested resource creation
-	parentIDs := map[string]int{
-		"blog_id": createdBlog.ID,
+	parentIDs := map[string]string{
+		"blog_id": strconv.Itoa(createdBlog.ID),
 	}
 	ctxWithParent := context.WithValue(ctxPost, "parentIDs", parentIDs)
 
@@ -846,8 +847,8 @@ func TestOwnership_NestedResourceValidation(t *testing.T) {
 	ctxBob = context.WithValue(ctxBob, "ownershipUserID", "bob")
 
 	// Add parent ID to context
-	parentIDs := map[string]int{
-		"blog_id": createdBlog.ID,
+	parentIDs := map[string]string{
+		"blog_id": strconv.Itoa(createdBlog.ID),
 	}
 	ctxBob = context.WithValue(ctxBob, "parentIDs", parentIDs)
 
@@ -1018,7 +1019,7 @@ func TestValidation_Update_Success(t *testing.T) {
 
 	// Update to inactive (should succeed)
 	created.Status = "inactive"
-	updated, err := wrapper.Update(ctx, created.ID, *created)
+	updated, err := wrapper.Update(ctx, strconv.Itoa(created.ID), *created)
 	if err != nil {
 		t.Fatal("Expected update to succeed:", err)
 	}
@@ -1059,7 +1060,7 @@ func TestValidation_Update_Failure(t *testing.T) {
 
 	// Try to update (should fail)
 	created.Name = "Updated"
-	_, err = wrapper.Update(ctx, created.ID, *created)
+	_, err = wrapper.Update(ctx, strconv.Itoa(created.ID), *created)
 	if err == nil {
 		t.Fatal("Expected update to fail validation")
 	}
@@ -1101,7 +1102,7 @@ func TestValidation_Delete_Success(t *testing.T) {
 	}
 
 	// Delete (should succeed)
-	err = wrapper.Delete(ctx, created.ID)
+	err = wrapper.Delete(ctx, strconv.Itoa(created.ID))
 	if err != nil {
 		t.Fatal("Expected delete to succeed:", err)
 	}
@@ -1138,7 +1139,7 @@ func TestValidation_Delete_Failure(t *testing.T) {
 	}
 
 	// Try to delete (should fail)
-	err = wrapper.Delete(ctx, created.ID)
+	err = wrapper.Delete(ctx, strconv.Itoa(created.ID))
 	if err == nil {
 		t.Fatal("Expected delete to fail validation")
 	}
@@ -1173,12 +1174,12 @@ func TestValidation_NoValidator(t *testing.T) {
 	}
 
 	created.Name = "Updated"
-	_, err = wrapper.Update(ctx, created.ID, *created)
+	_, err = wrapper.Update(ctx, strconv.Itoa(created.ID), *created)
 	if err != nil {
 		t.Fatal("Update should succeed without validator:", err)
 	}
 
-	err = wrapper.Delete(ctx, created.ID)
+	err = wrapper.Delete(ctx, strconv.Itoa(created.ID))
 	if err != nil {
 		t.Fatal("Delete should succeed without validator:", err)
 	}
@@ -1356,7 +1357,7 @@ func TestAudit_Update(t *testing.T) {
 
 	// Update the item
 	item.Status = "active"
-	_, err = wrapper.Update(ctx, item.ID, item)
+	_, err = wrapper.Update(ctx, strconv.Itoa(item.ID), item)
 	if err != nil {
 		t.Fatal("Expected update to succeed:", err)
 	}
@@ -1416,7 +1417,7 @@ func TestAudit_Delete(t *testing.T) {
 	}
 
 	// Delete the item
-	err = wrapper.Delete(ctx, item.ID)
+	err = wrapper.Delete(ctx, strconv.Itoa(item.ID))
 	if err != nil {
 		t.Fatal("Expected delete to succeed:", err)
 	}

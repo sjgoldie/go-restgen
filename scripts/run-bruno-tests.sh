@@ -1,6 +1,6 @@
 #!/bin/bash
 # Bruno API test runner for go-restgen examples
-# Usage: ./scripts/run-bruno-tests.sh [simple|nested|auth|validator|audit|all]
+# Usage: ./scripts/run-bruno-tests.sh [simple|nested|auth|validator|audit|uuid|all]
 
 set -e
 
@@ -156,15 +156,19 @@ case "$TEST_SUITE" in
     audit)
         run_tests "Audit Example" "examples/audit" "audit-example" || FAILED=1
         ;;
+    uuid)
+        run_tests "UUID Example" "examples/uuid_pk" "uuid-example" || FAILED=1
+        ;;
     all)
         run_tests "Simple Example" "examples/simple" "simple-example" || FAILED=1
         run_tests "Nested Example" "examples/nested_routes" "nested-example" || FAILED=1
         run_tests "Auth Example" "examples/auth" "auth-example" || FAILED=1
         run_tests "Validator Example" "examples/validator" "validator-example" || FAILED=1
         run_tests "Audit Example" "examples/audit" "audit-example" || FAILED=1
+        run_tests "UUID Example" "examples/uuid_pk" "uuid-example" || FAILED=1
         ;;
     *)
-        echo "Usage: $0 [simple|nested|auth|validator|audit|all]"
+        echo "Usage: $0 [simple|nested|auth|validator|audit|uuid|all]"
         exit 1
         ;;
 esac

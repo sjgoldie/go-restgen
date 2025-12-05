@@ -1,0 +1,24 @@
+meta {
+  name: Update Post
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{baseUrl}}/blogs/{{blogId}}/posts/{{postId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "Updated Post",
+    "content": "Updated content with UUID PKs!"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{postId}}
+  res.body.title: eq Updated Post
+}

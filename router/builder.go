@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
-	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -258,22 +257,23 @@ func createMetadataMiddleware(meta *metadata.TypeMetadata) func(http.Handler) ht
 // createParentIDMiddleware creates middleware that extracts a parent ID from URL
 // and adds it to the context for child queries
 // paramUUID is the UUID used in the URL parameter name
+// Parent IDs are stored as strings to support both integer and UUID primary keys
 func createParentIDMiddleware(paramUUID string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Extract parent ID from URL using the UUID parameter name
-			parentIDStr := chi.URLParam(r, paramUUID)
-			parentID, err := strconv.Atoi(parentIDStr)
-			if err != nil {
-				http.Error(w, "invalid parent ID", http.StatusBadRequest)
+			// Keep as string to support both int and UUID PKs
+			parentID := chi.URLParam(r, paramUUID)
+			if parentID == "" {
+				http.Error(w, "missing parent ID", http.StatusBadRequest)
 				return
 			}
 
 			// Get existing parent IDs from context or create new map
 			ctx := r.Context()
-			parentIDs, ok := ctx.Value("parentIDs").(map[string]int)
+			parentIDs, ok := ctx.Value("parentIDs").(map[string]string)
 			if !ok || parentIDs == nil {
-				parentIDs = make(map[string]int)
+				parentIDs = make(map[string]string)
 			}
 
 			// Add this parent ID to the map, keyed by UUID

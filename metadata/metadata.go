@@ -77,6 +77,10 @@ type TypeMetadata struct {
 	// Child routes for relation loading via ?include=
 	ChildMeta map[string]*TypeMetadata // relation name -> child type metadata
 
+	// Single route configuration (for belongs-to relations like /posts/{id}/author)
+	RelationName  string // Field name on parent for relation loading (e.g., "Author")
+	ParentFKField string // Field name on parent that holds this object's ID (e.g., "AuthorID")
+
 	// Query options for GetAll
 	FilterableFields []string // Field names allowed for filtering (empty = no filtering)
 	SortableFields   []string // Field names allowed for sorting (empty = no sorting)
@@ -103,6 +107,8 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 		ParentType:    m.ParentType,
 		ParentMeta:    m.ParentMeta, // Intentionally shared - parent is not owned by this metadata
 		ForeignKeyCol: m.ForeignKeyCol,
+		RelationName:  m.RelationName,
+		ParentFKField: m.ParentFKField,
 		DefaultSort:   m.DefaultSort,
 		DefaultLimit:  m.DefaultLimit,
 		MaxLimit:      m.MaxLimit,

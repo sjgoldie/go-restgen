@@ -436,6 +436,16 @@ func (w *Wrapper[T]) setForeignKey(item *T, foreignKeyCol string, parentItem int
 	return nil
 }
 
+// hasField checks if a type has a field matching the given column name
+func hasField(t reflect.Type, colName string) bool {
+	if colName == "" {
+		return false
+	}
+	fieldName := fieldNameFromColumn(colName)
+	_, found := t.FieldByName(fieldName)
+	return found
+}
+
 // fieldNameFromColumn converts a database column name to a Go field name
 // e.g., "author_id" -> "AuthorID", "post_id" -> "PostID"
 func fieldNameFromColumn(col string) string {
@@ -509,19 +519,40 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 			continue
 		}
 
+		// Determine if FK is on child or parent by checking if child has the FK field
+		fkOnChild := hasField(join.childType, join.childFKCol)
+
 		// Check if child is the base model being queried
 		if join.childType == baseType {
 			// Child is the base model, use ?TableAlias
-			query = query.Join("JOIN ? ON ?TableAlias.? = ?.?",
-				bun.Ident(join.parentTable),
-				bun.Ident(join.childFKCol),
-				bun.Ident(join.parentTable), bun.Ident("id"))
+			if fkOnChild {
+				// Normal case: child.FK = parent.id
+				query = query.Join("JOIN ? ON ?TableAlias.? = ?.?",
+					bun.Ident(join.parentTable),
+					bun.Ident(join.childFKCol),
+					bun.Ident(join.parentTable), bun.Ident("id"))
+			} else {
+				// Inverted case: parent.FK = child.id
+				query = query.Join("JOIN ? ON ?.? = ?TableAlias.?",
+					bun.Ident(join.parentTable),
+					bun.Ident(join.parentTable), bun.Ident(join.childFKCol),
+					bun.Ident("id"))
+			}
 		} else {
 			// Child is a previously joined table, use table name
-			query = query.Join("JOIN ? ON ?.? = ?.?",
-				bun.Ident(join.parentTable),
-				bun.Ident(join.childTable), bun.Ident(join.childFKCol),
-				bun.Ident(join.parentTable), bun.Ident("id"))
+			if fkOnChild {
+				// Normal case: child.FK = parent.id
+				query = query.Join("JOIN ? ON ?.? = ?.?",
+					bun.Ident(join.parentTable),
+					bun.Ident(join.childTable), bun.Ident(join.childFKCol),
+					bun.Ident(join.parentTable), bun.Ident("id"))
+			} else {
+				// Inverted case: parent.FK = child.id
+				query = query.Join("JOIN ? ON ?.? = ?.?",
+					bun.Ident(join.parentTable),
+					bun.Ident(join.parentTable), bun.Ident(join.childFKCol),
+					bun.Ident(join.childTable), bun.Ident("id"))
+			}
 		}
 
 		// WHERE parent_table.id = ?
@@ -841,6 +872,58 @@ func (w *Wrapper[T]) runAudit(ctx context.Context, db bun.IDB, meta *metadata.Ty
 	// Insert the audit record
 	_, err := db.NewInsert().Model(auditRecord).Exec(ctx)
 	return err
+}
+
+// GetByParentRelation retrieves a single item of type T via the parent's foreign key field
+// Fetches the parent, extracts the FK value, then calls normal Get (preserving security checks)
+func (w *Wrapper[T]) GetByParentRelation(ctx context.Context, parentID string) (*T, error) {
+	childID, err := w.resolveChildIDFromParent(ctx, parentID)
+	if err != nil {
+		return nil, err
+	}
+	return w.Get(ctx, childID)
+}
+
+// UpdateByParentRelation updates a single item of type T via the parent's foreign key field
+// Fetches the parent, extracts the FK value, then calls normal Update (preserving security checks)
+func (w *Wrapper[T]) UpdateByParentRelation(ctx context.Context, parentID string, item T) (*T, error) {
+	childID, err := w.resolveChildIDFromParent(ctx, parentID)
+	if err != nil {
+		return nil, err
+	}
+	return w.Update(ctx, childID, item)
+}
+
+// resolveChildIDFromParent fetches the parent and extracts the foreign key value
+// For belongs-to relations like /posts/{id}/author, Post.AuthorID points to User.ID
+func (w *Wrapper[T]) resolveChildIDFromParent(ctx context.Context, parentID string) (string, error) {
+	meta, err := metadata.FromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	if meta.ParentMeta == nil {
+		return "", fmt.Errorf("resolveChildIDFromParent requires parent metadata")
+	}
+
+	if meta.ParentFKField == "" {
+		return "", fmt.Errorf("resolveChildIDFromParent requires ParentFKField to be set")
+	}
+
+	// Fetch the parent using getWithMeta (reuses existing logic)
+	parent, err := w.getWithMeta(ctx, meta.ParentMeta, parentID)
+	if err != nil {
+		return "", err
+	}
+
+	// Extract the FK field value from the parent
+	parentValue := reflect.ValueOf(parent).Elem()
+	fkField := parentValue.FieldByName(meta.ParentFKField)
+	if !fkField.IsValid() {
+		return "", fmt.Errorf("FK field %s not found on parent", meta.ParentFKField)
+	}
+
+	return fmt.Sprintf("%v", fkField.Interface()), nil
 }
 
 // applyRelationIncludes adds relation loading for includes specified in query options.

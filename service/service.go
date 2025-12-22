@@ -40,3 +40,17 @@ func (s *Common[T]) Update(ctx context.Context, id string, item T) (*T, error) {
 func (s *Common[T]) Delete(ctx context.Context, id string) error {
 	return s.store.Delete(ctx, id)
 }
+
+// GetByParentRelation retrieves a single item of type T via the parent's relation field
+// The parentID is the ID of the parent, and the relation field is used to resolve the child's ID
+// Security checks are preserved by calling the normal Get with the resolved child ID
+func (s *Common[T]) GetByParentRelation(ctx context.Context, parentID string) (*T, error) {
+	return s.store.GetByParentRelation(ctx, parentID)
+}
+
+// UpdateByParentRelation updates a single item of type T via the parent's relation field
+// The parentID is the ID of the parent, and the relation field is used to resolve the child's ID
+// Security checks are preserved by calling the normal Update with the resolved child ID
+func (s *Common[T]) UpdateByParentRelation(ctx context.Context, parentID string, item T) (*T, error) {
+	return s.store.UpdateByParentRelation(ctx, parentID, item)
+}

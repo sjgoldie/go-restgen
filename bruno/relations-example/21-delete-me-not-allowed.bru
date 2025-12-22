@@ -1,0 +1,26 @@
+meta {
+  name: DELETE /me not allowed
+  type: http
+  seq: 21
+}
+
+delete {
+  url: {{baseUrl}}/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 405
+}
+
+docs {
+  # DELETE Not Allowed on Single Route
+
+  Single routes only support GET (and optionally PUT).
+  DELETE should return 405 Method Not Allowed.
+}

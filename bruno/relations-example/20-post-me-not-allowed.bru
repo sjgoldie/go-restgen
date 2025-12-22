@@ -1,0 +1,34 @@
+meta {
+  name: POST /me not allowed
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{baseUrl}}/me
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "name": "New User",
+    "email": "new@example.com",
+    "external_id": "new"
+  }
+}
+
+assert {
+  res.status: eq 405
+}
+
+docs {
+  # POST Not Allowed on Single Route
+
+  Single routes only support GET (and optionally PUT).
+  POST should return 405 Method Not Allowed.
+}

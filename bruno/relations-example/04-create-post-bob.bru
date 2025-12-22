@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{baseUrl}}/authors/{{bobAuthorId}}/posts
+  url: {{baseUrl}}/posts
   body: json
   auth: bearer
 }
@@ -16,7 +16,8 @@ auth:bearer {
 
 body:json {
   {
-    "title": "Bob's Post",
+    "author_id": {{bobUserId}},
+    "title": "Bob's First Post",
     "content": "Hello from Bob!",
     "published": true
   }
@@ -25,7 +26,9 @@ body:json {
 assert {
   res.status: eq 201
   res.body.id: isDefined
+  res.body.title: eq Bob's First Post
   res.body.owner_id: eq bob
+  res.body.author_id: eq {{bobUserId}}
 }
 
 script:post-response {

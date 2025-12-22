@@ -293,6 +293,12 @@ func StandardGet[T any](ctx context.Context, svc *service.Common[T], meta *metad
 	return svc.Get(ctx, id)
 }
 
+// StandardGetByParentRelation gets an item via the parent's relation field.
+// Used for single routes like /posts/{id}/author where the child ID is resolved from the parent.
+func StandardGetByParentRelation[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) (*T, error) {
+	return svc.GetByParentRelation(ctx, id)
+}
+
 // Get handles GET requests to retrieve a single item of type T by ID.
 // The getFunc parameter controls how the item is fetched - use StandardGet for default behavior
 // or provide a custom function for specialized logic (e.g., getting user from auth token).
@@ -316,11 +322,15 @@ func Get[T any](getFunc CustomGetFunc[T]) http.HandlerFunc {
 		}
 
 		// Get ID from URL parameter (passed as string to support both int and UUID PKs)
-		id := chi.URLParam(r, meta.URLParamUUID)
-		if id == "" {
-			slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		// For single routes with no parent (e.g., /me), URLParamUUID is empty and ID comes from custom logic
+		var id string
+		if meta.URLParamUUID != "" {
+			id = chi.URLParam(r, meta.URLParamUUID)
+			if id == "" {
+				slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
 		}
 
 		// Parse query parameters into QueryOptions (for ?include= support)
@@ -423,6 +433,12 @@ func StandardUpdate[T any](ctx context.Context, svc *service.Common[T], meta *me
 	return svc.Update(ctx, id, item)
 }
 
+// StandardUpdateByParentRelation updates an item via the parent's relation field.
+// Used for single routes like /posts/{id}/author where the child ID is resolved from the parent.
+func StandardUpdateByParentRelation[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, item T) (*T, error) {
+	return svc.UpdateByParentRelation(ctx, id, item)
+}
+
 // Update handles PUT requests to update an existing item of type T.
 // The updateFunc parameter controls how the item is updated - use StandardUpdate for default behavior
 // or provide a custom function for specialized logic.
@@ -445,11 +461,15 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 		}
 
 		// Get ID from URL parameter (passed as string to support both int and UUID PKs)
-		id := chi.URLParam(r, meta.URLParamUUID)
-		if id == "" {
-			slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		// For single routes with no parent (e.g., /me), URLParamUUID is empty and ID comes from custom logic
+		var id string
+		if meta.URLParamUUID != "" {
+			id = chi.URLParam(r, meta.URLParamUUID)
+			if id == "" {
+				slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
 		}
 
 		// Get auth from context (may be nil if not authenticated)
@@ -464,10 +484,13 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 
 		// Set ID from path onto the struct (overwrite any ID from JSON)
 		// This ensures the path ID takes precedence and is required for Bun's WherePK()
-		if err := setIDField(&item, id); err != nil {
-			slog.Warn("failed to set ID field", "error", err)
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		// Skip for single routes with no URL param - custom function handles ID
+		if id != "" {
+			if err := setIDField(&item, id); err != nil {
+				slog.Warn("failed to set ID field", "error", err)
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
 		}
 
 		// Call the provided function

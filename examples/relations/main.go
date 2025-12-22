@@ -13,13 +13,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sjgoldie/go-restgen/datastore"
+	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/router"
+	"github.com/sjgoldie/go-restgen/service"
 	"github.com/uptrace/bun"
 )
 
-// Author model - top level resource
-type Author struct {
-	bun.BaseModel `bun:"table:authors"`
+// User model - top level resource
+type User struct {
+	bun.BaseModel `bun:"table:users"`
 	ID            int       `bun:"id,pk,autoincrement" json:"id"`
 	ExternalID    string    `bun:"external_id,unique,notnull" json:"external_id"` // Maps to auth UserID
 	Name          string    `bun:"name,notnull" json:"name"`
@@ -30,24 +32,24 @@ type Author struct {
 	Posts []*Post `bun:"rel:has-many,join:id=author_id" json:"posts,omitempty"`
 }
 
-func (a *Author) BeforeAppendModel(ctx context.Context, query bun.Query) error {
+func (u *User) BeforeAppendModel(ctx context.Context, query bun.Query) error {
 	now := time.Now()
 	switch query.(type) {
 	case *bun.InsertQuery:
-		a.CreatedAt = now
-		a.UpdatedAt = now
+		u.CreatedAt = now
+		u.UpdatedAt = now
 	case *bun.UpdateQuery:
-		a.UpdatedAt = now
+		u.UpdatedAt = now
 	}
 	return nil
 }
 
-// Post model - belongs to Author, has many Comments
+// Post model - belongs to User (Author), has many Comments
 type Post struct {
 	bun.BaseModel `bun:"table:posts"`
 	ID            int       `bun:"id,pk,autoincrement" json:"id"`
 	AuthorID      int       `bun:"author_id,notnull,skipupdate" json:"author_id"`
-	Author        *Author   `bun:"rel:belongs-to,join:author_id=id" json:"-"`
+	Author        *User     `bun:"rel:belongs-to,join:author_id=id" json:"author,omitempty"`
 	OwnerID       string    `bun:"owner_id,notnull" json:"owner_id"` // For ownership filtering
 	Title         string    `bun:"title,notnull" json:"title"`
 	Content       string    `bun:"content" json:"content"`
@@ -136,6 +138,22 @@ func authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// getMe is a custom get function that returns a hardcoded user
+// Used for /me endpoint where there's no parent FK - the ID comes from custom logic
+func getMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string) (*User, error) {
+	// In a real app, you'd look up the user ID from auth context
+	// For this example, we just return user with ID "1"
+	return svc.Get(ctx, "1")
+}
+
+// updateMe is a custom update function that updates the hardcoded user
+func updateMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string, item User) (*User, error) {
+	// In a real app, you'd look up the user ID from auth context
+	// For this example, we just update user with ID 1
+	item.ID = 1
+	return svc.Update(ctx, "1", item)
+}
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelWarn,
@@ -154,7 +172,7 @@ func main() {
 
 	ctx := context.Background()
 	models := []interface{}{
-		(*Author)(nil),
+		(*User)(nil),
 		(*Post)(nil),
 		(*Comment)(nil),
 	}
@@ -175,23 +193,44 @@ func main() {
 
 	b := router.NewBuilder(r)
 
-	// Authors - public access, with Posts relation available via ?include=Posts
-	router.RegisterRoutes[Author](b, "/authors",
+	// Users - public access
+	router.RegisterRoutes[User](b, "/users",
 		router.AllPublic(),
+	)
+
+	// /me - single route with custom get/put that returns current user from auth
+	// This demonstrates AsSingleRouteWithPut("") with no parent FK - ID comes from auth context
+	router.RegisterRoutes[User](b, "/me",
+		router.AsSingleRouteWithPut(""),
+		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut}, Scopes: []string{"user"}},
+		router.WithCustomGet(getMe),
+		router.WithCustomUpdate(updateMe),
+	)
+
+	// /broken-me - single route without custom get/put (should return 500)
+	// This demonstrates what happens when AsSingleRouteWithPut("") is used without custom handlers
+	router.RegisterRoutes[User](b, "/broken-me",
+		router.AsSingleRouteWithPut(""),
+		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut}, Scopes: []string{"user"}},
+	)
+
+	// Posts - top level, ownership-based with admin bypass
+	// Has belongs-to relation to User (Author) and has-many Comments
+	router.RegisterRoutes[Post](b, "/posts",
+		router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
 		func(b *router.Builder) {
-			// Posts - ownership-based with admin bypass
-			// WithRelationName("Posts") enables ?include=Posts on parent
-			router.RegisterRoutes[Post](b, "/posts",
+			// Author - single route for belongs-to relation (GET/PUT /posts/{id}/author)
+			// Also enables ?include=Author on Post
+			router.RegisterRoutes[User](b, "/author",
+				router.WithRelationName("Author"),
+				router.AsSingleRouteWithPut("AuthorID"),
+				router.AllPublic(),
+			)
+			// Comments - has-many collection route (GET /posts/{id}/comments)
+			// Also enables ?include=Comments on Post
+			router.RegisterRoutes[Comment](b, "/comments",
 				router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
-				router.WithRelationName("Posts"),
-				func(b *router.Builder) {
-					// Comments - ownership-based with admin bypass
-					// WithRelationName("Comments") enables ?include=Comments on parent
-					router.RegisterRoutes[Comment](b, "/comments",
-						router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
-						router.WithRelationName("Comments"),
-					)
-				},
+				router.WithRelationName("Comments"),
 			)
 		},
 	)
@@ -205,26 +244,29 @@ func main() {
 	fmt.Println("  - Bob (regular user):      Bearer user:bob:user")
 	fmt.Println("  - Admin:                   Bearer user:admin:user,admin")
 	fmt.Println("\n=== Endpoints ===")
-	fmt.Println("\nAuthors (public):")
-	fmt.Println("  GET    /authors                     - List all authors")
-	fmt.Println("  GET    /authors/{id}                - Get author")
-	fmt.Println("  GET    /authors/{id}?include=Posts  - Get author with their posts")
-	fmt.Println("  POST   /authors                     - Create author")
-	fmt.Println("\nPosts (nested under authors, ownership-based):")
-	fmt.Println("  GET    /authors/{id}/posts                       - List posts (filtered by ownership)")
-	fmt.Println("  GET    /authors/{id}/posts/{id}                  - Get post")
-	fmt.Println("  GET    /authors/{id}/posts/{id}?include=Comments - Get post with comments")
-	fmt.Println("  POST   /authors/{id}/posts                       - Create post (OwnerID auto-set)")
+	fmt.Println("\nUsers (public):")
+	fmt.Println("  GET    /users                       - List all users")
+	fmt.Println("  GET    /users/{id}                  - Get user")
+	fmt.Println("  POST   /users                       - Create user")
+	fmt.Println("\nPosts (top level, ownership-based):")
+	fmt.Println("  GET    /posts                          - List posts (filtered by ownership)")
+	fmt.Println("  GET    /posts/{id}                     - Get post")
+	fmt.Println("  GET    /posts/{id}?include=Author      - Get post with author")
+	fmt.Println("  GET    /posts/{id}?include=Comments    - Get post with comments")
+	fmt.Println("  POST   /posts                          - Create post (OwnerID auto-set)")
+	fmt.Println("\nAuthor (single route - belongs-to):")
+	fmt.Println("  GET    /posts/{id}/author              - Get post's author")
 	fmt.Println("\nComments (nested under posts, ownership-based):")
-	fmt.Println("  GET    /authors/{id}/posts/{id}/comments      - List comments (filtered by ownership)")
-	fmt.Println("  POST   /authors/{id}/posts/{id}/comments      - Create comment (OwnerID auto-set)")
+	fmt.Println("  GET    /posts/{id}/comments         - List comments (filtered by ownership)")
+	fmt.Println("  POST   /posts/{id}/comments         - Create comment (OwnerID auto-set)")
 	fmt.Println("\n=== Relation Include Behavior ===")
 	fmt.Println("\n1. ?include= only works for relations registered with WithRelationName()")
 	fmt.Println("2. Unknown relation names are silently ignored")
 	fmt.Println("3. Ownership filtering is applied to included relations")
-	fmt.Println("   - Alice requesting ?include=Posts only sees Alice's posts")
-	fmt.Println("   - Admin requesting ?include=Posts sees all posts")
-	fmt.Println("4. Multiple relations: ?include=Posts,Comments (if parent has both)")
+	fmt.Println("4. Multiple relations: ?include=Author,Comments")
+	fmt.Println("\n=== Single Route (AsSingleRoute) ===")
+	fmt.Println("\nUse AsSingleRoute() for belongs-to relations that return a single object.")
+	fmt.Println("The child's ID is resolved from the parent's relation field.")
 
 	log.Fatal(http.ListenAndServe(":8080", r))
 }

@@ -1,11 +1,11 @@
 meta {
-  name: Create Author - Alice
+  name: Create User - Alice
   type: http
   seq: 1
 }
 
 post {
-  url: {{baseUrl}}/authors
+  url: {{baseUrl}}/users
   body: json
   auth: none
 }
@@ -25,5 +25,5 @@ assert {
 }
 
 script:post-response {
-  bru.setVar("aliceAuthorId", res.body.id);
+  bru.setVar("aliceUserId", res.body.id);
 }

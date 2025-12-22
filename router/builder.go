@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"strings"
@@ -17,8 +18,10 @@ type NestedFunc func(b *Builder)
 
 // Builder provides context for registering nested routes and manages the chi router
 type Builder struct {
-	router     chi.Router             // Chi router being configured
-	parentMeta *metadata.TypeMetadata // Metadata of the immediate parent (nil for root)
+	router         chi.Router             // Chi router being configured
+	parentMeta     *metadata.TypeMetadata // Metadata of the immediate parent (nil for root)
+	parentAuthGet  *AuthConfig            // Parent's auth config for GET (for populating ChildAuth)
+	parentAuthList *AuthConfig            // Parent's auth config for LIST (for populating ChildAuth)
 }
 
 // NewBuilder creates a new Builder for registering routes
@@ -42,13 +45,15 @@ type customHandlers[T any] struct {
 // Accepts optional auth configs, query configs, validator, auditor, custom handlers, and nested function for child routes
 // Configs can be mixed with nested function in any order
 func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
-	// Separate auth configs, query configs, validator, auditor, custom handlers, and nested function
+	// Separate auth configs, query configs, validator, auditor, custom handlers, relation config, and nested function
 	var authConfigs []AuthConfig
 	var queryConfigs []QueryConfig
 	var validator metadata.ValidatorFunc[T]
 	var auditor metadata.AuditFunc[T]
 	var custom customHandlers[T]
+	var relationName string
 	var nested NestedFunc
+	var singleRoute *SingleRouteConfig
 
 	for _, opt := range options {
 		switch v := opt.(type) {
@@ -70,16 +75,20 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			custom.update = v.Fn
 		case CustomDeleteConfig[T]:
 			custom.delete = v.Fn
+		case RelationConfig:
+			relationName = v.Name
+		case SingleRouteConfig:
+			singleRoute = &v
 		case func(*Builder):
 			nested = v
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, relationName, singleRoute)
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T]) {
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], relationName string, singleRoute *SingleRouteConfig) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -113,20 +122,24 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 	}
 	foreignKeyCol, err := findParentRelationshipFromType(tType, parentType)
 	if err != nil {
-		panic(fmt.Sprintf("error analyzing type %s: %v", typeName, err))
+		slog.Warn("could not find parent relationship",
+			"type", typeName,
+			"error", err)
 	}
 
 	// Validate parent relationship
 	if b.parentMeta != nil {
-		// We're nested, so we must have a parent relationship
+		// We're nested but have no parent relationship - could be belongs-to registered for ?include=
 		if foreignKeyCol == "" {
-			panic(fmt.Sprintf("type %s is registered as nested under %s but has no bun relation field for parent type",
-				typeName, b.parentMeta.TypeName))
+			slog.Warn("type registered as nested but has no foreign key to parent - CRUD operations on this route may not work correctly",
+				"type", typeName,
+				"parent", b.parentMeta.TypeName)
 		}
 	} else if foreignKeyCol != "" {
 		// We have a parent relationship but we're not nested
-		panic(fmt.Sprintf("type %s has a parent relationship (foreign key %s) but is not registered as nested. Use b.RegisterRoutes[%s] inside a parent's nested function",
-			typeName, foreignKeyCol, typeName))
+		slog.Warn("type has parent relationship but is not registered as nested",
+			"type", typeName,
+			"foreignKey", foreignKeyCol)
 	}
 
 	// Create metadata with all configuration
@@ -139,10 +152,20 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 		ParentType:    parentType,
 		ParentMeta:    b.parentMeta,
 		ForeignKeyCol: foreignKeyCol,
+		ChildMeta:     make(map[string]*metadata.TypeMetadata),
+	}
+
+	// Register this type as a child of the parent (for ?include= support)
+	// Only register if relationName is explicitly provided via WithRelationName
+	if b.parentMeta != nil && relationName != "" {
+		b.parentMeta.ChildMeta[relationName] = meta
 	}
 
 	// Merge auth configs (last wins for each method)
 	authMap := mergeAuthConfigs(authConfigs)
+
+	// Register child's auth config with parent's auth configs (for ?include= authorization)
+	registerChildAuthConfig(b, relationName, authMap)
 
 	// Extract ownership configuration from auth configs (last one wins)
 	var ownershipFields []string
@@ -161,23 +184,7 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 	}
 
 	// Merge query configs (last wins for each setting)
-	for _, qc := range queryConfigs {
-		if len(qc.FilterableFields) > 0 {
-			meta.FilterableFields = qc.FilterableFields
-		}
-		if len(qc.SortableFields) > 0 {
-			meta.SortableFields = qc.SortableFields
-		}
-		if qc.DefaultSort != "" {
-			meta.DefaultSort = qc.DefaultSort
-		}
-		if qc.DefaultLimit > 0 {
-			meta.DefaultLimit = qc.DefaultLimit
-		}
-		if qc.MaxLimit > 0 {
-			meta.MaxLimit = qc.MaxLimit
-		}
-	}
+	meta = mergeQueryConfigs(meta, queryConfigs)
 
 	// Set validator if provided
 	if validator != nil {
@@ -192,65 +199,98 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 	// Create middleware to inject metadata into context
 	metadataMiddleware := createMetadataMiddleware(meta)
 
-	// Register routes with UUID parameter names
+	// Register routes
 	r.Route(path, func(r chi.Router) {
-		// Add metadata middleware to all routes in this group
 		r.Use(metadataMiddleware)
 
-		// List endpoint - GET /resources
-		getAllFunc := custom.getAll
-		if getAllFunc == nil {
-			getAllFunc = handler.StandardGetAll[T]
-		}
-		r.Method("GET", "/", wrapHandler(handler.GetAll[T](getAllFunc), authMap[MethodList]))
+		var nestedRouter chi.Router
 
-		// Create endpoint - POST /resources
-		createFunc := custom.create
-		if createFunc == nil {
-			createFunc = handler.StandardCreate[T]
-		}
-		r.Method("POST", "/", wrapHandler(handler.Create[T](createFunc), authMap[MethodPost]))
-
-		// Register item routes and nested routes under /{id}
-		r.Route("/{"+urlParamUUID+"}", func(r chi.Router) {
-			// If there are nested routes, add middleware first (before defining routes)
-			if nested != nil {
-				// Add middleware to extract parent ID and store in context
-				r.Use(createParentIDMiddleware(urlParamUUID))
+		if singleRoute != nil {
+			// Single route registration (for belongs-to relations like /posts/{id}/author)
+			// Use parent's URL param UUID so handler gets parent ID, or empty for root-level
+			meta.URLParamUUID = ""
+			if b.parentMeta != nil {
+				meta.URLParamUUID = b.parentMeta.URLParamUUID
 			}
+			meta.RelationName = relationName
+			meta.ParentFKField = singleRoute.ParentFKField
 
-			// Get endpoint - GET /resources/{id}
+			// GET endpoint - returns the single related object
 			getFunc := custom.get
 			if getFunc == nil {
-				getFunc = handler.StandardGet[T]
+				getFunc = handler.StandardGetByParentRelation[T]
 			}
 			r.Method("GET", "/", wrapHandler(handler.Get[T](getFunc), authMap[MethodGet]))
 
-			// Update endpoint - PUT /resources/{id}
-			updateFunc := custom.update
-			if updateFunc == nil {
-				updateFunc = handler.StandardUpdate[T]
+			// PUT endpoint - updates the single related object (optional)
+			if singleRoute.WithPut {
+				updateFunc := custom.update
+				if updateFunc == nil {
+					updateFunc = handler.StandardUpdateByParentRelation[T]
+				}
+				r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), authMap[MethodPut]))
 			}
-			r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), authMap[MethodPut]))
 
-			// Delete endpoint - DELETE /resources/{id}
-			deleteFunc := custom.delete
-			if deleteFunc == nil {
-				deleteFunc = handler.StandardDelete[T]
+			nestedRouter = r
+		} else {
+			// Standard CRUD routes
+
+			// List endpoint - GET /resources
+			getAllFunc := custom.getAll
+			if getAllFunc == nil {
+				getAllFunc = handler.StandardGetAll[T]
 			}
-			r.Method("DELETE", "/", wrapHandler(handler.Delete[T](deleteFunc), authMap[MethodDelete]))
+			r.Method("GET", "/", wrapHandler(handler.GetAll[T](getAllFunc), authMap[MethodList]))
 
-			// Register nested routes
-			if nested != nil {
-				// Create a new builder with this type's metadata as parent
-				childBuilder := &Builder{
-					router:     r,
-					parentMeta: meta, // Pass current metadata as parent
+			// Create endpoint - POST /resources
+			createFunc := custom.create
+			if createFunc == nil {
+				createFunc = handler.StandardCreate[T]
+			}
+			r.Method("POST", "/", wrapHandler(handler.Create[T](createFunc), authMap[MethodPost]))
+
+			// Register item routes under /{id}
+			r.Route("/{"+urlParamUUID+"}", func(r chi.Router) {
+				// If there are nested routes, add middleware first
+				if nested != nil {
+					r.Use(createParentIDMiddleware(urlParamUUID))
 				}
 
-				nested(childBuilder)
+				// Get endpoint - GET /resources/{id}
+				getFunc := custom.get
+				if getFunc == nil {
+					getFunc = handler.StandardGet[T]
+				}
+				r.Method("GET", "/", wrapHandler(handler.Get[T](getFunc), authMap[MethodGet]))
+
+				// Update endpoint - PUT /resources/{id}
+				updateFunc := custom.update
+				if updateFunc == nil {
+					updateFunc = handler.StandardUpdate[T]
+				}
+				r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), authMap[MethodPut]))
+
+				// Delete endpoint - DELETE /resources/{id}
+				deleteFunc := custom.delete
+				if deleteFunc == nil {
+					deleteFunc = handler.StandardDelete[T]
+				}
+				r.Method("DELETE", "/", wrapHandler(handler.Delete[T](deleteFunc), authMap[MethodDelete]))
+
+				nestedRouter = r
+			})
+		}
+
+		// Register nested routes (shared for both single and standard routes)
+		if nested != nil && nestedRouter != nil {
+			childBuilder := &Builder{
+				router:         nestedRouter,
+				parentMeta:     meta,
+				parentAuthGet:  authMap[MethodGet],
+				parentAuthList: authMap[MethodList],
 			}
-		})
+			nested(childBuilder)
+		}
 	})
 }
 
@@ -304,45 +344,55 @@ func createParentIDMiddleware(paramUUID string) func(http.Handler) http.Handler 
 	}
 }
 
-// findParentRelationshipFromType looks for a field with the parent type and extracts the foreign key
-// from the bun relation tag. Returns the foreign key column name.
+// findParentRelationshipFromType looks for a belongs-to relationship between child and parent types
+// and extracts the foreign key from the bun relation tag. Returns the foreign key column name.
+// Handles two cases:
+// 1. Child has belongs-to Parent (e.g., Comment belongs-to Post) - FK is on child
+// 2. Parent has belongs-to Child (e.g., Post belongs-to User/Author) - FK is on parent
 func findParentRelationshipFromType(childType reflect.Type, parentType reflect.Type) (foreignKeyCol string, err error) {
-	// If no parent type specified, this is a root resource
 	if parentType == nil {
 		return "", nil
 	}
+	// Case 1: child belongs-to parent
+	if fk := parseForeignKeyFromRelation(childType, parentType); fk != "" {
+		return fk, nil
+	}
+	// Case 2: parent belongs-to child (inverted)
+	if fk := parseForeignKeyFromRelation(parentType, childType); fk != "" {
+		return fk, nil
+	}
+	return "", fmt.Errorf("no relationship between %s and %s found", childType.Name(), parentType.Name())
+}
 
-	// Look for a field with type matching parent type
-	for i := 0; i < childType.NumField(); i++ {
-		field := childType.Field(i)
+// parseForeignKeyFromRelation looks for a belongs-to field on sourceType pointing to targetType
+// Returns the FK column name from the bun tag, or empty string if not found
+func parseForeignKeyFromRelation(sourceType, targetType reflect.Type) string {
+	for i := 0; i < sourceType.NumField(); i++ {
+		field := sourceType.Field(i)
 
-		// Check if field type matches parent type (handle pointer types)
 		fieldType := field.Type
 		if fieldType.Kind() == reflect.Ptr {
 			fieldType = fieldType.Elem()
 		}
 
-		// Check if this field's type matches the parent type
-		if fieldType == parentType {
-			// Found the parent field, now extract foreign key from bun relation tag
+		if fieldType == targetType {
 			bunTag := field.Tag.Get("bun")
 			if bunTag == "" {
-				return "", fmt.Errorf("field %s of type %s has no bun tag", field.Name, parentType.Name())
+				continue
 			}
-
-			// Parse the relation tag to extract foreign key
-			// Expected format: "rel:belongs-to,join:user_id=id"
-			foreignKey := parseForeignKeyFromRelation(bunTag)
-			if foreignKey == "" {
-				return "", fmt.Errorf("field %s has bun tag but no valid rel:belongs-to with join clause: %s", field.Name, bunTag)
+			// Parse bun tag for join clause: "rel:belongs-to,join:post_id=id"
+			for _, part := range strings.Split(bunTag, ",") {
+				part = strings.TrimSpace(part)
+				if strings.HasPrefix(part, "join:") {
+					joinClause := strings.TrimPrefix(part, "join:")
+					if idx := strings.Index(joinClause, "="); idx != -1 {
+						return strings.TrimSpace(joinClause[:idx])
+					}
+				}
 			}
-
-			return foreignKey, nil
 		}
 	}
-
-	// No field with parent type found
-	return "", fmt.Errorf("no field with parent type %s found", parentType.Name())
+	return ""
 }
 
 // getTableName extracts table name from bun tag on the struct
@@ -364,23 +414,55 @@ func getTableName(tType reflect.Type) string {
 	return strings.ToLower(tType.Name()) + "s"
 }
 
-// parseForeignKeyFromRelation extracts the foreign key column name from a bun relation tag
-// Expected format: "rel:belongs-to,join:user_id=id" -> returns "user_id"
-func parseForeignKeyFromRelation(bunTag string) string {
-	parts := strings.Split(bunTag, ",")
+// mergeQueryConfigs applies query configurations to metadata and returns a new copy.
+// Last config wins for each setting.
+func mergeQueryConfigs(meta *metadata.TypeMetadata, queryConfigs []QueryConfig) *metadata.TypeMetadata {
+	result := meta.Clone()
 
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-
-		// Look for join clause
-		if strings.HasPrefix(part, "join:") {
-			joinClause := strings.TrimPrefix(part, "join:")
-			// Parse "user_id=id" to get "user_id"
-			if idx := strings.Index(joinClause, "="); idx != -1 {
-				return strings.TrimSpace(joinClause[:idx])
-			}
+	for _, qc := range queryConfigs {
+		if len(qc.FilterableFields) > 0 {
+			result.FilterableFields = qc.FilterableFields
+		}
+		if len(qc.SortableFields) > 0 {
+			result.SortableFields = qc.SortableFields
+		}
+		if qc.DefaultSort != "" {
+			result.DefaultSort = qc.DefaultSort
+		}
+		if qc.DefaultLimit > 0 {
+			result.DefaultLimit = qc.DefaultLimit
+		}
+		if qc.MaxLimit > 0 {
+			result.MaxLimit = qc.MaxLimit
 		}
 	}
 
-	return ""
+	return result
+}
+
+// registerChildAuthConfig registers the child's auth config with parent's auth configs
+// for ?include= authorization. Only applies when relationName is provided.
+func registerChildAuthConfig(b *Builder, relationName string, authMap map[string]*AuthConfig) {
+	if relationName == "" {
+		return
+	}
+
+	childAuthGet := authMap[MethodGet]
+	if childAuthGet == nil {
+		return
+	}
+
+	if b.parentAuthGet != nil {
+		if b.parentAuthGet.ChildAuth == nil {
+			b.parentAuthGet.ChildAuth = make(map[string]*AuthConfig)
+		}
+		b.parentAuthGet.ChildAuth[relationName] = childAuthGet
+	}
+
+	if b.parentAuthList != nil {
+		if b.parentAuthList.ChildAuth == nil {
+			b.parentAuthList.ChildAuth = make(map[string]*AuthConfig)
+		}
+		b.parentAuthList.ChildAuth[relationName] = childAuthGet
+	}
 }

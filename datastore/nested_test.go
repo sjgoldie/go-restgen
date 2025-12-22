@@ -165,7 +165,7 @@ func TestWrapper_Nested_Get(t *testing.T) {
 	ctxGet = context.WithValue(ctxGet, "parentIDs", map[string]string{
 		"authorId": itoa(createdAuthor.ID),
 	})
-	retrieved, err := articleWrapper.Get(ctxGet, itoa(createdArticle.ID), []string{})
+	retrieved, err := articleWrapper.Get(ctxGet, itoa(createdArticle.ID))
 	if err != nil {
 		t.Fatal("Failed to get article with correct parent:", err)
 	}
@@ -178,7 +178,7 @@ func TestWrapper_Nested_Get(t *testing.T) {
 	ctxWrong = context.WithValue(ctxWrong, "parentIDs", map[string]string{
 		"authorId": "999", // non-existent author
 	})
-	_, err = articleWrapper.Get(ctxWrong, itoa(createdArticle.ID), []string{})
+	_, err = articleWrapper.Get(ctxWrong, itoa(createdArticle.ID))
 	if err == nil {
 		t.Error("Expected error when getting article with wrong parent")
 	}
@@ -209,7 +209,7 @@ func TestWrapper_Nested_GetAll(t *testing.T) {
 	ctx1 = context.WithValue(ctx1, "parentIDs", map[string]string{
 		"authorId": itoa(author1.ID),
 	})
-	articles1, _, err := articleWrapper.GetAll(ctx1, []string{})
+	articles1, _, err := articleWrapper.GetAll(ctx1)
 	if err != nil {
 		t.Fatal("Failed to get articles for author1:", err)
 	}
@@ -222,7 +222,7 @@ func TestWrapper_Nested_GetAll(t *testing.T) {
 	ctx2 = context.WithValue(ctx2, "parentIDs", map[string]string{
 		"authorId": itoa(author2.ID),
 	})
-	articles2, _, err := articleWrapper.GetAll(ctx2, []string{})
+	articles2, _, err := articleWrapper.GetAll(ctx2)
 	if err != nil {
 		t.Fatal("Failed to get articles for author2:", err)
 	}
@@ -273,7 +273,7 @@ func TestWrapper_Nested_ThreeLevels_Get(t *testing.T) {
 		"authorId":  itoa(author.ID),
 		"articleId": itoa(article.ID),
 	})
-	retrieved, err := commentWrapper.Get(ctx, itoa(createdComment.ID), []string{})
+	retrieved, err := commentWrapper.Get(ctx, itoa(createdComment.ID))
 	if err != nil {
 		t.Fatal("Failed to get comment with correct parent chain:", err)
 	}
@@ -287,7 +287,7 @@ func TestWrapper_Nested_ThreeLevels_Get(t *testing.T) {
 		"authorId":  itoa(author.ID),
 		"articleId": "999", // non-existent article
 	})
-	_, err = commentWrapper.Get(ctxWrongArticle, itoa(createdComment.ID), []string{})
+	_, err = commentWrapper.Get(ctxWrongArticle, itoa(createdComment.ID))
 	if err == nil {
 		t.Error("Expected error when getting comment with wrong article")
 	}
@@ -298,7 +298,7 @@ func TestWrapper_Nested_ThreeLevels_Get(t *testing.T) {
 		"authorId":  "999", // non-existent author
 		"articleId": itoa(article.ID),
 	})
-	_, err = commentWrapper.Get(ctxWrongAuthor, itoa(createdComment.ID), []string{})
+	_, err = commentWrapper.Get(ctxWrongAuthor, itoa(createdComment.ID))
 	if err == nil {
 		t.Error("Expected error when getting comment with wrong author")
 	}
@@ -385,7 +385,7 @@ func TestWrapper_Nested_Delete(t *testing.T) {
 	}
 
 	// Verify deletion
-	_, err = articleWrapper.Get(ctx, itoa(article.ID), []string{})
+	_, err = articleWrapper.Get(ctx, itoa(article.ID))
 	if err == nil {
 		t.Error("Expected error when getting deleted article")
 	}

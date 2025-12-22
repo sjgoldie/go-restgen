@@ -1,0 +1,31 @@
+meta {
+  name: Create Comment - Bob on Bob's post
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/posts/{{bobPostId}}/comments
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user
+}
+
+body:json {
+  {
+    "text": "Bob's comment on his own post"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.owner_id: eq bob
+}
+
+script:post-response {
+  bru.setVar("bobCommentId", res.body.id);
+}

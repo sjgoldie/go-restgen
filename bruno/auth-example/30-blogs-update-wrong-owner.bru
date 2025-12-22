@@ -1,0 +1,34 @@
+meta {
+  name: PUT /blogs owned by someone else (should fail)
+  type: http
+  seq: 30
+}
+
+put {
+  url: {{baseUrl}}/blogs/{{bobBlogId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "id": {{bobBlogId}},
+    "name": "Hacked Blog",
+    "author_id": "alice"
+  }
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # PUT Blog Owned By Someone Else
+
+  Blogs have ownership-based auth - users can only modify their own blogs.
+  Alice trying to update Bob's blog should return 404 (ownership filter hides it).
+}

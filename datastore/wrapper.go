@@ -22,8 +22,9 @@ type Wrapper[T any] struct {
 
 // GetAll retrieves all items of type T from the datastore
 // Filters from context are applied automatically
+// Relations can be loaded via ?include= query parameter (parsed into QueryOptions.Include)
 // Returns items, total count (0 if not requested), and error
-func (w *Wrapper[T]) GetAll(ctx context.Context, relations []string) ([]*T, int, error) {
+func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -70,10 +71,8 @@ func (w *Wrapper[T]) GetAll(ctx context.Context, relations []string) ([]*T, int,
 	// Apply pagination AFTER count
 	query = w.applyQueryPagination(query, opts, meta)
 
-	// Add relations if specified
-	for _, relation := range relations {
-		query = query.Relation(relation)
-	}
+	// Apply relation includes from query options
+	query = w.applyRelationIncludes(ctx, query, opts, meta)
 
 	if err := query.Scan(ctx); err != nil {
 		// Pass through context errors unchanged
@@ -92,14 +91,15 @@ func (w *Wrapper[T]) GetAll(ctx context.Context, relations []string) ([]*T, int,
 
 // Get retrieves a single item of type T by ID from the datastore
 // Filters from context (parent IDs) are applied automatically
+// Relations can be loaded via ?include= query parameter (parsed into QueryOptions.Include)
 // The id parameter is a string to support both integer and UUID primary keys
-func (w *Wrapper[T]) Get(ctx context.Context, id string, relations []string) (*T, error) {
+func (w *Wrapper[T]) Get(ctx context.Context, id string) (*T, error) {
 	// Get metadata from context
 	meta, err := metadata.FromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	item, err := w.getWithMeta(ctx, meta, id, relations)
+	item, err := w.getWithMeta(ctx, meta, id)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 		// Validate parent exists by calling getByType on it
 		// This validates the full parent chain automatically
 		// Parent validation will use the parent's own ownership config from metadata
-		parentItem, err := w.getWithMeta(ctx, parentMeta, parentID, []string{})
+		parentItem, err := w.getWithMeta(ctx, parentMeta, parentID)
 		if err != nil {
 			return nil, err
 		}
@@ -218,7 +218,7 @@ func (w *Wrapper[T]) Update(ctx context.Context, id string, item T) (*T, error) 
 
 	// Validate item exists (and belongs to parent chain if applicable)
 	// This also provides the old value for validation
-	existing, err := w.Get(ctx, id, []string{})
+	existing, err := w.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +285,7 @@ func (w *Wrapper[T]) Delete(ctx context.Context, id string) error {
 
 	// Validate item exists (and belongs to parent chain if applicable)
 	// This also provides the item for validation
-	existing, err := w.Get(ctx, id, []string{})
+	existing, err := w.Get(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -341,8 +341,9 @@ func (w *Wrapper[T]) Delete(ctx context.Context, id string) error {
 
 // getWithMeta retrieves a single item by ID using metadata
 // This allows validating parent existence with full chain validation
+// Relations can be loaded via ?include= query parameter (parsed into QueryOptions.Include)
 // The id parameter is a string to support both integer and UUID primary keys
-func (w *Wrapper[T]) getWithMeta(ctx context.Context, meta *metadata.TypeMetadata, id string, relations []string) (interface{}, error) {
+func (w *Wrapper[T]) getWithMeta(ctx context.Context, meta *metadata.TypeMetadata, id string) (interface{}, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -362,10 +363,9 @@ func (w *Wrapper[T]) getWithMeta(ctx context.Context, meta *metadata.TypeMetadat
 		return nil, err
 	}
 
-	// Add relations if specified
-	for _, relation := range relations {
-		query = query.Relation(relation)
-	}
+	// Get query options from context and apply relation includes
+	opts := metadata.QueryOptionsFromContext(ctx)
+	query = w.applyRelationIncludes(ctx, query, opts, meta)
 
 	// Filter by ID using Bun's table primary key placeholder
 	query = query.Where("?TablePKs = ?", id)
@@ -434,6 +434,16 @@ func (w *Wrapper[T]) setForeignKey(item *T, foreignKeyCol string, parentItem int
 	}
 
 	return nil
+}
+
+// hasField checks if a type has a field matching the given column name
+func hasField(t reflect.Type, colName string) bool {
+	if colName == "" {
+		return false
+	}
+	fieldName := fieldNameFromColumn(colName)
+	_, found := t.FieldByName(fieldName)
+	return found
 }
 
 // fieldNameFromColumn converts a database column name to a Go field name
@@ -509,19 +519,40 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 			continue
 		}
 
+		// Determine if FK is on child or parent by checking if child has the FK field
+		fkOnChild := hasField(join.childType, join.childFKCol)
+
 		// Check if child is the base model being queried
 		if join.childType == baseType {
 			// Child is the base model, use ?TableAlias
-			query = query.Join("JOIN ? ON ?TableAlias.? = ?.?",
-				bun.Ident(join.parentTable),
-				bun.Ident(join.childFKCol),
-				bun.Ident(join.parentTable), bun.Ident("id"))
+			if fkOnChild {
+				// Normal case: child.FK = parent.id
+				query = query.Join("JOIN ? ON ?TableAlias.? = ?.?",
+					bun.Ident(join.parentTable),
+					bun.Ident(join.childFKCol),
+					bun.Ident(join.parentTable), bun.Ident("id"))
+			} else {
+				// Inverted case: parent.FK = child.id
+				query = query.Join("JOIN ? ON ?.? = ?TableAlias.?",
+					bun.Ident(join.parentTable),
+					bun.Ident(join.parentTable), bun.Ident(join.childFKCol),
+					bun.Ident("id"))
+			}
 		} else {
 			// Child is a previously joined table, use table name
-			query = query.Join("JOIN ? ON ?.? = ?.?",
-				bun.Ident(join.parentTable),
-				bun.Ident(join.childTable), bun.Ident(join.childFKCol),
-				bun.Ident(join.parentTable), bun.Ident("id"))
+			if fkOnChild {
+				// Normal case: child.FK = parent.id
+				query = query.Join("JOIN ? ON ?.? = ?.?",
+					bun.Ident(join.parentTable),
+					bun.Ident(join.childTable), bun.Ident(join.childFKCol),
+					bun.Ident(join.parentTable), bun.Ident("id"))
+			} else {
+				// Inverted case: parent.FK = child.id
+				query = query.Join("JOIN ? ON ?.? = ?.?",
+					bun.Ident(join.parentTable),
+					bun.Ident(join.parentTable), bun.Ident(join.childFKCol),
+					bun.Ident(join.childTable), bun.Ident("id"))
+			}
 		}
 
 		// WHERE parent_table.id = ?
@@ -841,4 +872,107 @@ func (w *Wrapper[T]) runAudit(ctx context.Context, db bun.IDB, meta *metadata.Ty
 	// Insert the audit record
 	_, err := db.NewInsert().Model(auditRecord).Exec(ctx)
 	return err
+}
+
+// GetByParentRelation retrieves a single item of type T via the parent's foreign key field
+// Fetches the parent, extracts the FK value, then calls normal Get (preserving security checks)
+func (w *Wrapper[T]) GetByParentRelation(ctx context.Context, parentID string) (*T, error) {
+	childID, err := w.resolveChildIDFromParent(ctx, parentID)
+	if err != nil {
+		return nil, err
+	}
+	return w.Get(ctx, childID)
+}
+
+// UpdateByParentRelation updates a single item of type T via the parent's foreign key field
+// Fetches the parent, extracts the FK value, then calls normal Update (preserving security checks)
+func (w *Wrapper[T]) UpdateByParentRelation(ctx context.Context, parentID string, item T) (*T, error) {
+	childID, err := w.resolveChildIDFromParent(ctx, parentID)
+	if err != nil {
+		return nil, err
+	}
+	return w.Update(ctx, childID, item)
+}
+
+// resolveChildIDFromParent fetches the parent and extracts the foreign key value
+// For belongs-to relations like /posts/{id}/author, Post.AuthorID points to User.ID
+func (w *Wrapper[T]) resolveChildIDFromParent(ctx context.Context, parentID string) (string, error) {
+	meta, err := metadata.FromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	if meta.ParentMeta == nil {
+		return "", fmt.Errorf("resolveChildIDFromParent requires parent metadata")
+	}
+
+	if meta.ParentFKField == "" {
+		return "", fmt.Errorf("resolveChildIDFromParent requires ParentFKField to be set")
+	}
+
+	// Fetch the parent using getWithMeta (reuses existing logic)
+	parent, err := w.getWithMeta(ctx, meta.ParentMeta, parentID)
+	if err != nil {
+		return "", err
+	}
+
+	// Extract the FK field value from the parent
+	parentValue := reflect.ValueOf(parent).Elem()
+	fkField := parentValue.FieldByName(meta.ParentFKField)
+	if !fkField.IsValid() {
+		return "", fmt.Errorf("FK field %s not found on parent", meta.ParentFKField)
+	}
+
+	return fmt.Sprintf("%v", fkField.Interface()), nil
+}
+
+// applyRelationIncludes adds relation loading for includes specified in query options.
+// Authorization is checked via AllowedIncludes from context (set by wrapWithAuth middleware).
+// Only relations in AllowedIncludes AND registered in ChildMeta are loaded.
+// The bool value in AllowedIncludes indicates whether to apply ownership filtering.
+func (w *Wrapper[T]) applyRelationIncludes(ctx context.Context, query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
+	if opts == nil || len(opts.Include) == 0 || meta == nil {
+		return query
+	}
+
+	// Get allowed includes from context (set by wrapWithAuth based on child auth configs)
+	allowedIncludes := metadata.AllowedIncludesFromContext(ctx)
+
+	for _, relationName := range opts.Include {
+		// Check if this relation is authorized (in AllowedIncludes)
+		applyOwnership, authorized := allowedIncludes[relationName]
+		if !authorized {
+			// Silently ignore unauthorized relations for security
+			continue
+		}
+
+		// Check if this relation is registered in ChildMeta
+		childMeta, exists := meta.ChildMeta[relationName]
+		if !exists {
+			// Silently ignore unknown relations for security
+			continue
+		}
+
+		// Capture for closure
+		cm := childMeta
+		shouldApplyOwnership := applyOwnership
+
+		// Add the relation with ownership filtering applied based on authorization
+		query = query.Relation(relationName, func(q *bun.SelectQuery) *bun.SelectQuery {
+			if !shouldApplyOwnership {
+				// User has bypass scope for this child - no ownership filter
+				return q
+			}
+
+			// Apply ownership filter with child's metadata
+			filtered, err := w.applyOwnershipFilterWithMeta(ctx, q, cm)
+			if err != nil {
+				// On error, return empty result set (secure default)
+				return q.Where("1 = 0")
+			}
+			return filtered
+		})
+	}
+
+	return query
 }

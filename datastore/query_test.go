@@ -111,7 +111,7 @@ func TestQuery_Filter_Eq(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -143,7 +143,7 @@ func TestQuery_Filter_Gt(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -175,7 +175,7 @@ func TestQuery_Filter_Like(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -201,7 +201,7 @@ func TestQuery_Filter_NotAllowed(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -237,7 +237,7 @@ func TestQuery_Sort_Direction(t *testing.T) {
 			}
 			ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-			results, _, err := wrapper.GetAll(ctx, []string{})
+			results, _, err := wrapper.GetAll(ctx)
 			if err != nil {
 				t.Fatal("GetAll failed:", err)
 			}
@@ -276,7 +276,7 @@ func TestQuery_Pagination_Limit(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -303,7 +303,7 @@ func TestQuery_Pagination_Offset(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -337,7 +337,7 @@ func TestQuery_Pagination_LimitAndOffset(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -370,7 +370,7 @@ func TestQuery_Count(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, count, err := wrapper.GetAll(ctx, []string{})
+	results, count, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -402,7 +402,7 @@ func TestQuery_CountWithFilter(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, count, err := wrapper.GetAll(ctx, []string{})
+	results, count, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -431,7 +431,7 @@ func TestQuery_MaxLimitEnforced(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -464,7 +464,7 @@ func TestQuery_DefaultLimit(t *testing.T) {
 	}
 
 	// No explicit limit - should use DefaultLimit (10)
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -496,7 +496,7 @@ func TestQuery_CombinedFilterSortPagination(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, count, err := wrapper.GetAll(ctx, []string{})
+	results, count, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -533,7 +533,7 @@ func TestQuery_Sort_InvalidField(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -588,7 +588,7 @@ func TestQuery_DefaultSort_Direction(t *testing.T) {
 			seedQueryProducts(t, wrapper, ctx)
 
 			// No explicit sort - should use DefaultSort
-			results, _, err := wrapper.GetAll(ctx, []string{})
+			results, _, err := wrapper.GetAll(ctx)
 			if err != nil {
 				t.Fatal("GetAll failed:", err)
 			}
@@ -624,7 +624,7 @@ func TestQuery_MultipleSort(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -655,7 +655,7 @@ func TestQuery_Filter_Neq(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -687,7 +687,7 @@ func TestQuery_Filter_Gte(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -719,7 +719,7 @@ func TestQuery_Filter_Lt(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -751,7 +751,7 @@ func TestQuery_Filter_Lte(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx, []string{})
+	results, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}

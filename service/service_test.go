@@ -148,7 +148,7 @@ func TestService_GetAll(t *testing.T) {
 				t.Fatal("Failed to create service:", err)
 			}
 
-			items, _, err := svc.GetAll(ctxWithMeta(testModelMeta), []string{})
+			items, _, err := svc.GetAll(ctxWithMeta(testModelMeta))
 			if err != nil {
 				t.Fatal("GetAll failed:", err)
 			}
@@ -202,7 +202,7 @@ func TestService_Get(t *testing.T) {
 				t.Fatal("Failed to create service:", err)
 			}
 
-			item, err := svc.Get(ctxWithMeta(testModelMeta), tt.getID, []string{})
+			item, err := svc.Get(ctxWithMeta(testModelMeta), tt.getID)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Get() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -395,5 +395,181 @@ func TestService_TypeSafety(t *testing.T) {
 
 	if userSvc == nil || productSvc == nil {
 		t.Fatal("Failed to create type-safe services")
+	}
+}
+
+// ParentModel and ChildModel for parent relation tests
+type ParentModel struct {
+	bun.BaseModel `bun:"table:parent_models"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	Name          string `bun:"name"`
+	ChildID       int    `bun:"child_id"`
+}
+
+type ChildModel struct {
+	bun.BaseModel `bun:"table:child_models"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	Name          string `bun:"name"`
+}
+
+func TestService_GetByParentRelation(t *testing.T) {
+	// Create tables
+	db, _ := datastore.Get()
+	_, err := db.GetDB().NewCreateTable().Model((*ParentModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create parent table:", err)
+	}
+	_, err = db.GetDB().NewCreateTable().Model((*ChildModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create child table:", err)
+	}
+	defer func() {
+		db.GetDB().NewDropTable().Model((*ParentModel)(nil)).IfExists().Exec(context.Background())
+		db.GetDB().NewDropTable().Model((*ChildModel)(nil)).IfExists().Exec(context.Background())
+	}()
+
+	// Clean tables
+	db.GetDB().NewDelete().Model((*ParentModel)(nil)).Where("1=1").Exec(context.Background())
+	db.GetDB().NewDelete().Model((*ChildModel)(nil)).Where("1=1").Exec(context.Background())
+
+	// Create child
+	child := &ChildModel{Name: "Test Child"}
+	_, err = db.GetDB().NewInsert().Model(child).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create child:", err)
+	}
+
+	// Create parent with reference to child
+	parent := &ParentModel{Name: "Test Parent", ChildID: child.ID}
+	_, err = db.GetDB().NewInsert().Model(parent).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create parent:", err)
+	}
+
+	// Create service
+	svc, err := service.New[ChildModel]()
+	if err != nil {
+		t.Fatal("Failed to create service:", err)
+	}
+
+	// Create parent metadata
+	parentMeta := &metadata.TypeMetadata{
+		TypeID:       "parent_model_id",
+		TypeName:     "ParentModel",
+		TableName:    "parent_models",
+		URLParamUUID: "parent_id",
+		ModelType:    reflect.TypeOf(ParentModel{}),
+	}
+
+	// Create metadata for child accessed via parent
+	childMeta := &metadata.TypeMetadata{
+		TypeID:        "child_model_id",
+		TypeName:      "ChildModel",
+		TableName:     "child_models",
+		URLParamUUID:  parentMeta.URLParamUUID,
+		ModelType:     reflect.TypeOf(ChildModel{}),
+		ParentType:    reflect.TypeOf(ParentModel{}),
+		ParentMeta:    parentMeta,
+		ParentFKField: "ChildID",
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, childMeta)
+
+	// Get child by parent relation
+	retrieved, err := svc.GetByParentRelation(ctx, strconv.Itoa(parent.ID))
+	if err != nil {
+		t.Fatal("GetByParentRelation failed:", err)
+	}
+
+	if retrieved.ID != child.ID {
+		t.Errorf("Expected child ID %d, got %d", child.ID, retrieved.ID)
+	}
+	if retrieved.Name != child.Name {
+		t.Errorf("Expected child name '%s', got '%s'", child.Name, retrieved.Name)
+	}
+}
+
+func TestService_UpdateByParentRelation(t *testing.T) {
+	// Create tables
+	db, _ := datastore.Get()
+	_, err := db.GetDB().NewCreateTable().Model((*ParentModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create parent table:", err)
+	}
+	_, err = db.GetDB().NewCreateTable().Model((*ChildModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create child table:", err)
+	}
+	defer func() {
+		db.GetDB().NewDropTable().Model((*ParentModel)(nil)).IfExists().Exec(context.Background())
+		db.GetDB().NewDropTable().Model((*ChildModel)(nil)).IfExists().Exec(context.Background())
+	}()
+
+	// Clean tables
+	db.GetDB().NewDelete().Model((*ParentModel)(nil)).Where("1=1").Exec(context.Background())
+	db.GetDB().NewDelete().Model((*ChildModel)(nil)).Where("1=1").Exec(context.Background())
+
+	// Create child
+	child := &ChildModel{Name: "Original Name"}
+	_, err = db.GetDB().NewInsert().Model(child).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create child:", err)
+	}
+
+	// Create parent with reference to child
+	parent := &ParentModel{Name: "Test Parent", ChildID: child.ID}
+	_, err = db.GetDB().NewInsert().Model(parent).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create parent:", err)
+	}
+
+	// Create service
+	svc, err := service.New[ChildModel]()
+	if err != nil {
+		t.Fatal("Failed to create service:", err)
+	}
+
+	// Create parent metadata
+	parentMeta := &metadata.TypeMetadata{
+		TypeID:       "parent_model_id",
+		TypeName:     "ParentModel",
+		TableName:    "parent_models",
+		URLParamUUID: "parent_id",
+		ModelType:    reflect.TypeOf(ParentModel{}),
+	}
+
+	// Create metadata for child accessed via parent
+	childMeta := &metadata.TypeMetadata{
+		TypeID:        "child_model_id",
+		TypeName:      "ChildModel",
+		TableName:     "child_models",
+		URLParamUUID:  parentMeta.URLParamUUID,
+		ModelType:     reflect.TypeOf(ChildModel{}),
+		ParentType:    reflect.TypeOf(ParentModel{}),
+		ParentMeta:    parentMeta,
+		ParentFKField: "ChildID",
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, childMeta)
+
+	// Update child by parent relation
+	updatedChild := ChildModel{ID: child.ID, Name: "Updated Name"}
+	updated, err := svc.UpdateByParentRelation(ctx, strconv.Itoa(parent.ID), updatedChild)
+	if err != nil {
+		t.Fatal("UpdateByParentRelation failed:", err)
+	}
+
+	if updated.Name != "Updated Name" {
+		t.Errorf("Expected name 'Updated Name', got '%s'", updated.Name)
+	}
+
+	// Verify the update persisted
+	var check ChildModel
+	err = db.GetDB().NewSelect().Model(&check).Where("id = ?", child.ID).Scan(context.Background())
+	if err != nil {
+		t.Fatal("Failed to verify update:", err)
+	}
+	if check.Name != "Updated Name" {
+		t.Errorf("Expected persisted name 'Updated Name', got '%s'", check.Name)
 	}
 }

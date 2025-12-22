@@ -1704,9 +1704,9 @@ func TestCustomGet(t *testing.T) {
 	defer testDB.GetDB().NewDelete().Model((*TestUser)(nil)).Where("id = 100").Exec(context.Background())
 
 	// Custom function that always returns a specific user regardless of ID
-	customGet := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*TestUser, error) {
+	customGet := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) (*TestUser, error) {
 		// Ignore the id parameter, always fetch user 100
-		return svc.Get(ctx, "100", relations)
+		return svc.Get(ctx, "100")
 	}
 
 	// Request for user 999 (doesn't exist) but custom func will return user 100
@@ -1750,9 +1750,9 @@ func TestCustomGet_WithAuth(t *testing.T) {
 	var receivedAuth *metadata.AuthInfo
 
 	// Custom function that captures the auth info
-	customGet := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*TestUser, error) {
+	customGet := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) (*TestUser, error) {
 		receivedAuth = auth
-		return svc.Get(ctx, id, relations)
+		return svc.Get(ctx, id)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/users/101", nil)
@@ -1933,9 +1933,9 @@ func TestCustomGetAll(t *testing.T) {
 	}()
 
 	// Custom function that filters to only return users with ID > 201
-	customGetAll := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions, relations []string) ([]*TestUser, int, error) {
+	customGetAll := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions) ([]*TestUser, int, error) {
 		// Get all, then filter
-		all, _, err := svc.GetAll(ctx, relations)
+		all, _, err := svc.GetAll(ctx)
 		if err != nil {
 			return nil, 0, err
 		}

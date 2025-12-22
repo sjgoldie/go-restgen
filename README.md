@@ -130,6 +130,193 @@ go-restgen automatically handles parent-child relationships with full chain vali
 
 See the [nested routes example](./examples/nested_routes) for a complete working example with 3-level nesting.
 
+## Relation Includes
+
+Load related resources in a single request using the `?include=` query parameter. This avoids N+1 queries when you need parent and child data together.
+
+### Enabling Includes with WithRelationName
+
+Use `WithRelationName()` when registering child routes to enable the `?include=` parameter:
+
+```go
+type Author struct {
+    bun.BaseModel `bun:"table:authors"`
+    ID            int     `bun:"id,pk,autoincrement" json:"id"`
+    Name          string  `bun:"name" json:"name"`
+    Posts         []*Post `bun:"rel:has-many,join:id=author_id" json:"posts,omitempty"`
+}
+
+type Post struct {
+    bun.BaseModel `bun:"table:posts"`
+    ID            int     `bun:"id,pk,autoincrement" json:"id"`
+    AuthorID      int     `bun:"author_id,notnull" json:"author_id"`
+    Author        *Author `bun:"rel:belongs-to,join:author_id=id" json:"-"`
+    OwnerID       string  `bun:"owner_id,notnull" json:"owner_id"`
+    Title         string  `bun:"title" json:"title"`
+}
+
+router.RegisterRoutes[Author](b, "/authors",
+    router.AllPublic(),
+    func(b *router.Builder) {
+        router.RegisterRoutes[Post](b, "/posts",
+            router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+            router.WithRelationName("Posts"),  // Enables ?include=Posts on parent
+        )
+    },
+)
+```
+
+### Using ?include=
+
+```bash
+# Get author with their posts
+GET /authors/1?include=Posts
+
+# Response includes the relation
+{
+    "id": 1,
+    "name": "Alice",
+    "posts": [
+        {"id": 1, "title": "First Post", "owner_id": "alice"},
+        {"id": 2, "title": "Second Post", "owner_id": "alice"}
+    ]
+}
+
+# Multiple includes (comma-separated)
+GET /authors/1?include=Posts,Comments
+```
+
+### Security: Same Auth as Direct Access
+
+**Includes respect the child route's auth configuration.** The same security rules that apply when accessing the child route directly also apply when including it:
+
+- **Unauthorized relations are silently omitted** - no error, just not included
+- **Ownership filtering applies** - users only see their own child records
+- **Bypass scopes work** - admins see all child records if configured
+
+```go
+// Parent is public, child has ownership
+router.RegisterRoutes[Author](b, "/authors",
+    router.AllPublic(),
+    func(b *router.Builder) {
+        router.RegisterRoutes[Post](b, "/posts",
+            router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+            router.WithRelationName("Posts"),
+        )
+    },
+)
+```
+
+| Request | Result |
+|---------|--------|
+| No auth + `?include=Posts` | Author returned, posts omitted (not authorized) |
+| Alice + `?include=Posts` | Author + only Alice's posts (ownership filtered) |
+| Admin + `?include=Posts` | Author + all posts (bypass scope) |
+
+### Key Points
+
+- **Relation name must match the struct field** - `WithRelationName("Posts")` maps to `Posts []*Post` field
+- **Unknown relation names are silently ignored** - for security, no error is returned
+- **Works with GET single item and LIST** - both `/authors/1?include=Posts` and `/authors?include=Posts`
+- **Nested includes not supported** - only direct children can be included
+
+See the [relations example](./examples/relations) for a complete working example.
+
+## Single Routes (Belongs-To Relations)
+
+go-restgen supports single-object routes for belongs-to relationships. Unlike collection routes that return arrays, single routes return a single object and only support GET (and optionally PUT).
+
+### Use Cases
+
+- **Nested belongs-to**: `/posts/{id}/author` - Get the author of a post
+- **Current user endpoint**: `/me` - Get/update the authenticated user
+
+### Nested Single Route (Parent FK Field)
+
+When a parent has a foreign key to a child (e.g., `Post.AuthorID` → `User.ID`), use `AsSingleRoute()` or `AsSingleRouteWithPut()`:
+
+```go
+type Post struct {
+    bun.BaseModel `bun:"table:posts"`
+    ID            int   `bun:"id,pk,autoincrement" json:"id"`
+    AuthorID      int   `bun:"author_id,notnull" json:"author_id"`
+    Author        *User `bun:"rel:belongs-to,join:author_id=id" json:"author,omitempty"`
+    Title         string `bun:"title" json:"title"`
+}
+
+router.RegisterRoutes[Post](b, "/posts",
+    router.AllPublic(),
+    func(b *router.Builder) {
+        // GET /posts/{id}/author - returns the User referenced by Post.AuthorID
+        router.RegisterRoutes[User](b, "/author",
+            router.AsSingleRoute("AuthorID"),  // Field on Post that holds User.ID
+            router.AllPublic(),
+        )
+    },
+)
+```
+
+To also allow PUT on the single route:
+
+```go
+router.RegisterRoutes[User](b, "/author",
+    router.AsSingleRouteWithPut("AuthorID"),  // Enables both GET and PUT
+    router.AllPublic(),
+)
+```
+
+### Root-Level Single Route (Custom Logic)
+
+For routes like `/me` where the ID comes from authentication context rather than a URL parameter, pass an empty string and provide custom handlers:
+
+```go
+// Custom get - ID from auth context
+func getMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string) (*User, error) {
+    if auth == nil {
+        return nil, fmt.Errorf("not authenticated")
+    }
+    // Look up user by external ID from auth
+    return lookupUserByExternalID(ctx, auth.UserID)
+}
+
+// Custom update - must set ID to prevent fake ID in request body
+func updateMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string, item User) (*User, error) {
+    if auth == nil {
+        return nil, fmt.Errorf("not authenticated")
+    }
+    userID := lookupUserIDByExternalID(auth.UserID)
+    item.ID = userID  // Prevent client from setting fake ID
+    return svc.Update(ctx, strconv.Itoa(userID), item)
+}
+
+router.RegisterRoutes[User](b, "/me",
+    router.AsSingleRouteWithPut(""),  // Empty string = no parent FK
+    router.IsAuthenticated(),
+    router.WithCustomGet(getMe),
+    router.WithCustomUpdate(updateMe),
+)
+```
+
+**Important**: Without custom handlers on root-level single routes, GET/PUT will fail because there's no way to determine the ID.
+
+### Key Differences from Collection Routes
+
+| Feature | Collection Route | Single Route |
+|---------|-----------------|--------------|
+| Response | Array `[...]` | Single object `{...}` |
+| Endpoints | GET, POST, PUT, DELETE | GET only (or GET + PUT with `WithPut`) |
+| ID source | URL parameter | Parent's FK field or custom logic |
+| Use case | Has-many relations | Belongs-to relations |
+
+### Security
+
+Single routes inherit the same security features as collection routes:
+- Auth and scope checks apply
+- Ownership filtering works (if configured)
+- Parent chain validation is performed
+
+See the [relations example](./examples/relations) for a complete working example with both nested and root-level single routes.
+
 ## Authentication & Authorization
 
 go-restgen provides flexible, granular authentication and authorization controls. **Routes are blocked by default** (secure by default) unless explicitly configured.
@@ -977,6 +1164,7 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[Authentication & Authorization](./examples/auth)** - Comprehensive auth patterns including scopes, ownership, admin bypass, and multi-ownership
 - **[Validation](./examples/validator)** - Business rule validation with state machine transitions
 - **[Audit](./examples/audit)** - Audit logging with transactional consistency
+- **[Relations](./examples/relations)** - Loading related resources via `?include=` with auth
 
 All examples include comprehensive Bruno API tests. See [`bruno/README.md`](./bruno/README.md) for details.
 
@@ -1041,7 +1229,8 @@ go-restgen builds on these excellent projects:
 - [x] Custom validation for business rules
 - [x] Transactional audit logging
 - [x] UUID primary key support
-- [ ] Optionally retrieve an object's relations when retrieving the object itself
+- [x] Relation includes via `?include=` with auth enforcement
+- [x] Single routes for belongs-to relations (`AsSingleRoute`)
 - [ ] MySQL support
 - [ ] OpenAPI/Swagger generation
 

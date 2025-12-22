@@ -14,14 +14,14 @@ type Common[T any] struct {
 
 // GetAll retrieves all items of type T
 // Returns items, total count (0 if not requested), and error
-func (s *Common[T]) GetAll(ctx context.Context, relations []string) ([]*T, int, error) {
-	return s.store.GetAll(ctx, relations)
+func (s *Common[T]) GetAll(ctx context.Context) ([]*T, int, error) {
+	return s.store.GetAll(ctx)
 }
 
 // Get retrieves a single item of type T by ID
 // The id parameter is a string to support both integer and UUID primary keys
-func (s *Common[T]) Get(ctx context.Context, id string, relations []string) (*T, error) {
-	return s.store.Get(ctx, id, relations)
+func (s *Common[T]) Get(ctx context.Context, id string) (*T, error) {
+	return s.store.Get(ctx, id)
 }
 
 // Create creates a new item of type T
@@ -39,4 +39,18 @@ func (s *Common[T]) Update(ctx context.Context, id string, item T) (*T, error) {
 // The id parameter is a string to support both integer and UUID primary keys
 func (s *Common[T]) Delete(ctx context.Context, id string) error {
 	return s.store.Delete(ctx, id)
+}
+
+// GetByParentRelation retrieves a single item of type T via the parent's relation field
+// The parentID is the ID of the parent, and the relation field is used to resolve the child's ID
+// Security checks are preserved by calling the normal Get with the resolved child ID
+func (s *Common[T]) GetByParentRelation(ctx context.Context, parentID string) (*T, error) {
+	return s.store.GetByParentRelation(ctx, parentID)
+}
+
+// UpdateByParentRelation updates a single item of type T via the parent's relation field
+// The parentID is the ID of the parent, and the relation field is used to resolve the child's ID
+// Security checks are preserved by calling the normal Update with the resolved child ID
+func (s *Common[T]) UpdateByParentRelation(ctx context.Context, parentID string, item T) (*T, error) {
+	return s.store.UpdateByParentRelation(ctx, parentID, item)
 }

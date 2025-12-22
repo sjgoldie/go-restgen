@@ -1,0 +1,26 @@
+meta {
+  name: DELETE /posts/{id}/author not allowed
+  type: http
+  seq: 23
+}
+
+delete {
+  url: {{baseUrl}}/posts/{{alicePostId}}/author
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 405
+}
+
+docs {
+  # DELETE Not Allowed on Single Route Relation
+
+  Single routes only support GET (and optionally PUT).
+  DELETE should return 405 Method Not Allowed.
+}

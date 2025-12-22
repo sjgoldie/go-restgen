@@ -1,0 +1,38 @@
+meta {
+  name: PUT /posts/{id}/author single route relation
+  type: http
+  seq: 18
+}
+
+put {
+  url: {{baseUrl}}/posts/{{alicePostId}}/author
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "id": {{aliceUserId}},
+    "name": "Alice Renamed",
+    "email": "alice-renamed@example.com",
+    "external_id": "alice"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{aliceUserId}}
+  res.body.name: eq Alice Renamed
+  res.body.email: eq alice-renamed@example.com
+}
+
+docs {
+  # Update Author via Single Route Relation
+
+  This test verifies PUT on a single route with parent (belongs-to relation).
+  The author ID is resolved from Post.AuthorID, then the User is updated.
+}

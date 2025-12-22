@@ -16,7 +16,7 @@ type CustomTestModel struct {
 }
 
 func TestWithCustomGet(t *testing.T) {
-	customFunc := func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*CustomTestModel, error) {
+	customFunc := func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) (*CustomTestModel, error) {
 		return &CustomTestModel{ID: 1, Name: "test"}, nil
 	}
 
@@ -31,7 +31,7 @@ func TestWithCustomGet(t *testing.T) {
 }
 
 func TestWithCustomGetAll(t *testing.T) {
-	customFunc := func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions, relations []string) ([]*CustomTestModel, int, error) {
+	customFunc := func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions) ([]*CustomTestModel, int, error) {
 		return []*CustomTestModel{{ID: 1, Name: "test"}}, 1, nil
 	}
 
@@ -89,11 +89,11 @@ func TestWithCustomDelete(t *testing.T) {
 // Test that custom configs work with RegisterRoutes type switch
 func TestCustomConfigTypesInSwitch(t *testing.T) {
 	// Create various config types
-	getConfig := WithCustomGet(func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*CustomTestModel, error) {
+	getConfig := WithCustomGet(func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) (*CustomTestModel, error) {
 		return nil, nil
 	})
 
-	getAllConfig := WithCustomGetAll(func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions, relations []string) ([]*CustomTestModel, int, error) {
+	getAllConfig := WithCustomGetAll(func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions) ([]*CustomTestModel, int, error) {
 		return nil, 0, nil
 	})
 
@@ -148,11 +148,11 @@ func TestCustomConfigTypesInSwitch(t *testing.T) {
 // Verify the func types match handler package types
 func TestCustomFuncTypesMatchHandler(t *testing.T) {
 	// These should compile if the types match correctly
-	var _ handler.CustomGetFunc[CustomTestModel] = func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*CustomTestModel, error) {
+	var _ handler.CustomGetFunc[CustomTestModel] = func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) (*CustomTestModel, error) {
 		return nil, nil
 	}
 
-	var _ handler.CustomGetAllFunc[CustomTestModel] = func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions, relations []string) ([]*CustomTestModel, int, error) {
+	var _ handler.CustomGetAllFunc[CustomTestModel] = func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions) ([]*CustomTestModel, int, error) {
 		return nil, 0, nil
 	}
 

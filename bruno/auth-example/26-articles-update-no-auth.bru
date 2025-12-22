@@ -1,0 +1,30 @@
+meta {
+  name: PUT /articles without auth (should fail)
+  type: http
+  seq: 26
+}
+
+put {
+  url: {{baseUrl}}/articles/{{articleId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "id": {{articleId}},
+    "title": "Hacked Article",
+    "content": "This should fail"
+  }
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  # PUT Article Without Auth
+
+  Articles require 'publisher' scope for writes.
+  PUT without auth should return 401.
+}

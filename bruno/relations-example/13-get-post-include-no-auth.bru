@@ -1,0 +1,20 @@
+meta {
+  name: Get Post - No Auth (401)
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/posts/{{alicePostId}}?include=Comments
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  Posts require auth (ownership-based), so no auth returns 401.
+  The ?include=Comments is irrelevant since you can't access the post at all.
+}

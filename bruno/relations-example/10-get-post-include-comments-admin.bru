@@ -1,0 +1,27 @@
+meta {
+  name: Get Post - Include Comments (as Admin)
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/posts/{{alicePostId}}?include=Comments
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:admin:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.title: eq Alice's First Post
+  res.body.comments: isDefined
+  res.body.comments.length: eq 1
+}
+
+docs {
+  Admin requests ?include=Comments and sees all comments (ownership bypassed)
+}

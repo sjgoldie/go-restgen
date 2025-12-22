@@ -30,6 +30,11 @@ type AuthConfig struct {
 	Methods   []string         // HTTP methods this config applies to (MethodGet, MethodPost, etc.)
 	Scopes    []string         // Required scopes - user must have at least one (empty/nil = blocked)
 	Ownership *OwnershipConfig // Optional ownership enforcement
+
+	// ChildAuth holds auth configs for child routes (used for ?include= authorization).
+	// Populated automatically when child routes are registered with WithRelationName().
+	// Key is the relation name (e.g., "Posts"), value is the child's merged auth config for MethodGet.
+	ChildAuth map[string]*AuthConfig
 }
 
 // OwnershipConfig defines ownership validation rules.

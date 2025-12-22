@@ -1,0 +1,33 @@
+meta {
+  name: POST /authors without admin scope (should fail)
+  type: http
+  seq: 29
+}
+
+post {
+  url: {{baseUrl}}/authors
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "name": "Fake Author",
+    "bio": "This should fail - alice is not admin"
+  }
+}
+
+assert {
+  res.status: eq 403
+}
+
+docs {
+  # POST Author Without Admin Scope
+
+  Authors require 'admin' scope for writes.
+  Alice only has 'user' scope, so POST should return 403 Forbidden.
+}

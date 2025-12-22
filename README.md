@@ -222,6 +222,101 @@ router.RegisterRoutes[Author](b, "/authors",
 
 See the [relations example](./examples/relations) for a complete working example.
 
+## Single Routes (Belongs-To Relations)
+
+go-restgen supports single-object routes for belongs-to relationships. Unlike collection routes that return arrays, single routes return a single object and only support GET (and optionally PUT).
+
+### Use Cases
+
+- **Nested belongs-to**: `/posts/{id}/author` - Get the author of a post
+- **Current user endpoint**: `/me` - Get/update the authenticated user
+
+### Nested Single Route (Parent FK Field)
+
+When a parent has a foreign key to a child (e.g., `Post.AuthorID` → `User.ID`), use `AsSingleRoute()` or `AsSingleRouteWithPut()`:
+
+```go
+type Post struct {
+    bun.BaseModel `bun:"table:posts"`
+    ID            int   `bun:"id,pk,autoincrement" json:"id"`
+    AuthorID      int   `bun:"author_id,notnull" json:"author_id"`
+    Author        *User `bun:"rel:belongs-to,join:author_id=id" json:"author,omitempty"`
+    Title         string `bun:"title" json:"title"`
+}
+
+router.RegisterRoutes[Post](b, "/posts",
+    router.AllPublic(),
+    func(b *router.Builder) {
+        // GET /posts/{id}/author - returns the User referenced by Post.AuthorID
+        router.RegisterRoutes[User](b, "/author",
+            router.AsSingleRoute("AuthorID"),  // Field on Post that holds User.ID
+            router.AllPublic(),
+        )
+    },
+)
+```
+
+To also allow PUT on the single route:
+
+```go
+router.RegisterRoutes[User](b, "/author",
+    router.AsSingleRouteWithPut("AuthorID"),  // Enables both GET and PUT
+    router.AllPublic(),
+)
+```
+
+### Root-Level Single Route (Custom Logic)
+
+For routes like `/me` where the ID comes from authentication context rather than a URL parameter, pass an empty string and provide custom handlers:
+
+```go
+// Custom get - ID from auth context
+func getMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string) (*User, error) {
+    if auth == nil {
+        return nil, fmt.Errorf("not authenticated")
+    }
+    // Look up user by external ID from auth
+    return lookupUserByExternalID(ctx, auth.UserID)
+}
+
+// Custom update - must set ID to prevent fake ID in request body
+func updateMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string, item User) (*User, error) {
+    if auth == nil {
+        return nil, fmt.Errorf("not authenticated")
+    }
+    userID := lookupUserIDByExternalID(auth.UserID)
+    item.ID = userID  // Prevent client from setting fake ID
+    return svc.Update(ctx, strconv.Itoa(userID), item)
+}
+
+router.RegisterRoutes[User](b, "/me",
+    router.AsSingleRouteWithPut(""),  // Empty string = no parent FK
+    router.IsAuthenticated(),
+    router.WithCustomGet(getMe),
+    router.WithCustomUpdate(updateMe),
+)
+```
+
+**Important**: Without custom handlers on root-level single routes, GET/PUT will fail because there's no way to determine the ID.
+
+### Key Differences from Collection Routes
+
+| Feature | Collection Route | Single Route |
+|---------|-----------------|--------------|
+| Response | Array `[...]` | Single object `{...}` |
+| Endpoints | GET, POST, PUT, DELETE | GET only (or GET + PUT with `WithPut`) |
+| ID source | URL parameter | Parent's FK field or custom logic |
+| Use case | Has-many relations | Belongs-to relations |
+
+### Security
+
+Single routes inherit the same security features as collection routes:
+- Auth and scope checks apply
+- Ownership filtering works (if configured)
+- Parent chain validation is performed
+
+See the [relations example](./examples/relations) for a complete working example with both nested and root-level single routes.
+
 ## Authentication & Authorization
 
 go-restgen provides flexible, granular authentication and authorization controls. **Routes are blocked by default** (secure by default) unless explicitly configured.
@@ -1135,6 +1230,7 @@ go-restgen builds on these excellent projects:
 - [x] Transactional audit logging
 - [x] UUID primary key support
 - [x] Relation includes via `?include=` with auth enforcement
+- [x] Single routes for belongs-to relations (`AsSingleRoute`)
 - [ ] MySQL support
 - [ ] OpenAPI/Swagger generation
 

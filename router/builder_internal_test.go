@@ -6,11 +6,13 @@ import (
 	"github.com/sjgoldie/go-restgen/metadata"
 )
 
+const testFieldName = "Name"
+
 func TestMergeQueryConfigs(t *testing.T) {
 	t.Run("empty configs returns clone of original", func(t *testing.T) {
 		original := &metadata.TypeMetadata{
 			TypeID:           "test",
-			FilterableFields: []string{"Name"},
+			FilterableFields: []string{testFieldName},
 			DefaultLimit:     10,
 		}
 
@@ -25,7 +27,7 @@ func TestMergeQueryConfigs(t *testing.T) {
 		if result.TypeID != original.TypeID {
 			t.Errorf("expected TypeID %q, got %q", original.TypeID, result.TypeID)
 		}
-		if len(result.FilterableFields) != 1 || result.FilterableFields[0] != "Name" {
+		if len(result.FilterableFields) != 1 || result.FilterableFields[0] != testFieldName {
 			t.Error("FilterableFields not preserved")
 		}
 		if result.DefaultLimit != 10 {
@@ -40,7 +42,7 @@ func TestMergeQueryConfigs(t *testing.T) {
 
 		configs := []QueryConfig{
 			{
-				FilterableFields: []string{"Name", "Status"},
+				FilterableFields: []string{testFieldName, "Status"},
 				SortableFields:   []string{"CreatedAt"},
 				DefaultSort:      "-CreatedAt",
 				DefaultLimit:     20,
@@ -74,7 +76,7 @@ func TestMergeQueryConfigs(t *testing.T) {
 
 		configs := []QueryConfig{
 			{
-				FilterableFields: []string{"Name"},
+				FilterableFields: []string{testFieldName},
 				DefaultLimit:     10,
 			},
 			{
@@ -107,7 +109,7 @@ func TestMergeQueryConfigs(t *testing.T) {
 		configs := []QueryConfig{
 			{
 				// Only set DefaultSort, leave others empty
-				DefaultSort: "Name",
+				DefaultSort: testFieldName,
 			},
 		}
 
@@ -121,7 +123,7 @@ func TestMergeQueryConfigs(t *testing.T) {
 			t.Errorf("DefaultLimit should be preserved, got %d", result.DefaultLimit)
 		}
 		// But DefaultSort should be updated
-		if result.DefaultSort != "Name" {
+		if result.DefaultSort != testFieldName {
 			t.Errorf("expected DefaultSort 'Name', got %q", result.DefaultSort)
 		}
 	})

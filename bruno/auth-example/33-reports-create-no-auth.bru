@@ -1,0 +1,29 @@
+meta {
+  name: POST /reports without auth (should fail)
+  type: http
+  seq: 33
+}
+
+post {
+  url: {{baseUrl}}/reports
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "Fake Report",
+    "content": "This should fail"
+  }
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  # POST Report Without Auth
+
+  Reports require authentication for create/update/delete.
+  POST without auth should return 401.
+}

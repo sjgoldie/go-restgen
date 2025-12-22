@@ -2266,3 +2266,202 @@ func TestInclude_NoOwnershipConfig(t *testing.T) {
 		t.Errorf("Expected 2 posts (no ownership filter), got %d", len(retrieved.Posts))
 	}
 }
+
+// TestWrapper_GetByParentRelation tests getting an item via parent's FK field
+func TestWrapper_GetByParentRelation(t *testing.T) {
+	db, cleanup := setupIncludeTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create author
+	authorWrapper := &datastore.Wrapper[TestIncludeAuthor]{Store: db}
+	authorMeta := &metadata.TypeMetadata{
+		TypeID:       "test_author_id",
+		TypeName:     "TestIncludeAuthor",
+		TableName:    "include_authors",
+		URLParamUUID: "author_id",
+		ModelType:    reflect.TypeOf(TestIncludeAuthor{}),
+	}
+	authorCtx := context.WithValue(ctx, metadata.MetadataKey, authorMeta)
+	author, err := authorWrapper.Create(authorCtx, TestIncludeAuthor{Name: "Test Author"})
+	if err != nil {
+		t.Fatal("Failed to create author:", err)
+	}
+
+	// Create post with author - use simple metadata without ParentType to avoid nested resource checks
+	postWrapper := &datastore.Wrapper[TestIncludePost]{Store: db}
+	postMeta := &metadata.TypeMetadata{
+		TypeID:       "test_post_id",
+		TypeName:     "TestIncludePost",
+		TableName:    "include_posts",
+		URLParamUUID: "post_id",
+		ModelType:    reflect.TypeOf(TestIncludePost{}),
+	}
+	postCtx := context.WithValue(ctx, metadata.MetadataKey, postMeta)
+	post, err := postWrapper.Create(postCtx, TestIncludePost{AuthorID: author.ID, OwnerID: "alice", Title: "Test Post"})
+	if err != nil {
+		t.Fatal("Failed to create post:", err)
+	}
+
+	// Now test GetByParentRelation - get Author from Post
+	// We need metadata for Author with ParentMeta pointing to Post and ParentFKField set
+	authorFromPostMeta := &metadata.TypeMetadata{
+		TypeID:        "test_author_from_post_id",
+		TypeName:      "TestIncludeAuthor",
+		TableName:     "include_authors",
+		URLParamUUID:  postMeta.URLParamUUID, // Use post's URL param
+		ModelType:     reflect.TypeOf(TestIncludeAuthor{}),
+		ParentType:    reflect.TypeOf(TestIncludePost{}),
+		ParentMeta:    postMeta,
+		ParentFKField: "AuthorID", // Post.AuthorID points to Author.ID
+	}
+	authorFromPostCtx := context.WithValue(ctx, metadata.MetadataKey, authorFromPostMeta)
+
+	// Get author by passing the post ID
+	retrieved, err := authorWrapper.GetByParentRelation(authorFromPostCtx, strconv.Itoa(post.ID))
+	if err != nil {
+		t.Fatal("Failed to get author by parent relation:", err)
+	}
+
+	if retrieved.ID != author.ID {
+		t.Errorf("Expected author ID %d, got %d", author.ID, retrieved.ID)
+	}
+	if retrieved.Name != author.Name {
+		t.Errorf("Expected author name %s, got %s", author.Name, retrieved.Name)
+	}
+}
+
+// TestWrapper_GetByParentRelation_NoParentMeta tests error when parent meta is missing
+func TestWrapper_GetByParentRelation_NoParentMeta(t *testing.T) {
+	db, cleanup := setupIncludeTestDB(t)
+	defer cleanup()
+
+	authorWrapper := &datastore.Wrapper[TestIncludeAuthor]{Store: db}
+	// Metadata without ParentMeta
+	authorMeta := &metadata.TypeMetadata{
+		TypeID:       "test_author_id",
+		TypeName:     "TestIncludeAuthor",
+		TableName:    "include_authors",
+		URLParamUUID: "author_id",
+		ModelType:    reflect.TypeOf(TestIncludeAuthor{}),
+	}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, authorMeta)
+
+	_, err := authorWrapper.GetByParentRelation(ctx, "1")
+	if err == nil {
+		t.Error("Expected error when ParentMeta is nil")
+	}
+	if err != nil && err.Error() != "resolveChildIDFromParent requires parent metadata" {
+		t.Errorf("Unexpected error message: %s", err.Error())
+	}
+}
+
+// TestWrapper_GetByParentRelation_NoParentFKField tests error when ParentFKField is missing
+func TestWrapper_GetByParentRelation_NoParentFKField(t *testing.T) {
+	db, cleanup := setupIncludeTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create post metadata
+	postMeta := &metadata.TypeMetadata{
+		TypeID:       "test_post_id",
+		TypeName:     "TestIncludePost",
+		TableName:    "include_posts",
+		URLParamUUID: "post_id",
+		ModelType:    reflect.TypeOf(TestIncludePost{}),
+	}
+
+	authorWrapper := &datastore.Wrapper[TestIncludeAuthor]{Store: db}
+	// Metadata with ParentMeta but no ParentFKField
+	authorMeta := &metadata.TypeMetadata{
+		TypeID:       "test_author_id",
+		TypeName:     "TestIncludeAuthor",
+		TableName:    "include_authors",
+		URLParamUUID: "author_id",
+		ModelType:    reflect.TypeOf(TestIncludeAuthor{}),
+		ParentMeta:   postMeta,
+		// ParentFKField is empty
+	}
+	authorCtx := context.WithValue(ctx, metadata.MetadataKey, authorMeta)
+
+	_, err := authorWrapper.GetByParentRelation(authorCtx, "1")
+	if err == nil {
+		t.Error("Expected error when ParentFKField is empty")
+	}
+	if err != nil && err.Error() != "resolveChildIDFromParent requires ParentFKField to be set" {
+		t.Errorf("Unexpected error message: %s", err.Error())
+	}
+}
+
+// TestWrapper_UpdateByParentRelation tests updating an item via parent's FK field
+func TestWrapper_UpdateByParentRelation(t *testing.T) {
+	db, cleanup := setupIncludeTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create author
+	authorWrapper := &datastore.Wrapper[TestIncludeAuthor]{Store: db}
+	authorMeta := &metadata.TypeMetadata{
+		TypeID:       "test_author_id",
+		TypeName:     "TestIncludeAuthor",
+		TableName:    "include_authors",
+		URLParamUUID: "author_id",
+		ModelType:    reflect.TypeOf(TestIncludeAuthor{}),
+	}
+	authorCtx := context.WithValue(ctx, metadata.MetadataKey, authorMeta)
+	author, err := authorWrapper.Create(authorCtx, TestIncludeAuthor{Name: "Original Name"})
+	if err != nil {
+		t.Fatal("Failed to create author:", err)
+	}
+
+	// Create post with author - use simple metadata without ParentType to avoid nested resource checks
+	postWrapper := &datastore.Wrapper[TestIncludePost]{Store: db}
+	postMeta := &metadata.TypeMetadata{
+		TypeID:       "test_post_id",
+		TypeName:     "TestIncludePost",
+		TableName:    "include_posts",
+		URLParamUUID: "post_id",
+		ModelType:    reflect.TypeOf(TestIncludePost{}),
+	}
+	postCtx := context.WithValue(ctx, metadata.MetadataKey, postMeta)
+	post, err := postWrapper.Create(postCtx, TestIncludePost{AuthorID: author.ID, OwnerID: "alice", Title: "Test Post"})
+	if err != nil {
+		t.Fatal("Failed to create post:", err)
+	}
+
+	// Now test UpdateByParentRelation - update Author via Post
+	authorFromPostMeta := &metadata.TypeMetadata{
+		TypeID:        "test_author_from_post_id",
+		TypeName:      "TestIncludeAuthor",
+		TableName:     "include_authors",
+		URLParamUUID:  postMeta.URLParamUUID,
+		ModelType:     reflect.TypeOf(TestIncludeAuthor{}),
+		ParentType:    reflect.TypeOf(TestIncludePost{}),
+		ParentMeta:    postMeta,
+		ParentFKField: "AuthorID",
+	}
+	authorFromPostCtx := context.WithValue(ctx, metadata.MetadataKey, authorFromPostMeta)
+
+	// Update author by passing the post ID - preserve CreatedAt
+	updatedAuthor := TestIncludeAuthor{ID: author.ID, Name: "Updated Name", CreatedAt: author.CreatedAt}
+	updated, err := authorWrapper.UpdateByParentRelation(authorFromPostCtx, strconv.Itoa(post.ID), updatedAuthor)
+	if err != nil {
+		t.Fatal("Failed to update author by parent relation:", err)
+	}
+
+	if updated.Name != "Updated Name" {
+		t.Errorf("Expected updated name 'Updated Name', got %s", updated.Name)
+	}
+
+	// Verify the update persisted
+	retrieved, err := authorWrapper.Get(authorCtx, strconv.Itoa(author.ID))
+	if err != nil {
+		t.Fatal("Failed to get author:", err)
+	}
+	if retrieved.Name != "Updated Name" {
+		t.Errorf("Expected persisted name 'Updated Name', got %s", retrieved.Name)
+	}
+}

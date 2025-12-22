@@ -1,0 +1,22 @@
+meta {
+  name: DELETE /reports without auth (should fail)
+  type: http
+  seq: 35
+}
+
+delete {
+  url: {{baseUrl}}/reports/{{reportId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  # DELETE Report Without Auth
+
+  Reports require authentication for create/update/delete.
+  DELETE without auth should return 401.
+}

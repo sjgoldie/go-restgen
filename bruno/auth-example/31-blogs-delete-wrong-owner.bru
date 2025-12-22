@@ -1,0 +1,26 @@
+meta {
+  name: DELETE /blogs owned by someone else (should fail)
+  type: http
+  seq: 31
+}
+
+delete {
+  url: {{baseUrl}}/blogs/{{bobBlogId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # DELETE Blog Owned By Someone Else
+
+  Blogs have ownership-based auth - users can only delete their own blogs.
+  Alice trying to delete Bob's blog should return 404 (ownership filter hides it).
+}

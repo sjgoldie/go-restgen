@@ -1,0 +1,30 @@
+meta {
+  name: PUT /reports without auth (should fail)
+  type: http
+  seq: 34
+}
+
+put {
+  url: {{baseUrl}}/reports/{{reportId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "id": {{reportId}},
+    "title": "Hacked Report",
+    "content": "This should fail"
+  }
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  # PUT Report Without Auth
+
+  Reports require authentication for create/update/delete.
+  PUT without auth should return 401.
+}

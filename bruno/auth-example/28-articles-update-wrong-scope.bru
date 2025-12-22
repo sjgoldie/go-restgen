@@ -1,0 +1,34 @@
+meta {
+  name: PUT /articles with wrong scope (should fail)
+  type: http
+  seq: 28
+}
+
+put {
+  url: {{baseUrl}}/articles/{{articleId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "id": {{articleId}},
+    "title": "Hacked Article",
+    "content": "This should fail - alice has 'user' scope, not 'publisher'"
+  }
+}
+
+assert {
+  res.status: eq 403
+}
+
+docs {
+  # PUT Article With Wrong Scope
+
+  Articles require 'publisher' scope for writes.
+  Alice only has 'user' scope, so PUT should return 403 Forbidden.
+}

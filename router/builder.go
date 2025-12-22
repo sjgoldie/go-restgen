@@ -17,8 +17,10 @@ type NestedFunc func(b *Builder)
 
 // Builder provides context for registering nested routes and manages the chi router
 type Builder struct {
-	router     chi.Router             // Chi router being configured
-	parentMeta *metadata.TypeMetadata // Metadata of the immediate parent (nil for root)
+	router         chi.Router             // Chi router being configured
+	parentMeta     *metadata.TypeMetadata // Metadata of the immediate parent (nil for root)
+	parentAuthGet  *AuthConfig            // Parent's auth config for GET (for populating ChildAuth)
+	parentAuthList *AuthConfig            // Parent's auth config for LIST (for populating ChildAuth)
 }
 
 // NewBuilder creates a new Builder for registering routes
@@ -42,12 +44,13 @@ type customHandlers[T any] struct {
 // Accepts optional auth configs, query configs, validator, auditor, custom handlers, and nested function for child routes
 // Configs can be mixed with nested function in any order
 func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
-	// Separate auth configs, query configs, validator, auditor, custom handlers, and nested function
+	// Separate auth configs, query configs, validator, auditor, custom handlers, relation config, and nested function
 	var authConfigs []AuthConfig
 	var queryConfigs []QueryConfig
 	var validator metadata.ValidatorFunc[T]
 	var auditor metadata.AuditFunc[T]
 	var custom customHandlers[T]
+	var relationName string
 	var nested NestedFunc
 
 	for _, opt := range options {
@@ -70,16 +73,18 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			custom.update = v.Fn
 		case CustomDeleteConfig[T]:
 			custom.delete = v.Fn
+		case RelationConfig:
+			relationName = v.Name
 		case func(*Builder):
 			nested = v
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, relationName)
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T]) {
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], relationName string) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -139,10 +144,20 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 		ParentType:    parentType,
 		ParentMeta:    b.parentMeta,
 		ForeignKeyCol: foreignKeyCol,
+		ChildMeta:     make(map[string]*metadata.TypeMetadata),
+	}
+
+	// Register this type as a child of the parent (for ?include= support)
+	// Only register if relationName is explicitly provided via WithRelationName
+	if b.parentMeta != nil && relationName != "" {
+		b.parentMeta.ChildMeta[relationName] = meta
 	}
 
 	// Merge auth configs (last wins for each method)
 	authMap := mergeAuthConfigs(authConfigs)
+
+	// Register child's auth config with parent's auth configs (for ?include= authorization)
+	registerChildAuthConfig(b, relationName, authMap)
 
 	// Extract ownership configuration from auth configs (last one wins)
 	var ownershipFields []string
@@ -161,23 +176,7 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 	}
 
 	// Merge query configs (last wins for each setting)
-	for _, qc := range queryConfigs {
-		if len(qc.FilterableFields) > 0 {
-			meta.FilterableFields = qc.FilterableFields
-		}
-		if len(qc.SortableFields) > 0 {
-			meta.SortableFields = qc.SortableFields
-		}
-		if qc.DefaultSort != "" {
-			meta.DefaultSort = qc.DefaultSort
-		}
-		if qc.DefaultLimit > 0 {
-			meta.DefaultLimit = qc.DefaultLimit
-		}
-		if qc.MaxLimit > 0 {
-			meta.MaxLimit = qc.MaxLimit
-		}
-	}
+	meta = mergeQueryConfigs(meta, queryConfigs)
 
 	// Set validator if provided
 	if validator != nil {
@@ -242,10 +241,12 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 
 			// Register nested routes
 			if nested != nil {
-				// Create a new builder with this type's metadata as parent
+				// Create a new builder with this type's metadata and auth as parent
 				childBuilder := &Builder{
-					router:     r,
-					parentMeta: meta, // Pass current metadata as parent
+					router:         r,
+					parentMeta:     meta,                // Pass current metadata as parent
+					parentAuthGet:  authMap[MethodGet],  // For ChildAuth when child uses WithRelationName
+					parentAuthList: authMap[MethodList], // For ChildAuth when child uses WithRelationName
 				}
 
 				nested(childBuilder)
@@ -365,6 +366,59 @@ func getTableName(tType reflect.Type) string {
 }
 
 // parseForeignKeyFromRelation extracts the foreign key column name from a bun relation tag
+// mergeQueryConfigs applies query configurations to metadata and returns a new copy.
+// Last config wins for each setting.
+func mergeQueryConfigs(meta *metadata.TypeMetadata, queryConfigs []QueryConfig) *metadata.TypeMetadata {
+	result := meta.Clone()
+
+	for _, qc := range queryConfigs {
+		if len(qc.FilterableFields) > 0 {
+			result.FilterableFields = qc.FilterableFields
+		}
+		if len(qc.SortableFields) > 0 {
+			result.SortableFields = qc.SortableFields
+		}
+		if qc.DefaultSort != "" {
+			result.DefaultSort = qc.DefaultSort
+		}
+		if qc.DefaultLimit > 0 {
+			result.DefaultLimit = qc.DefaultLimit
+		}
+		if qc.MaxLimit > 0 {
+			result.MaxLimit = qc.MaxLimit
+		}
+	}
+
+	return result
+}
+
+// registerChildAuthConfig registers the child's auth config with parent's auth configs
+// for ?include= authorization. Only applies when relationName is provided.
+func registerChildAuthConfig(b *Builder, relationName string, authMap map[string]*AuthConfig) {
+	if relationName == "" {
+		return
+	}
+
+	childAuthGet := authMap[MethodGet]
+	if childAuthGet == nil {
+		return
+	}
+
+	if b.parentAuthGet != nil {
+		if b.parentAuthGet.ChildAuth == nil {
+			b.parentAuthGet.ChildAuth = make(map[string]*AuthConfig)
+		}
+		b.parentAuthGet.ChildAuth[relationName] = childAuthGet
+	}
+
+	if b.parentAuthList != nil {
+		if b.parentAuthList.ChildAuth == nil {
+			b.parentAuthList.ChildAuth = make(map[string]*AuthConfig)
+		}
+		b.parentAuthList.ChildAuth[relationName] = childAuthGet
+	}
+}
+
 // Expected format: "rel:belongs-to,join:user_id=id" -> returns "user_id"
 func parseForeignKeyFromRelation(bunTag string) string {
 	parts := strings.Split(bunTag, ",")

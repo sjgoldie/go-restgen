@@ -1,0 +1,30 @@
+meta {
+  name: Get Author - Include Posts (as Admin)
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/authors/{{aliceAuthorId}}?include=Posts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:admin:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.name: eq Alice
+  res.body.posts: isDefined
+  res.body.posts.length: eq 1
+}
+
+docs {
+  Admin requests ?include=Posts for Alice's author.
+  Admin sees all posts under this author (1 post - Alice's).
+  Admin bypass means ownership filter is skipped, but the post still
+  needs to be under this specific author (author_id = aliceAuthorId).
+}

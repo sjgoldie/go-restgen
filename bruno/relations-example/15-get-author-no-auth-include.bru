@@ -1,0 +1,23 @@
+meta {
+  name: Get Author - Include Posts (no auth)
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/authors/{{aliceAuthorId}}?include=Posts
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.posts: isUndefined
+}
+
+docs {
+  Without auth, ownership filtering cannot determine the user.
+  Since Posts have ownership configured, unauthenticated requests
+  see no posts (secure default - ownership requires authentication).
+}

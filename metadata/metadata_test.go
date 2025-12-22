@@ -269,6 +269,193 @@ func TestQueryOptionsFromContextWrongType(t *testing.T) {
 	}
 }
 
+func TestAllowedIncludesFromContext(t *testing.T) {
+	// Create AllowedIncludes
+	includes := AllowedIncludes{
+		"Posts":    true,  // Apply ownership
+		"Comments": false, // Bypass ownership
+	}
+
+	// Add to context
+	ctx := context.WithValue(context.Background(), AllowedIncludesKey, includes)
+
+	// Retrieve from context
+	retrieved := AllowedIncludesFromContext(ctx)
+	if retrieved == nil {
+		t.Fatal("AllowedIncludesFromContext() returned nil")
+	}
+
+	if len(retrieved) != 2 {
+		t.Errorf("Expected 2 includes, got %d", len(retrieved))
+	}
+
+	if applyOwnership, ok := retrieved["Posts"]; !ok {
+		t.Error("Expected 'Posts' in includes")
+	} else if !applyOwnership {
+		t.Error("Expected 'Posts' to have ApplyOwnership=true")
+	}
+
+	if applyOwnership, ok := retrieved["Comments"]; !ok {
+		t.Error("Expected 'Comments' in includes")
+	} else if applyOwnership {
+		t.Error("Expected 'Comments' to have ApplyOwnership=false (bypass)")
+	}
+}
+
+func TestAllowedIncludesFromContextEmpty(t *testing.T) {
+	// Empty context - should return nil
+	ctx := context.Background()
+	retrieved := AllowedIncludesFromContext(ctx)
+	if retrieved != nil {
+		t.Error("AllowedIncludesFromContext() should return nil for empty context")
+	}
+}
+
+func TestTypeMetadata_Clone(t *testing.T) {
+	// Create a fully populated metadata
+	parentMeta := &TypeMetadata{
+		TypeID:   "parent_id",
+		TypeName: "Parent",
+	}
+
+	childMeta1 := &TypeMetadata{
+		TypeID:   "child1_id",
+		TypeName: "Child1",
+	}
+
+	original := &TypeMetadata{
+		TypeID:           "test_id",
+		TypeName:         "TestType",
+		TableName:        "test_table",
+		URLParamUUID:     "param_uuid",
+		ForeignKeyCol:    "parent_id",
+		OwnershipFields:  []string{"OwnerID", "CreatorID"},
+		BypassScopes:     []string{"admin", "superuser"},
+		FilterableFields: []string{"Name", "Status"},
+		SortableFields:   []string{"Name", "CreatedAt"},
+		DefaultSort:      "-CreatedAt",
+		DefaultLimit:     20,
+		MaxLimit:         100,
+		ParentMeta:       parentMeta,
+		ChildMeta: map[string]*TypeMetadata{
+			"child1": childMeta1,
+		},
+	}
+
+	// Clone it
+	cloned := original.Clone()
+
+	// Verify all fields are copied
+	t.Run("value fields copied", func(t *testing.T) {
+		if cloned.TypeID != original.TypeID {
+			t.Errorf("TypeID: expected %q, got %q", original.TypeID, cloned.TypeID)
+		}
+		if cloned.TypeName != original.TypeName {
+			t.Errorf("TypeName: expected %q, got %q", original.TypeName, cloned.TypeName)
+		}
+		if cloned.TableName != original.TableName {
+			t.Errorf("TableName: expected %q, got %q", original.TableName, cloned.TableName)
+		}
+		if cloned.URLParamUUID != original.URLParamUUID {
+			t.Errorf("URLParamUUID: expected %q, got %q", original.URLParamUUID, cloned.URLParamUUID)
+		}
+		if cloned.ForeignKeyCol != original.ForeignKeyCol {
+			t.Errorf("ForeignKeyCol: expected %q, got %q", original.ForeignKeyCol, cloned.ForeignKeyCol)
+		}
+		if cloned.DefaultSort != original.DefaultSort {
+			t.Errorf("DefaultSort: expected %q, got %q", original.DefaultSort, cloned.DefaultSort)
+		}
+		if cloned.DefaultLimit != original.DefaultLimit {
+			t.Errorf("DefaultLimit: expected %d, got %d", original.DefaultLimit, cloned.DefaultLimit)
+		}
+		if cloned.MaxLimit != original.MaxLimit {
+			t.Errorf("MaxLimit: expected %d, got %d", original.MaxLimit, cloned.MaxLimit)
+		}
+	})
+
+	t.Run("slices are deep copied", func(t *testing.T) {
+		// Verify slice contents match
+		if len(cloned.OwnershipFields) != len(original.OwnershipFields) {
+			t.Fatalf("OwnershipFields length: expected %d, got %d", len(original.OwnershipFields), len(cloned.OwnershipFields))
+		}
+		for i, v := range original.OwnershipFields {
+			if cloned.OwnershipFields[i] != v {
+				t.Errorf("OwnershipFields[%d]: expected %q, got %q", i, v, cloned.OwnershipFields[i])
+			}
+		}
+
+		// Modify cloned slice and verify original is unchanged
+		cloned.OwnershipFields[0] = "Modified"
+		if original.OwnershipFields[0] == "Modified" {
+			t.Error("modifying cloned OwnershipFields affected original - not a deep copy")
+		}
+
+		// Same for other slices
+		cloned.BypassScopes[0] = "modified_scope"
+		if original.BypassScopes[0] == "modified_scope" {
+			t.Error("modifying cloned BypassScopes affected original - not a deep copy")
+		}
+
+		cloned.FilterableFields[0] = "ModifiedFilter"
+		if original.FilterableFields[0] == "ModifiedFilter" {
+			t.Error("modifying cloned FilterableFields affected original - not a deep copy")
+		}
+
+		cloned.SortableFields[0] = "ModifiedSort"
+		if original.SortableFields[0] == "ModifiedSort" {
+			t.Error("modifying cloned SortableFields affected original - not a deep copy")
+		}
+	})
+
+	t.Run("ChildMeta map is deep copied", func(t *testing.T) {
+		if len(cloned.ChildMeta) != len(original.ChildMeta) {
+			t.Fatalf("ChildMeta length: expected %d, got %d", len(original.ChildMeta), len(cloned.ChildMeta))
+		}
+
+		// Values should point to the same metadata (intentionally shared)
+		if cloned.ChildMeta["child1"] != original.ChildMeta["child1"] {
+			t.Error("ChildMeta values should be shared pointers")
+		}
+
+		// But modifying the map itself should not affect original
+		cloned.ChildMeta["child2"] = &TypeMetadata{TypeID: "new_child"}
+		if _, exists := original.ChildMeta["child2"]; exists {
+			t.Error("adding to cloned ChildMeta affected original - map not copied")
+		}
+	})
+
+	t.Run("ParentMeta is shared", func(t *testing.T) {
+		// ParentMeta should be the same pointer (intentionally shared)
+		if cloned.ParentMeta != original.ParentMeta {
+			t.Error("ParentMeta should be shared between original and clone")
+		}
+	})
+
+	t.Run("nil slices remain nil", func(t *testing.T) {
+		emptyMeta := &TypeMetadata{
+			TypeID:   "empty",
+			TypeName: "Empty",
+		}
+		emptyClone := emptyMeta.Clone()
+
+		if emptyClone.OwnershipFields != nil {
+			t.Error("nil OwnershipFields should remain nil after clone")
+		}
+		if emptyClone.BypassScopes != nil {
+			t.Error("nil BypassScopes should remain nil after clone")
+		}
+		if emptyClone.FilterableFields != nil {
+			t.Error("nil FilterableFields should remain nil after clone")
+		}
+		if emptyClone.SortableFields != nil {
+			t.Error("nil SortableFields should remain nil after clone")
+		}
+		if emptyClone.ChildMeta != nil {
+			t.Error("nil ChildMeta should remain nil after clone")
+		}
+	})
+}
+
 func TestGenerateTypeID(t *testing.T) {
 	// Generate a few IDs
 	id1 := GenerateTypeID()

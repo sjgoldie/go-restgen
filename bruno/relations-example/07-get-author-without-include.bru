@@ -1,0 +1,22 @@
+meta {
+  name: Get Author - Without Include
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/authors/{{aliceAuthorId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.name: eq Alice
+  res.body.posts: isUndefined
+}
+
+docs {
+  Without ?include=Posts, the posts field should not be present
+}

@@ -14,14 +14,14 @@ type Common[T any] struct {
 
 // GetAll retrieves all items of type T
 // Returns items, total count (0 if not requested), and error
-func (s *Common[T]) GetAll(ctx context.Context, relations []string) ([]*T, int, error) {
-	return s.store.GetAll(ctx, relations)
+func (s *Common[T]) GetAll(ctx context.Context) ([]*T, int, error) {
+	return s.store.GetAll(ctx)
 }
 
 // Get retrieves a single item of type T by ID
 // The id parameter is a string to support both integer and UUID primary keys
-func (s *Common[T]) Get(ctx context.Context, id string, relations []string) (*T, error) {
-	return s.store.Get(ctx, id, relations)
+func (s *Common[T]) Get(ctx context.Context, id string) (*T, error) {
+	return s.store.Get(ctx, id)
 }
 
 // Create creates a new item of type T

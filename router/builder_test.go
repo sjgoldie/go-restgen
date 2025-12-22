@@ -1296,13 +1296,13 @@ func TestBuilder_CustomHandlers(t *testing.T) {
 			Methods: []string{router.MethodAll},
 			Scopes:  []string{router.ScopePublic},
 		},
-		router.WithCustomGet(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*MultiRegItem, error) {
+		router.WithCustomGet(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) (*MultiRegItem, error) {
 			customGetCalled = true
-			return svc.Get(ctx, id, relations)
+			return svc.Get(ctx, id)
 		}),
-		router.WithCustomGetAll(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions, relations []string) ([]*MultiRegItem, int, error) {
+		router.WithCustomGetAll(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions) ([]*MultiRegItem, int, error) {
 			customGetAllCalled = true
-			return svc.GetAll(ctx, relations)
+			return svc.GetAll(ctx)
 		}),
 		router.WithCustomCreate(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item MultiRegItem) (*MultiRegItem, error) {
 			customCreateCalled = true

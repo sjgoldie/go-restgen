@@ -49,7 +49,6 @@ type CustomGetFunc[T any] func(
 	meta *metadata.TypeMetadata,
 	auth *metadata.AuthInfo,
 	id string,
-	relations []string,
 ) (*T, error)
 
 // CustomGetAllFunc is the signature for custom GetAll handlers.
@@ -60,7 +59,6 @@ type CustomGetAllFunc[T any] func(
 	meta *metadata.TypeMetadata,
 	auth *metadata.AuthInfo,
 	opts *metadata.QueryOptions,
-	relations []string,
 ) ([]*T, int, error)
 
 // CustomCreateFunc is the signature for custom Create handlers.
@@ -132,8 +130,8 @@ func handleMutationError(w http.ResponseWriter, err error, operation string) {
 
 // StandardGetAll is the default GetAll implementation that calls svc.GetAll.
 // Use this when no custom logic is needed.
-func StandardGetAll[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions, relations []string) ([]*T, int, error) {
-	return svc.GetAll(ctx, relations)
+func StandardGetAll[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions) ([]*T, int, error) {
+	return svc.GetAll(ctx)
 }
 
 // GetAll handles GET requests to retrieve all items of type T.
@@ -153,12 +151,7 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 			return
 		}
 
-		// Extract relations from context if available
 		ctx := r.Context()
-		relations, ok := ctx.Value("relations").([]string)
-		if !ok {
-			relations = []string{}
-		}
 
 		// Get metadata from context
 		meta, err := metadata.FromContext(ctx)
@@ -178,7 +171,7 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
 
 		// Call the provided function
-		items, totalCount, err := getAllFunc(ctx, svc, meta, auth, opts, relations)
+		items, totalCount, err := getAllFunc(ctx, svc, meta, auth, opts)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return // Client disconnected, no response needed
@@ -281,13 +274,23 @@ func parseQueryOptions(query url.Values) *metadata.QueryOptions {
 		opts.CountTotal = true
 	}
 
+	// Parse include: include=Relation1,Relation2
+	if includeStr := query.Get("include"); includeStr != "" {
+		for _, rel := range strings.Split(includeStr, ",") {
+			rel = strings.TrimSpace(rel)
+			if rel != "" {
+				opts.Include = append(opts.Include, rel)
+			}
+		}
+	}
+
 	return opts
 }
 
 // StandardGet is the default Get implementation that calls svc.Get.
 // Use this when no custom logic is needed.
-func StandardGet[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*T, error) {
-	return svc.Get(ctx, id, relations)
+func StandardGet[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) (*T, error) {
+	return svc.Get(ctx, id)
 }
 
 // Get handles GET requests to retrieve a single item of type T by ID.
@@ -302,12 +305,7 @@ func Get[T any](getFunc CustomGetFunc[T]) http.HandlerFunc {
 			return
 		}
 
-		// Extract relations from context if available
 		ctx := r.Context()
-		relations, ok := ctx.Value("relations").([]string)
-		if !ok {
-			relations = []string{}
-		}
 
 		// Get metadata from context
 		meta, err := metadata.FromContext(ctx)
@@ -325,11 +323,17 @@ func Get[T any](getFunc CustomGetFunc[T]) http.HandlerFunc {
 			return
 		}
 
+		// Parse query parameters into QueryOptions (for ?include= support)
+		opts := parseQueryOptions(r.URL.Query())
+
+		// Add QueryOptions to context
+		ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
 		// Get auth from context (may be nil if not authenticated)
 		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
 
 		// Call the provided function
-		item, err := getFunc(ctx, svc, meta, auth, id, relations)
+		item, err := getFunc(ctx, svc, meta, auth, id)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return // Client disconnected, no response needed

@@ -1,0 +1,29 @@
+meta {
+  name: Get Author - Include Posts (as Bob, Bob's author)
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/authors/{{bobAuthorId}}?include=Posts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.name: eq Bob
+  res.body.posts: isDefined
+  res.body.posts.length: eq 1
+  res.body.posts[0].owner_id: eq bob
+}
+
+docs {
+  Bob requests ?include=Posts on Bob's author and sees his own post (ownership filtered).
+  Even though admin bypass exists, Bob only sees posts he owns.
+}

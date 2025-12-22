@@ -16,6 +16,7 @@ examples/validator/validator
 examples/audit/audit
 examples/uuid_pk/uuid_pk
 examples/custom/custom
+examples/relations/relations
 /simple
 /nested_routes
 /auth
@@ -23,6 +24,7 @@ examples/custom/custom
 /audit
 /uuid_pk
 /custom
+/relations
 
 # Test binary, built with `go test -c`
 *.test

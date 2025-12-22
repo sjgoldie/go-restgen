@@ -1,3 +1,4 @@
+//nolint:goconst // Test file - repeated test strings are acceptable
 package router
 
 import (

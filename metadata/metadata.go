@@ -74,6 +74,9 @@ type TypeMetadata struct {
 	OwnershipFields []string      // Model field names for ownership validation (OR logic)
 	BypassScopes    []string      // Scopes that bypass ownership validation (e.g., "admin")
 
+	// Child routes for relation loading via ?include=
+	ChildMeta map[string]*TypeMetadata // relation name -> child type metadata
+
 	// Query options for GetAll
 	FilterableFields []string // Field names allowed for filtering (empty = no filtering)
 	SortableFields   []string // Field names allowed for sorting (empty = no sorting)
@@ -88,6 +91,54 @@ type TypeMetadata struct {
 	Auditor any // AuditFunc[T] stored as any for type erasure
 }
 
+// Clone returns a deep copy of the TypeMetadata.
+// Slices and maps are fully copied; pointer fields (ParentMeta) reference the same object.
+func (m *TypeMetadata) Clone() *TypeMetadata {
+	result := &TypeMetadata{
+		TypeID:        m.TypeID,
+		TypeName:      m.TypeName,
+		TableName:     m.TableName,
+		URLParamUUID:  m.URLParamUUID,
+		ModelType:     m.ModelType,
+		ParentType:    m.ParentType,
+		ParentMeta:    m.ParentMeta, // Intentionally shared - parent is not owned by this metadata
+		ForeignKeyCol: m.ForeignKeyCol,
+		DefaultSort:   m.DefaultSort,
+		DefaultLimit:  m.DefaultLimit,
+		MaxLimit:      m.MaxLimit,
+		Validator:     m.Validator,
+		Auditor:       m.Auditor,
+	}
+
+	// Deep copy slices
+	if len(m.OwnershipFields) > 0 {
+		result.OwnershipFields = make([]string, len(m.OwnershipFields))
+		copy(result.OwnershipFields, m.OwnershipFields)
+	}
+	if len(m.BypassScopes) > 0 {
+		result.BypassScopes = make([]string, len(m.BypassScopes))
+		copy(result.BypassScopes, m.BypassScopes)
+	}
+	if len(m.FilterableFields) > 0 {
+		result.FilterableFields = make([]string, len(m.FilterableFields))
+		copy(result.FilterableFields, m.FilterableFields)
+	}
+	if len(m.SortableFields) > 0 {
+		result.SortableFields = make([]string, len(m.SortableFields))
+		copy(result.SortableFields, m.SortableFields)
+	}
+
+	// Deep copy map
+	if m.ChildMeta != nil {
+		result.ChildMeta = make(map[string]*TypeMetadata, len(m.ChildMeta))
+		for k, v := range m.ChildMeta {
+			result.ChildMeta[k] = v // Values are pointers to other metadata, intentionally shared
+		}
+	}
+
+	return result
+}
+
 // QueryOptions holds parsed query parameters for filtering, sorting, and pagination
 type QueryOptions struct {
 	Filters    map[string]FilterValue // field -> value/operator
@@ -95,6 +146,27 @@ type QueryOptions struct {
 	Limit      int                    // 0 means use default
 	Offset     int                    // 0 means start from beginning
 	CountTotal bool                   // whether to return total count
+	Include    []string               // relation names to include via ?include=
+}
+
+// AllowedIncludes maps relation names to whether ownership filtering should be applied.
+// If a relation name is in the map, the user is authorized to include it.
+// The bool value indicates whether to apply ownership filtering:
+//   - true:  apply ownership filter (user is authorized but doesn't have bypass scope)
+//   - false: skip ownership filter (user has bypass scope for this child type)
+type AllowedIncludes map[string]bool
+
+// allowedIncludesKeyType is the context key type for storing AllowedIncludes
+type allowedIncludesKeyType string
+
+// AllowedIncludesKey is the context key for storing allowed includes
+const AllowedIncludesKey allowedIncludesKeyType = "restgen_allowed_includes"
+
+// AllowedIncludesFromContext retrieves allowed includes from context.
+// Returns nil if not present.
+func AllowedIncludesFromContext(ctx context.Context) AllowedIncludes {
+	includes, _ := ctx.Value(AllowedIncludesKey).(AllowedIncludes)
+	return includes
 }
 
 // FilterValue represents a filter with value and operator

@@ -1,0 +1,28 @@
+meta {
+  name: Get Post - Include Comments (as Admin on Bob's post)
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/authors/{{bobAuthorId}}/posts/{{bobPostId}}?include=Comments
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:admin:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.comments: isDefined
+  res.body.comments.length: eq 1
+  res.body.comments[0].owner_id: eq bob
+}
+
+docs {
+  Admin requests ?include=Comments on Bob's post and sees Bob's comment.
+  This validates admin bypass for ownership filtering on included relations.
+}

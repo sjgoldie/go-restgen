@@ -1,0 +1,28 @@
+meta {
+  name: Get Author - Include Posts (as Alice)
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/authors/{{aliceAuthorId}}?include=Posts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.name: eq Alice
+  res.body.posts: isDefined
+  res.body.posts.length: eq 1
+  res.body.posts[0].owner_id: eq alice
+}
+
+docs {
+  Alice requests ?include=Posts and only sees her own post (ownership filtered)
+}

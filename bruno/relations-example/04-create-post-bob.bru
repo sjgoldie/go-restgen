@@ -1,0 +1,33 @@
+meta {
+  name: Create Post - Bob
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/authors/{{bobAuthorId}}/posts
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user
+}
+
+body:json {
+  {
+    "title": "Bob's Post",
+    "content": "Hello from Bob!",
+    "published": true
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.owner_id: eq bob
+}
+
+script:post-response {
+  bru.setVar("bobPostId", res.body.id);
+}

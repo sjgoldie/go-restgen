@@ -1,0 +1,28 @@
+meta {
+  name: Get Post - Include Comments (as Alice)
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/authors/{{aliceAuthorId}}/posts/{{alicePostId}}?include=Comments
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.title: eq Alice's First Post
+  res.body.comments: isDefined
+  res.body.comments.length: eq 1
+  res.body.comments[0].owner_id: eq alice
+}
+
+docs {
+  Alice requests ?include=Comments and only sees her own comment (ownership filtered)
+}

@@ -183,7 +183,7 @@ func authMiddleware(next http.Handler) http.Handler {
 }
 
 // Custom handler: Get current user from auth token instead of URL param
-func customGetMe(ctx context.Context, svc *service.Common[User], _ *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string, relations []string) (*User, error) {
+func customGetMe(ctx context.Context, svc *service.Common[User], _ *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string) (*User, error) {
 	if auth == nil {
 		return nil, fmt.Errorf("not authenticated")
 	}
@@ -193,9 +193,7 @@ func customGetMe(ctx context.Context, svc *service.Common[User], _ *metadata.Typ
 	if err != nil {
 		return nil, err
 	}
-	// Use _ to avoid unused variable warning for svc and relations
 	_ = svc
-	_ = relations
 	return &user, nil
 }
 
@@ -217,7 +215,7 @@ func customUpdateMe(ctx context.Context, svc *service.Common[User], _ *metadata.
 }
 
 // Custom handler: GetAll tasks filtered by current user
-func customGetMyTasks(ctx context.Context, svc *service.Common[Task], _ *metadata.TypeMetadata, auth *metadata.AuthInfo, _ *metadata.QueryOptions, relations []string) ([]*Task, int, error) {
+func customGetMyTasks(ctx context.Context, svc *service.Common[Task], _ *metadata.TypeMetadata, auth *metadata.AuthInfo, _ *metadata.QueryOptions) ([]*Task, int, error) {
 	if auth == nil {
 		return nil, 0, fmt.Errorf("not authenticated")
 	}
@@ -228,7 +226,6 @@ func customGetMyTasks(ctx context.Context, svc *service.Common[Task], _ *metadat
 		return nil, 0, err
 	}
 	_ = svc
-	_ = relations
 	return tasks, len(tasks), nil
 }
 

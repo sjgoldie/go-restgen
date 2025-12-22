@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -655,4 +656,261 @@ func TestAuthHelpers(t *testing.T) {
 			t.Errorf("expected nil Ownership, got %v", cfg.Ownership)
 		}
 	})
+}
+
+// Test models for include/relation auth tests
+type IncludeTestAuthor struct {
+	bun.BaseModel `bun:"table:include_test_authors"`
+	ID            int                `bun:"id,pk,autoincrement"`
+	Name          string             `bun:"name"`
+	Posts         []*IncludeTestPost `bun:"rel:has-many,join:id=author_id"`
+}
+
+type IncludeTestPost struct {
+	bun.BaseModel `bun:"table:include_test_posts"`
+	ID            int                `bun:"id,pk,autoincrement"`
+	AuthorID      int                `bun:"author_id,notnull"`
+	Author        *IncludeTestAuthor `bun:"rel:belongs-to,join:author_id=id"`
+	OwnerID       string             `bun:"owner_id,notnull"`
+	Title         string             `bun:"title"`
+}
+
+// TestAuth_ChildAuthPopulated tests that ChildAuth is populated when WithRelationName is used
+// This exercises the wrapWithAuth code path that builds AllowedIncludes
+func TestAuth_ChildAuthPopulated(t *testing.T) {
+	ds, err := datastore.Get()
+	if err != nil {
+		t.Fatalf("failed to get datastore: %v", err)
+	}
+
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	// Create tables
+	if _, err := db.NewCreateTable().Model((*IncludeTestAuthor)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create authors table: %v", err)
+	}
+	if _, err := db.NewCreateTable().Model((*IncludeTestPost)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create posts table: %v", err)
+	}
+
+	// Clean tables
+	_, _ = db.NewDelete().Model((*IncludeTestPost)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.NewDelete().Model((*IncludeTestAuthor)(nil)).Where("1=1").Exec(ctx)
+
+	// Create router with nested routes using WithRelationName
+	r := chi.NewRouter()
+
+	// Add auth middleware
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			authInfo := &router.AuthInfo{
+				UserID: "alice",
+				Scopes: []string{"user"},
+			}
+			ctx := context.WithValue(req.Context(), router.AuthInfoKey, authInfo)
+			next.ServeHTTP(w, req.WithContext(ctx))
+		})
+	})
+
+	b := router.NewBuilder(r)
+
+	// Register parent (public) with child (ownership-based) using WithRelationName
+	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
+		router.AllPublic(),
+		func(b *router.Builder) {
+			router.RegisterRoutes[IncludeTestPost](b, "/posts",
+				router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+				router.WithRelationName("Posts"),
+			)
+		},
+	)
+
+	// Reset auto-increment
+	_, _ = db.Exec("DELETE FROM sqlite_sequence WHERE name IN ('include_test_authors', 'include_test_posts')")
+
+	// Create test data
+	author := &IncludeTestAuthor{Name: "Test Author"}
+	_, err = db.NewInsert().Model(author).Returning("*").Exec(ctx)
+	if err != nil {
+		t.Fatalf("failed to create author: %v", err)
+	}
+
+	// Create posts - one owned by alice, one by bob
+	posts := []*IncludeTestPost{
+		{AuthorID: author.ID, OwnerID: "alice", Title: "Alice's Post"},
+		{AuthorID: author.ID, OwnerID: "bob", Title: "Bob's Post"},
+	}
+	for _, post := range posts {
+		_, err = db.NewInsert().Model(post).Exec(ctx)
+		if err != nil {
+			t.Fatalf("failed to create post: %v", err)
+		}
+	}
+
+	// Test: GET /authors/{id}?include=Posts as Alice
+	// This should exercise the ChildAuth path in wrapWithAuth
+	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify response contains author
+	var response IncludeTestAuthor
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v - body: %s", err, w.Body.String())
+	}
+
+	if response.Name != "Test Author" {
+		t.Errorf("expected author name 'Test Author', got %v", response.Name)
+	}
+
+	// The ChildAuth path is exercised - AllowedIncludes is set with ApplyOwnership=true
+	// Since parent is public and doesn't set ownership context, filtering is a no-op
+	// The key test is that the include works at all (relation is authorized)
+	if len(response.Posts) != 2 {
+		t.Errorf("expected 2 posts (parent is public, no ownership context), got %d", len(response.Posts))
+	}
+}
+
+// TestAuth_ChildAuthWithBypass tests that admin bypass works for includes
+func TestAuth_ChildAuthWithBypass(t *testing.T) {
+	ds, err := datastore.Get()
+	if err != nil {
+		t.Fatalf("failed to get datastore: %v", err)
+	}
+
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	// Clean tables and reset auto-increment
+	_, _ = db.NewDelete().Model((*IncludeTestPost)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.NewDelete().Model((*IncludeTestAuthor)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.Exec("DELETE FROM sqlite_sequence WHERE name IN ('include_test_authors', 'include_test_posts')")
+
+	// Create router with admin user
+	r := chi.NewRouter()
+
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			authInfo := &router.AuthInfo{
+				UserID: "admin",
+				Scopes: []string{"user", "admin"}, // Admin has bypass scope
+			}
+			ctx := context.WithValue(req.Context(), router.AuthInfoKey, authInfo)
+			next.ServeHTTP(w, req.WithContext(ctx))
+		})
+	})
+
+	b := router.NewBuilder(r)
+
+	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
+		router.AllPublic(),
+		func(b *router.Builder) {
+			router.RegisterRoutes[IncludeTestPost](b, "/posts",
+				router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+				router.WithRelationName("Posts"),
+			)
+		},
+	)
+
+	// Create test data
+	author := &IncludeTestAuthor{Name: "Test Author"}
+	_, err = db.NewInsert().Model(author).Returning("*").Exec(ctx)
+	if err != nil {
+		t.Fatalf("failed to create author: %v", err)
+	}
+
+	posts := []*IncludeTestPost{
+		{AuthorID: author.ID, OwnerID: "alice", Title: "Alice's Post"},
+		{AuthorID: author.ID, OwnerID: "bob", Title: "Bob's Post"},
+	}
+	for _, post := range posts {
+		_, err = db.NewInsert().Model(post).Exec(ctx)
+		if err != nil {
+			t.Fatalf("failed to create post: %v", err)
+		}
+	}
+
+	// Test: GET /authors/{id}?include=Posts as Admin
+	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAuth_ChildAuthNoAuth tests that unauthenticated users can't include protected relations
+func TestAuth_ChildAuthNoAuth(t *testing.T) {
+	ds, err := datastore.Get()
+	if err != nil {
+		t.Fatalf("failed to get datastore: %v", err)
+	}
+
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	// Clean tables and reset auto-increment
+	_, _ = db.NewDelete().Model((*IncludeTestPost)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.NewDelete().Model((*IncludeTestAuthor)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.Exec("DELETE FROM sqlite_sequence WHERE name IN ('include_test_authors', 'include_test_posts')")
+
+	// Create router WITHOUT auth middleware (unauthenticated)
+	r := chi.NewRouter()
+	b := router.NewBuilder(r)
+
+	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
+		router.AllPublic(),
+		func(b *router.Builder) {
+			router.RegisterRoutes[IncludeTestPost](b, "/posts",
+				router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+				router.WithRelationName("Posts"),
+			)
+		},
+	)
+
+	// Create test data
+	author := &IncludeTestAuthor{Name: "Test Author"}
+	_, err = db.NewInsert().Model(author).Returning("*").Exec(ctx)
+	if err != nil {
+		t.Fatalf("failed to create author: %v", err)
+	}
+
+	post := &IncludeTestPost{AuthorID: author.ID, OwnerID: "alice", Title: "Alice's Post"}
+	_, err = db.NewInsert().Model(post).Exec(ctx)
+	if err != nil {
+		t.Fatalf("failed to create post: %v", err)
+	}
+
+	// Test: GET /authors/{id}?include=Posts without auth
+	// Parent is public so request succeeds, but Posts shouldn't be included
+	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200 (parent is public), got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Posts should not be in response (not authorized)
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// The posts field should be nil/empty since user isn't authorized for includes
+	if posts, ok := response["posts"]; ok && posts != nil {
+		postsSlice, isSlice := posts.([]interface{})
+		if isSlice && len(postsSlice) > 0 {
+			t.Errorf("expected no posts for unauthenticated user, got %v", posts)
+		}
+	}
 }

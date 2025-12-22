@@ -110,7 +110,7 @@ func TestWrapper_Get(t *testing.T) {
 	}
 
 	// Get the user
-	retrieved, err := wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
+	retrieved, err := wrapper.Get(ctx, strconv.Itoa(created.ID))
 	if err != nil {
 		t.Fatal("Failed to get user:", err)
 	}
@@ -145,7 +145,7 @@ func TestWrapper_GetAll(t *testing.T) {
 	}
 
 	// Get all users
-	retrieved, _, err := wrapper.GetAll(ctx, []string{})
+	retrieved, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
@@ -209,7 +209,7 @@ func TestWrapper_Delete(t *testing.T) {
 	}
 
 	// Verify deletion
-	_, err = wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
+	_, err = wrapper.Get(ctx, strconv.Itoa(created.ID))
 	if err == nil {
 		t.Error("Expected error when getting deleted user")
 	}
@@ -224,7 +224,7 @@ func TestWrapper_Get_NotFound(t *testing.T) {
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
 	ctx := ctxWithMeta(testUserMeta)
 
-	_, err := wrapper.Get(ctx, "999", []string{})
+	_, err := wrapper.Get(ctx, "999")
 	if err == nil {
 		t.Error("Expected error when getting non-existent user")
 	}
@@ -276,7 +276,7 @@ func TestWrapper_GetAll_Empty(t *testing.T) {
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
 	ctx := ctxWithMeta(testUserMeta)
 
-	retrieved, _, err := wrapper.GetAll(ctx, []string{})
+	retrieved, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
@@ -305,7 +305,7 @@ func TestWrapper_Get_WithRelations(t *testing.T) {
 
 	// Get with relations (even though we don't have any relations in this test model)
 	// This tests that the relations parameter is properly handled
-	retrieved, err := wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
+	retrieved, err := wrapper.Get(ctx, strconv.Itoa(created.ID))
 	if err != nil {
 		t.Fatal("Failed to get user with relations:", err)
 	}
@@ -334,7 +334,7 @@ func TestWrapper_GetAll_WithRelations(t *testing.T) {
 
 	// Get all with relations (even though we don't have any relations in this test model)
 	// This tests that the relations parameter is properly handled
-	retrieved, _, err := wrapper.GetAll(ctx, []string{})
+	retrieved, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("Failed to get all users with relations:", err)
 	}
@@ -366,7 +366,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 	}
 
 	// Get
-	retrieved, err := wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
+	retrieved, err := wrapper.Get(ctx, strconv.Itoa(created.ID))
 	if err != nil {
 		t.Fatal("Failed to get user:", err)
 	}
@@ -385,7 +385,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 	}
 
 	// GetAll
-	all, _, err := wrapper.GetAll(ctx, []string{})
+	all, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
@@ -400,7 +400,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 	}
 
 	// Verify deletion
-	_, err = wrapper.Get(ctx, strconv.Itoa(created.ID), []string{})
+	_, err = wrapper.Get(ctx, strconv.Itoa(created.ID))
 	if err == nil {
 		t.Error("Expected error when getting deleted user")
 	}
@@ -537,7 +537,7 @@ func TestOwnership_SingleField_GetAll(t *testing.T) {
 	ctxWithOwnership := context.WithValue(ctx, "ownershipEnforced", true)
 	ctxWithOwnership = context.WithValue(ctxWithOwnership, "ownershipUserID", "alice")
 
-	retrieved, _, err := wrapper.GetAll(ctxWithOwnership, []string{})
+	retrieved, _, err := wrapper.GetAll(ctxWithOwnership)
 	if err != nil {
 		t.Fatal("Failed to get blogs:", err)
 	}
@@ -572,7 +572,7 @@ func TestOwnership_SingleField_Get(t *testing.T) {
 	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
 	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
 
-	retrieved, err := wrapper.Get(ctxAlice, strconv.Itoa(created.ID), []string{})
+	retrieved, err := wrapper.Get(ctxAlice, strconv.Itoa(created.ID))
 	if err != nil {
 		t.Fatal("Failed to get blog as alice:", err)
 	}
@@ -584,7 +584,7 @@ func TestOwnership_SingleField_Get(t *testing.T) {
 	ctxBob := context.WithValue(ctx, "ownershipEnforced", true)
 	ctxBob = context.WithValue(ctxBob, "ownershipUserID", "bob")
 
-	_, err = wrapper.Get(ctxBob, strconv.Itoa(created.ID), []string{})
+	_, err = wrapper.Get(ctxBob, strconv.Itoa(created.ID))
 	if err == nil {
 		t.Error("Expected error when bob tries to get alice's blog")
 	}
@@ -631,7 +631,7 @@ func TestOwnership_MultipleFields_GetAll(t *testing.T) {
 	ctxAlice := context.WithValue(ctxPost, "ownershipEnforced", true)
 	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
 
-	retrieved, _, err := postWrapper.GetAll(ctxAlice, []string{})
+	retrieved, _, err := postWrapper.GetAll(ctxAlice)
 	if err != nil {
 		t.Fatal("Failed to get posts:", err)
 	}
@@ -679,7 +679,7 @@ func TestOwnership_BypassScope_Admin(t *testing.T) {
 	}
 	ctxCharlie = context.WithValue(ctxCharlie, "authInfo", authInfo)
 
-	retrieved, _, err := wrapper.GetAll(ctxCharlie, []string{})
+	retrieved, _, err := wrapper.GetAll(ctxCharlie)
 	if err != nil {
 		t.Fatal("Failed to get articles:", err)
 	}
@@ -721,7 +721,7 @@ func TestOwnership_BypassScope_Moderator(t *testing.T) {
 	}
 	ctxDiana = context.WithValue(ctxDiana, "authInfo", authInfo)
 
-	retrieved, _, err := wrapper.GetAll(ctxDiana, []string{})
+	retrieved, _, err := wrapper.GetAll(ctxDiana)
 	if err != nil {
 		t.Fatal("Failed to get articles:", err)
 	}
@@ -780,7 +780,7 @@ func TestOwnership_NoOwnershipContext_GetAll(t *testing.T) {
 	}
 
 	// GetAll without ownership enforcement - should get all
-	retrieved, _, err := wrapper.GetAll(ctx, []string{})
+	retrieved, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("Failed to get all blogs:", err)
 	}
@@ -815,7 +815,7 @@ func TestOwnership_TypeWithoutOwnershipConfig(t *testing.T) {
 	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
 	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
 
-	retrieved, _, err := wrapper.GetAll(ctxAlice, []string{})
+	retrieved, _, err := wrapper.GetAll(ctxAlice)
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
@@ -1694,7 +1694,7 @@ func TestWrapper_UUID_NestedCreate(t *testing.T) {
 	}
 
 	// Verify we can get the post with parent chain validation
-	gotPost, err := postWrapper.Get(postCtx, createdPost.ID.String(), []string{})
+	gotPost, err := postWrapper.Get(postCtx, createdPost.ID.String())
 	if err != nil {
 		t.Fatal("Failed to get post:", err)
 	}
@@ -1730,7 +1730,7 @@ func TestWrapper_UUID_GetAll(t *testing.T) {
 	}
 
 	// Get all blogs
-	blogs, count, err := wrapper.GetAll(ctx, []string{})
+	blogs, count, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("Failed to get all blogs:", err)
 	}
@@ -1822,8 +1822,447 @@ func TestWrapper_UUID_Delete(t *testing.T) {
 	}
 
 	// Verify deletion
-	_, err = wrapper.Get(ctx, created.ID.String(), []string{})
+	_, err = wrapper.Get(ctx, created.ID.String())
 	if !errors.Is(err, apperrors.ErrNotFound) {
 		t.Errorf("Expected ErrNotFound after deletion, got: %v", err)
+	}
+}
+
+// ============================================================================
+// Include/Relation Tests
+// ============================================================================
+
+// TestIncludeAuthor is a parent model with child relations
+type TestIncludeAuthor struct {
+	bun.BaseModel `bun:"table:include_authors"`
+	ID            int                `bun:"id,pk,autoincrement"`
+	Name          string             `bun:"name,notnull"`
+	Posts         []*TestIncludePost `bun:"rel:has-many,join:id=author_id"`
+	CreatedAt     time.Time          `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+}
+
+// TestIncludePost is a child model with ownership
+type TestIncludePost struct {
+	bun.BaseModel `bun:"table:include_posts"`
+	ID            int                   `bun:"id,pk,autoincrement"`
+	AuthorID      int                   `bun:"author_id,notnull"`
+	Author        *TestIncludeAuthor    `bun:"rel:belongs-to,join:author_id=id"`
+	OwnerID       string                `bun:"owner_id,notnull"`
+	Title         string                `bun:"title,notnull"`
+	Comments      []*TestIncludeComment `bun:"rel:has-many,join:id=post_id"`
+	CreatedAt     time.Time             `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+}
+
+// TestIncludeComment is a nested child model with ownership
+type TestIncludeComment struct {
+	bun.BaseModel `bun:"table:include_comments"`
+	ID            int              `bun:"id,pk,autoincrement"`
+	PostID        int              `bun:"post_id,notnull"`
+	Post          *TestIncludePost `bun:"rel:belongs-to,join:post_id=id"`
+	OwnerID       string           `bun:"owner_id,notnull"`
+	Text          string           `bun:"text,notnull"`
+	CreatedAt     time.Time        `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+}
+
+func setupIncludeTestDB(t *testing.T) (*datastore.SQLite, func()) {
+	t.Helper()
+
+	db, err := datastore.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal("Failed to create test database:", err)
+	}
+
+	if err := datastore.Initialize(db); err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to initialize datastore:", err)
+	}
+
+	ctx := context.Background()
+	models := []interface{}{
+		(*TestIncludeAuthor)(nil),
+		(*TestIncludePost)(nil),
+		(*TestIncludeComment)(nil),
+	}
+
+	for _, model := range models {
+		_, err := db.GetDB().NewCreateTable().Model(model).IfNotExists().Exec(ctx)
+		if err != nil {
+			db.Cleanup()
+			t.Fatal("Failed to create table:", err)
+		}
+	}
+
+	cleanup := func() {
+		for i := len(models) - 1; i >= 0; i-- {
+			db.GetDB().NewDropTable().Model(models[i]).IfExists().Exec(ctx)
+		}
+		datastore.Cleanup()
+		db.Cleanup()
+	}
+
+	return db, cleanup
+}
+
+// Create metadata for include tests
+func createIncludeTestMeta() (*metadata.TypeMetadata, *metadata.TypeMetadata) {
+	authorMeta := &metadata.TypeMetadata{
+		TypeID:       "include_author",
+		TypeName:     "TestIncludeAuthor",
+		TableName:    "include_authors",
+		URLParamUUID: "authorId",
+		ModelType:    reflect.TypeOf(TestIncludeAuthor{}),
+		ChildMeta:    make(map[string]*metadata.TypeMetadata),
+	}
+
+	postMeta := &metadata.TypeMetadata{
+		TypeID:          "include_post",
+		TypeName:        "TestIncludePost",
+		TableName:       "include_posts",
+		URLParamUUID:    "postId",
+		ModelType:       reflect.TypeOf(TestIncludePost{}),
+		ParentType:      reflect.TypeOf(TestIncludeAuthor{}),
+		ParentMeta:      authorMeta,
+		ForeignKeyCol:   "author_id",
+		OwnershipFields: []string{"OwnerID"},
+		BypassScopes:    []string{"admin"},
+		ChildMeta:       make(map[string]*metadata.TypeMetadata),
+	}
+
+	commentMeta := &metadata.TypeMetadata{
+		TypeID:          "include_comment",
+		TypeName:        "TestIncludeComment",
+		TableName:       "include_comments",
+		URLParamUUID:    "commentId",
+		ModelType:       reflect.TypeOf(TestIncludeComment{}),
+		ParentType:      reflect.TypeOf(TestIncludePost{}),
+		ParentMeta:      postMeta,
+		ForeignKeyCol:   "post_id",
+		OwnershipFields: []string{"OwnerID"},
+		BypassScopes:    []string{"admin"},
+		ChildMeta:       make(map[string]*metadata.TypeMetadata),
+	}
+
+	// Register child meta for includes
+	authorMeta.ChildMeta["Posts"] = postMeta
+	postMeta.ChildMeta["Comments"] = commentMeta
+
+	return authorMeta, postMeta
+}
+
+func TestInclude_BasicRelation(t *testing.T) {
+	db, cleanup := setupIncludeTestDB(t)
+	defer cleanup()
+
+	authorMeta, postMeta := createIncludeTestMeta()
+
+	// Create author
+	authorWrapper := &datastore.Wrapper[TestIncludeAuthor]{Store: db}
+	authorCtx := context.WithValue(context.Background(), metadata.MetadataKey, authorMeta)
+
+	author := TestIncludeAuthor{Name: "Alice"}
+	createdAuthor, err := authorWrapper.Create(authorCtx, author)
+	if err != nil {
+		t.Fatal("Failed to create author:", err)
+	}
+
+	// Create posts directly in DB (without ownership enforcement)
+	posts := []TestIncludePost{
+		{AuthorID: createdAuthor.ID, OwnerID: "alice", Title: "Alice's Post"},
+		{AuthorID: createdAuthor.ID, OwnerID: "bob", Title: "Bob's Post"},
+	}
+
+	postWrapper := &datastore.Wrapper[TestIncludePost]{Store: db}
+	postCtx := context.WithValue(context.Background(), metadata.MetadataKey, postMeta)
+	postCtx = context.WithValue(postCtx, "parentIDs", map[string]string{"authorId": strconv.Itoa(createdAuthor.ID)})
+
+	for _, post := range posts {
+		_, err := db.GetDB().NewInsert().Model(&post).Exec(context.Background())
+		if err != nil {
+			t.Fatal("Failed to insert post:", err)
+		}
+	}
+
+	// Test: Get author with include=Posts as Alice
+	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
+	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
+	getCtx = context.WithValue(getCtx, "authInfo", &metadata.AuthInfo{UserID: "alice", Scopes: []string{"user"}})
+	// Set AllowedIncludes to authorize "Posts" with ownership filtering
+	getCtx = context.WithValue(getCtx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Posts": true})
+	// Set ownership context (normally set by middleware)
+	getCtx = context.WithValue(getCtx, "ownershipEnforced", true)
+	getCtx = context.WithValue(getCtx, "ownershipUserID", "alice")
+
+	retrieved, err := authorWrapper.Get(getCtx, strconv.Itoa(createdAuthor.ID))
+	if err != nil {
+		t.Fatal("Failed to get author with include:", err)
+	}
+
+	// Should only see Alice's post (ownership filtered)
+	if len(retrieved.Posts) != 1 {
+		t.Errorf("Expected 1 post for Alice, got %d", len(retrieved.Posts))
+	}
+	if len(retrieved.Posts) > 0 && retrieved.Posts[0].OwnerID != "alice" {
+		t.Errorf("Expected Alice's post, got owner %s", retrieved.Posts[0].OwnerID)
+	}
+
+	// Suppress unused variable warning
+	_ = postWrapper
+	_ = postCtx
+}
+
+func TestInclude_AdminBypass(t *testing.T) {
+	db, cleanup := setupIncludeTestDB(t)
+	defer cleanup()
+
+	authorMeta, _ := createIncludeTestMeta()
+
+	// Create author
+	authorWrapper := &datastore.Wrapper[TestIncludeAuthor]{Store: db}
+	authorCtx := context.WithValue(context.Background(), metadata.MetadataKey, authorMeta)
+
+	author := TestIncludeAuthor{Name: "Author"}
+	createdAuthor, err := authorWrapper.Create(authorCtx, author)
+	if err != nil {
+		t.Fatal("Failed to create author:", err)
+	}
+
+	// Create posts for different owners
+	posts := []TestIncludePost{
+		{AuthorID: createdAuthor.ID, OwnerID: "alice", Title: "Alice's Post"},
+		{AuthorID: createdAuthor.ID, OwnerID: "bob", Title: "Bob's Post"},
+	}
+
+	for _, post := range posts {
+		_, err := db.GetDB().NewInsert().Model(&post).Exec(context.Background())
+		if err != nil {
+			t.Fatal("Failed to insert post:", err)
+		}
+	}
+
+	// Test: Admin should see all posts
+	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
+	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
+	getCtx = context.WithValue(getCtx, "authInfo", &metadata.AuthInfo{UserID: "admin", Scopes: []string{"user", "admin"}})
+	// Admin has bypass scope, so AllowedIncludes shows false (don't apply ownership)
+	getCtx = context.WithValue(getCtx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Posts": false})
+
+	retrieved, err := authorWrapper.Get(getCtx, strconv.Itoa(createdAuthor.ID))
+	if err != nil {
+		t.Fatal("Failed to get author with include:", err)
+	}
+
+	// Admin should see all posts
+	if len(retrieved.Posts) != 2 {
+		t.Errorf("Expected 2 posts for admin, got %d", len(retrieved.Posts))
+	}
+}
+
+func TestInclude_NoAuth(t *testing.T) {
+	db, cleanup := setupIncludeTestDB(t)
+	defer cleanup()
+
+	authorMeta, _ := createIncludeTestMeta()
+
+	// Create author
+	authorWrapper := &datastore.Wrapper[TestIncludeAuthor]{Store: db}
+	authorCtx := context.WithValue(context.Background(), metadata.MetadataKey, authorMeta)
+
+	author := TestIncludeAuthor{Name: "Author"}
+	createdAuthor, err := authorWrapper.Create(authorCtx, author)
+	if err != nil {
+		t.Fatal("Failed to create author:", err)
+	}
+
+	// Create posts
+	posts := []TestIncludePost{
+		{AuthorID: createdAuthor.ID, OwnerID: "alice", Title: "Alice's Post"},
+	}
+
+	for _, post := range posts {
+		_, err := db.GetDB().NewInsert().Model(&post).Exec(context.Background())
+		if err != nil {
+			t.Fatal("Failed to insert post:", err)
+		}
+	}
+
+	// Test: Unauthenticated request should see no posts
+	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
+	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
+	// No authInfo in context
+
+	retrieved, err := authorWrapper.Get(getCtx, strconv.Itoa(createdAuthor.ID))
+	if err != nil {
+		t.Fatal("Failed to get author with include:", err)
+	}
+
+	// Unauthenticated should see no posts (ownership required)
+	if len(retrieved.Posts) != 0 {
+		t.Errorf("Expected 0 posts for unauthenticated user, got %d", len(retrieved.Posts))
+	}
+}
+
+func TestInclude_UnknownRelation(t *testing.T) {
+	db, cleanup := setupIncludeTestDB(t)
+	defer cleanup()
+
+	authorMeta, _ := createIncludeTestMeta()
+
+	// Create author
+	authorWrapper := &datastore.Wrapper[TestIncludeAuthor]{Store: db}
+	authorCtx := context.WithValue(context.Background(), metadata.MetadataKey, authorMeta)
+
+	author := TestIncludeAuthor{Name: "Author"}
+	createdAuthor, err := authorWrapper.Create(authorCtx, author)
+	if err != nil {
+		t.Fatal("Failed to create author:", err)
+	}
+
+	// Test: Unknown relation should be silently ignored
+	opts := &metadata.QueryOptions{Include: []string{"UnknownRelation"}}
+	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
+
+	retrieved, err := authorWrapper.Get(getCtx, strconv.Itoa(createdAuthor.ID))
+	if err != nil {
+		t.Fatal("Failed to get author with unknown include:", err)
+	}
+
+	// Should succeed without error, posts will be nil/empty
+	if retrieved.ID != createdAuthor.ID {
+		t.Errorf("Expected author ID %d, got %d", createdAuthor.ID, retrieved.ID)
+	}
+}
+
+func TestInclude_GetAllWithRelation(t *testing.T) {
+	db, cleanup := setupIncludeTestDB(t)
+	defer cleanup()
+
+	authorMeta, _ := createIncludeTestMeta()
+
+	// Create authors
+	authorWrapper := &datastore.Wrapper[TestIncludeAuthor]{Store: db}
+	authorCtx := context.WithValue(context.Background(), metadata.MetadataKey, authorMeta)
+
+	author1 := TestIncludeAuthor{Name: "Author 1"}
+	created1, err := authorWrapper.Create(authorCtx, author1)
+	if err != nil {
+		t.Fatal("Failed to create author 1:", err)
+	}
+
+	author2 := TestIncludeAuthor{Name: "Author 2"}
+	created2, err := authorWrapper.Create(authorCtx, author2)
+	if err != nil {
+		t.Fatal("Failed to create author 2:", err)
+	}
+
+	// Create posts for different authors
+	posts := []TestIncludePost{
+		{AuthorID: created1.ID, OwnerID: "alice", Title: "Post 1"},
+		{AuthorID: created2.ID, OwnerID: "alice", Title: "Post 2"},
+	}
+
+	for _, post := range posts {
+		_, err := db.GetDB().NewInsert().Model(&post).Exec(context.Background())
+		if err != nil {
+			t.Fatal("Failed to insert post:", err)
+		}
+	}
+
+	// Test: GetAll with include as alice
+	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
+	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
+	getCtx = context.WithValue(getCtx, "authInfo", &metadata.AuthInfo{UserID: "alice", Scopes: []string{"user"}})
+	// Set AllowedIncludes to authorize "Posts" with ownership filtering
+	getCtx = context.WithValue(getCtx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Posts": true})
+	// Set ownership context (normally set by middleware)
+	getCtx = context.WithValue(getCtx, "ownershipEnforced", true)
+	getCtx = context.WithValue(getCtx, "ownershipUserID", "alice")
+
+	retrieved, _, err := authorWrapper.GetAll(getCtx)
+	if err != nil {
+		t.Fatal("Failed to get all authors with include:", err)
+	}
+
+	if len(retrieved) != 2 {
+		t.Errorf("Expected 2 authors, got %d", len(retrieved))
+	}
+
+	// Each author should have 1 post owned by alice
+	for _, author := range retrieved {
+		if len(author.Posts) != 1 {
+			t.Errorf("Expected 1 post per author for alice, got %d", len(author.Posts))
+		}
+	}
+}
+
+func TestInclude_NoOwnershipConfig(t *testing.T) {
+	db, cleanup := setupIncludeTestDB(t)
+	defer cleanup()
+
+	// Create metadata without ownership on posts
+	authorMeta := &metadata.TypeMetadata{
+		TypeID:       "include_author_no_owner",
+		TypeName:     "TestIncludeAuthor",
+		TableName:    "include_authors",
+		URLParamUUID: "authorId",
+		ModelType:    reflect.TypeOf(TestIncludeAuthor{}),
+		ChildMeta:    make(map[string]*metadata.TypeMetadata),
+	}
+
+	postMetaNoOwnership := &metadata.TypeMetadata{
+		TypeID:        "include_post_no_owner",
+		TypeName:      "TestIncludePost",
+		TableName:     "include_posts",
+		URLParamUUID:  "postId",
+		ModelType:     reflect.TypeOf(TestIncludePost{}),
+		ParentType:    reflect.TypeOf(TestIncludeAuthor{}),
+		ParentMeta:    authorMeta,
+		ForeignKeyCol: "author_id",
+		// No OwnershipFields configured
+		ChildMeta: make(map[string]*metadata.TypeMetadata),
+	}
+
+	authorMeta.ChildMeta["Posts"] = postMetaNoOwnership
+
+	// Create author
+	authorWrapper := &datastore.Wrapper[TestIncludeAuthor]{Store: db}
+	authorCtx := context.WithValue(context.Background(), metadata.MetadataKey, authorMeta)
+
+	author := TestIncludeAuthor{Name: "Author"}
+	createdAuthor, err := authorWrapper.Create(authorCtx, author)
+	if err != nil {
+		t.Fatal("Failed to create author:", err)
+	}
+
+	// Create posts
+	posts := []TestIncludePost{
+		{AuthorID: createdAuthor.ID, OwnerID: "alice", Title: "Post 1"},
+		{AuthorID: createdAuthor.ID, OwnerID: "bob", Title: "Post 2"},
+	}
+
+	for _, post := range posts {
+		_, err := db.GetDB().NewInsert().Model(&post).Exec(context.Background())
+		if err != nil {
+			t.Fatal("Failed to insert post:", err)
+		}
+	}
+
+	// Test: Any user should see all posts (no ownership filter on child type)
+	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
+	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
+	getCtx = context.WithValue(getCtx, "authInfo", &metadata.AuthInfo{UserID: "charlie", Scopes: []string{"user"}})
+	// AllowedIncludes says to apply ownership, but child has no OwnershipFields
+	// so the ownership filter will be a no-op (applyOwnershipFilterWithMeta skips it)
+	getCtx = context.WithValue(getCtx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Posts": true})
+	getCtx = context.WithValue(getCtx, "ownershipEnforced", true)
+	getCtx = context.WithValue(getCtx, "ownershipUserID", "charlie")
+
+	retrieved, err := authorWrapper.Get(getCtx, strconv.Itoa(createdAuthor.ID))
+	if err != nil {
+		t.Fatal("Failed to get author with include:", err)
+	}
+
+	// Should see all posts since no ownership is configured on child
+	if len(retrieved.Posts) != 2 {
+		t.Errorf("Expected 2 posts (no ownership filter), got %d", len(retrieved.Posts))
 	}
 }

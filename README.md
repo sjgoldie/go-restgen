@@ -130,6 +130,98 @@ go-restgen automatically handles parent-child relationships with full chain vali
 
 See the [nested routes example](./examples/nested_routes) for a complete working example with 3-level nesting.
 
+## Relation Includes
+
+Load related resources in a single request using the `?include=` query parameter. This avoids N+1 queries when you need parent and child data together.
+
+### Enabling Includes with WithRelationName
+
+Use `WithRelationName()` when registering child routes to enable the `?include=` parameter:
+
+```go
+type Author struct {
+    bun.BaseModel `bun:"table:authors"`
+    ID            int     `bun:"id,pk,autoincrement" json:"id"`
+    Name          string  `bun:"name" json:"name"`
+    Posts         []*Post `bun:"rel:has-many,join:id=author_id" json:"posts,omitempty"`
+}
+
+type Post struct {
+    bun.BaseModel `bun:"table:posts"`
+    ID            int     `bun:"id,pk,autoincrement" json:"id"`
+    AuthorID      int     `bun:"author_id,notnull" json:"author_id"`
+    Author        *Author `bun:"rel:belongs-to,join:author_id=id" json:"-"`
+    OwnerID       string  `bun:"owner_id,notnull" json:"owner_id"`
+    Title         string  `bun:"title" json:"title"`
+}
+
+router.RegisterRoutes[Author](b, "/authors",
+    router.AllPublic(),
+    func(b *router.Builder) {
+        router.RegisterRoutes[Post](b, "/posts",
+            router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+            router.WithRelationName("Posts"),  // Enables ?include=Posts on parent
+        )
+    },
+)
+```
+
+### Using ?include=
+
+```bash
+# Get author with their posts
+GET /authors/1?include=Posts
+
+# Response includes the relation
+{
+    "id": 1,
+    "name": "Alice",
+    "posts": [
+        {"id": 1, "title": "First Post", "owner_id": "alice"},
+        {"id": 2, "title": "Second Post", "owner_id": "alice"}
+    ]
+}
+
+# Multiple includes (comma-separated)
+GET /authors/1?include=Posts,Comments
+```
+
+### Security: Same Auth as Direct Access
+
+**Includes respect the child route's auth configuration.** The same security rules that apply when accessing the child route directly also apply when including it:
+
+- **Unauthorized relations are silently omitted** - no error, just not included
+- **Ownership filtering applies** - users only see their own child records
+- **Bypass scopes work** - admins see all child records if configured
+
+```go
+// Parent is public, child has ownership
+router.RegisterRoutes[Author](b, "/authors",
+    router.AllPublic(),
+    func(b *router.Builder) {
+        router.RegisterRoutes[Post](b, "/posts",
+            router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+            router.WithRelationName("Posts"),
+        )
+    },
+)
+```
+
+| Request | Result |
+|---------|--------|
+| No auth + `?include=Posts` | Author returned, posts omitted (not authorized) |
+| Alice + `?include=Posts` | Author + only Alice's posts (ownership filtered) |
+| Admin + `?include=Posts` | Author + all posts (bypass scope) |
+
+### Key Points
+
+- **Relation name must match the struct field** - `WithRelationName("Posts")` maps to `Posts []*Post` field
+- **Unknown relation names are silently ignored** - for security, no error is returned
+- **Works with GET single item and LIST** - both `/authors/1?include=Posts` and `/authors?include=Posts`
+- **Nested includes not supported** - only direct children can be included
+
+See the [relations example](./examples/relations) for a complete working example.
+
 ## Authentication & Authorization
 
 go-restgen provides flexible, granular authentication and authorization controls. **Routes are blocked by default** (secure by default) unless explicitly configured.
@@ -977,6 +1069,7 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[Authentication & Authorization](./examples/auth)** - Comprehensive auth patterns including scopes, ownership, admin bypass, and multi-ownership
 - **[Validation](./examples/validator)** - Business rule validation with state machine transitions
 - **[Audit](./examples/audit)** - Audit logging with transactional consistency
+- **[Relations](./examples/relations)** - Loading related resources via `?include=` with auth
 
 All examples include comprehensive Bruno API tests. See [`bruno/README.md`](./bruno/README.md) for details.
 
@@ -1041,7 +1134,7 @@ go-restgen builds on these excellent projects:
 - [x] Custom validation for business rules
 - [x] Transactional audit logging
 - [x] UUID primary key support
-- [ ] Optionally retrieve an object's relations when retrieving the object itself
+- [x] Relation includes via `?include=` with auth enforcement
 - [ ] MySQL support
 - [ ] OpenAPI/Swagger generation
 

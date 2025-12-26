@@ -2,8 +2,10 @@ package router
 
 import (
 	"context"
+	"io"
 	"testing"
 
+	"github.com/sjgoldie/go-restgen/filestore"
 	"github.com/sjgoldie/go-restgen/handler"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/service"
@@ -45,7 +47,7 @@ func TestWithCustomGetAll(t *testing.T) {
 }
 
 func TestWithCustomCreate(t *testing.T) {
-	customFunc := func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item CustomTestModel) (*CustomTestModel, error) {
+	customFunc := func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item CustomTestModel, _ io.Reader, _ filestore.FileMetadata) (*CustomTestModel, error) {
 		return &item, nil
 	}
 
@@ -97,7 +99,7 @@ func TestCustomConfigTypesInSwitch(t *testing.T) {
 		return nil, 0, nil
 	})
 
-	createConfig := WithCustomCreate(func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item CustomTestModel) (*CustomTestModel, error) {
+	createConfig := WithCustomCreate(func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item CustomTestModel, _ io.Reader, _ filestore.FileMetadata) (*CustomTestModel, error) {
 		return nil, nil
 	})
 
@@ -156,7 +158,7 @@ func TestCustomFuncTypesMatchHandler(t *testing.T) {
 		return nil, 0, nil
 	}
 
-	var _ handler.CustomCreateFunc[CustomTestModel] = func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item CustomTestModel) (*CustomTestModel, error) {
+	var _ handler.CustomCreateFunc[CustomTestModel] = func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item CustomTestModel, _ io.Reader, _ filestore.FileMetadata) (*CustomTestModel, error) {
 		return nil, nil
 	}
 

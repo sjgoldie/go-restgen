@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/sjgoldie/go-restgen/datastore"
 	apperrors "github.com/sjgoldie/go-restgen/errors"
+	"github.com/sjgoldie/go-restgen/filestore"
 	"github.com/sjgoldie/go-restgen/handler"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/service"
@@ -1791,7 +1793,7 @@ func TestCustomGet_WithAuth(t *testing.T) {
 // TestCustomCreate tests that CustomCreate correctly uses a custom function
 func TestCustomCreate(t *testing.T) {
 	// Custom function that modifies the item before creating
-	customCreate := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item TestUser) (*TestUser, error) {
+	customCreate := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item TestUser, _ io.Reader, _ filestore.FileMetadata) (*TestUser, error) {
 		// Modify name before creating
 		item.Name = "Custom-" + item.Name
 		return svc.Create(ctx, item)

@@ -1,0 +1,15 @@
+meta {
+  name: Verify Image Deleted
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/posts/{{postId}}/images/{{imageId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+}

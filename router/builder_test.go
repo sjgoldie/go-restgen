@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sjgoldie/go-restgen/datastore"
+	"github.com/sjgoldie/go-restgen/filestore"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/router"
 	"github.com/sjgoldie/go-restgen/service"
@@ -1304,7 +1306,7 @@ func TestBuilder_CustomHandlers(t *testing.T) {
 			customGetAllCalled = true
 			return svc.GetAll(ctx)
 		}),
-		router.WithCustomCreate(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item MultiRegItem) (*MultiRegItem, error) {
+		router.WithCustomCreate(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item MultiRegItem, _ io.Reader, _ filestore.FileMetadata) (*MultiRegItem, error) {
 			customCreateCalled = true
 			return svc.Create(ctx, item)
 		}),

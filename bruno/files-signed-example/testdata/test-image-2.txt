@@ -1,0 +1,2 @@
+This is the second test file for Bruno integration tests.
+Used to verify multiple file uploads work correctly.

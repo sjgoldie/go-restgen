@@ -1,0 +1,2 @@
+This is a test file for Bruno integration tests.
+It simulates an image upload for the go-restgen file storage feature.

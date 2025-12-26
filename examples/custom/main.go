@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sjgoldie/go-restgen/datastore"
+	"github.com/sjgoldie/go-restgen/filestore"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/router"
 	"github.com/sjgoldie/go-restgen/service"
@@ -230,7 +232,7 @@ func customGetMyTasks(ctx context.Context, svc *service.Common[Task], _ *metadat
 }
 
 // Custom handler: Create task with auto-set owner
-func customCreateTask(ctx context.Context, svc *service.Common[Task], _ *metadata.TypeMetadata, auth *metadata.AuthInfo, item Task) (*Task, error) {
+func customCreateTask(ctx context.Context, svc *service.Common[Task], _ *metadata.TypeMetadata, auth *metadata.AuthInfo, item Task, _ io.Reader, _ filestore.FileMetadata) (*Task, error) {
 	if auth == nil {
 		return nil, fmt.Errorf("not authenticated")
 	}
@@ -240,7 +242,7 @@ func customCreateTask(ctx context.Context, svc *service.Common[Task], _ *metadat
 }
 
 // Custom handler: Create project with auto-set owner
-func customCreateProject(ctx context.Context, svc *service.Common[Project], _ *metadata.TypeMetadata, auth *metadata.AuthInfo, item Project) (*Project, error) {
+func customCreateProject(ctx context.Context, svc *service.Common[Project], _ *metadata.TypeMetadata, auth *metadata.AuthInfo, item Project, _ io.Reader, _ filestore.FileMetadata) (*Project, error) {
 	if auth == nil {
 		return nil, fmt.Errorf("not authenticated")
 	}

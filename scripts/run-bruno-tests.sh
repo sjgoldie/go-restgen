@@ -1,6 +1,6 @@
 #!/bin/bash
 # Bruno API test runner for go-restgen examples
-# Usage: ./scripts/run-bruno-tests.sh [simple|nested|auth|validator|audit|uuid|custom|relations|all]
+# Usage: ./scripts/run-bruno-tests.sh [simple|nested|auth|validator|audit|uuid|custom|relations|files-proxy|files-signed|all]
 
 set -e
 
@@ -66,7 +66,7 @@ start_server() {
     print_info "Starting server from $example_dir..."
 
     cd "$PROJECT_ROOT/$example_dir"
-    go run main.go &
+    go run . &
     SERVER_PID=$!
     SERVER_PORT=$port
 
@@ -165,6 +165,12 @@ case "$TEST_SUITE" in
     relations)
         run_tests "Relations Example" "examples/relations" "relations-example" || FAILED=1
         ;;
+    files-proxy)
+        run_tests "Files Proxy Example" "examples/files_proxy" "files-proxy-example" || FAILED=1
+        ;;
+    files-signed)
+        run_tests "Files Signed Example" "examples/files_signed" "files-signed-example" || FAILED=1
+        ;;
     all)
         run_tests "Simple Example" "examples/simple" "simple-example" || FAILED=1
         run_tests "Nested Example" "examples/nested_routes" "nested-example" || FAILED=1
@@ -174,9 +180,11 @@ case "$TEST_SUITE" in
         run_tests "UUID Example" "examples/uuid_pk" "uuid-example" || FAILED=1
         run_tests "Custom Handlers Example" "examples/custom" "custom-example" || FAILED=1
         run_tests "Relations Example" "examples/relations" "relations-example" || FAILED=1
+        run_tests "Files Proxy Example" "examples/files_proxy" "files-proxy-example" || FAILED=1
+        run_tests "Files Signed Example" "examples/files_signed" "files-signed-example" || FAILED=1
         ;;
     *)
-        echo "Usage: $0 [simple|nested|auth|validator|audit|uuid|custom|relations|all]"
+        echo "Usage: $0 [simple|nested|auth|validator|audit|uuid|custom|relations|files-proxy|files-signed|all]"
         exit 1
         ;;
 esac

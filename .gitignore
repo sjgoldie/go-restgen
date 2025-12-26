@@ -17,6 +17,8 @@ examples/audit/audit
 examples/uuid_pk/uuid_pk
 examples/custom/custom
 examples/relations/relations
+examples/files_proxy/files_proxy
+examples/files_signed/files_signed
 /simple
 /nested_routes
 /auth
@@ -25,6 +27,12 @@ examples/relations/relations
 /uuid_pk
 /custom
 /relations
+/files_proxy
+/files_signed
+
+# File upload directories
+examples/files_proxy/uploads/
+examples/files_signed/uploads/
 
 # Test binary, built with `go test -c`
 *.test

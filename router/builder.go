@@ -41,6 +41,16 @@ type customHandlers[T any] struct {
 	delete handler.CustomDeleteFunc[T]
 }
 
+// FileResourceConfig marks a route as a file resource
+type FileResourceConfig struct{}
+
+// AsFileResource marks this route as a file resource.
+// File resources use multipart form uploads instead of JSON.
+// Requires file storage to be initialized via filestore.Initialize().
+func AsFileResource() FileResourceConfig {
+	return FileResourceConfig{}
+}
+
 // RegisterRoutes registers CRUD routes for a resource type T
 // Accepts optional auth configs, query configs, validator, auditor, custom handlers, and nested function for child routes
 // Configs can be mixed with nested function in any order
@@ -54,6 +64,7 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 	var relationName string
 	var nested NestedFunc
 	var singleRoute *SingleRouteConfig
+	var isFileResource bool
 
 	for _, opt := range options {
 		switch v := opt.(type) {
@@ -79,16 +90,18 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			relationName = v.Name
 		case SingleRouteConfig:
 			singleRoute = &v
+		case FileResourceConfig:
+			isFileResource = true
 		case func(*Builder):
 			nested = v
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, relationName, singleRoute)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, relationName, singleRoute, isFileResource)
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], relationName string, singleRoute *SingleRouteConfig) {
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -128,31 +141,20 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 	}
 
 	// Validate parent relationship
-	if b.parentMeta != nil {
-		// We're nested but have no parent relationship - could be belongs-to registered for ?include=
-		if foreignKeyCol == "" {
-			slog.Warn("type registered as nested but has no foreign key to parent - CRUD operations on this route may not work correctly",
-				"type", typeName,
-				"parent", b.parentMeta.TypeName)
-		}
-	} else if foreignKeyCol != "" {
-		// We have a parent relationship but we're not nested
-		slog.Warn("type has parent relationship but is not registered as nested",
-			"type", typeName,
-			"foreignKey", foreignKeyCol)
-	}
+	validateParentRelationship(b.parentMeta, foreignKeyCol, typeName)
 
 	// Create metadata with all configuration
 	meta := &metadata.TypeMetadata{
-		TypeID:        typeID,
-		TypeName:      typeName,
-		TableName:     tableName,
-		URLParamUUID:  urlParamUUID,
-		ModelType:     tType,
-		ParentType:    parentType,
-		ParentMeta:    b.parentMeta,
-		ForeignKeyCol: foreignKeyCol,
-		ChildMeta:     make(map[string]*metadata.TypeMetadata),
+		TypeID:         typeID,
+		TypeName:       typeName,
+		TableName:      tableName,
+		URLParamUUID:   urlParamUUID,
+		ModelType:      tType,
+		ParentType:     parentType,
+		ParentMeta:     b.parentMeta,
+		ForeignKeyCol:  foreignKeyCol,
+		ChildMeta:      make(map[string]*metadata.TypeMetadata),
+		IsFileResource: isFileResource,
 	}
 
 	// Register this type as a child of the parent (for ?include= support)
@@ -264,11 +266,14 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 				r.Method("GET", "/", wrapHandler(handler.Get[T](getFunc), authMap[MethodGet]))
 
 				// Update endpoint - PUT /resources/{id}
-				updateFunc := custom.update
-				if updateFunc == nil {
-					updateFunc = handler.StandardUpdate[T]
+				// File resources don't support update (you delete and re-upload)
+				if !isFileResource {
+					updateFunc := custom.update
+					if updateFunc == nil {
+						updateFunc = handler.StandardUpdate[T]
+					}
+					r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), authMap[MethodPut]))
 				}
-				r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), authMap[MethodPut]))
 
 				// Delete endpoint - DELETE /resources/{id}
 				deleteFunc := custom.delete
@@ -276,6 +281,13 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 					deleteFunc = handler.StandardDelete[T]
 				}
 				r.Method("DELETE", "/", wrapHandler(handler.Delete[T](deleteFunc), authMap[MethodDelete]))
+
+				// Download endpoint - GET /resources/{id}/download (file resources)
+				// For proxy mode: streams the file
+				// For signed URL mode: redirects to signed URL
+				if isFileResource {
+					r.Method("GET", "/download", wrapHandler(handler.Download[T](), authMap[MethodGet]))
+				}
 
 				nestedRouter = r
 			})
@@ -438,6 +450,23 @@ func mergeQueryConfigs(meta *metadata.TypeMetadata, queryConfigs []QueryConfig) 
 	}
 
 	return result
+}
+
+// validateParentRelationship logs warnings for mismatched parent/child relationships
+func validateParentRelationship(parentMeta *metadata.TypeMetadata, foreignKeyCol, typeName string) {
+	if parentMeta != nil {
+		// We're nested but have no parent relationship - could be belongs-to registered for ?include=
+		if foreignKeyCol == "" {
+			slog.Warn("type registered as nested but has no foreign key to parent - CRUD operations on this route may not work correctly",
+				"type", typeName,
+				"parent", parentMeta.TypeName)
+		}
+	} else if foreignKeyCol != "" {
+		// We have a parent relationship but we're not nested
+		slog.Warn("type has parent relationship but is not registered as nested",
+			"type", typeName,
+			"foreignKey", foreignKeyCol)
+	}
 }
 
 // registerChildAuthConfig registers the child's auth config with parent's auth configs

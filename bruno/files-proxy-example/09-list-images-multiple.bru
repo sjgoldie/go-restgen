@@ -1,0 +1,17 @@
+meta {
+  name: List Images (Multiple)
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/posts/{{postId}}/images
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body.length: eq 2
+}

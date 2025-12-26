@@ -3,8 +3,10 @@ package service
 
 import (
 	"context"
+	"io"
 
 	"github.com/sjgoldie/go-restgen/datastore"
+	"github.com/sjgoldie/go-restgen/filestore"
 )
 
 // Common provides generic CRUD operations for any model type
@@ -53,4 +55,96 @@ func (s *Common[T]) GetByParentRelation(ctx context.Context, parentID string) (*
 // Security checks are preserved by calling the normal Update with the resolved child ID
 func (s *Common[T]) UpdateByParentRelation(ctx context.Context, parentID string, item T) (*T, error) {
 	return s.store.UpdateByParentRelation(ctx, parentID, item)
+}
+
+// StoreFile stores a file and returns the storage key.
+// The caller is responsible for setting fields on the item.
+func (s *Common[T]) StoreFile(ctx context.Context, file io.Reader, fileMeta filestore.FileMetadata) (string, error) {
+	fs, err := filestore.Get()
+	if err != nil {
+		return "", err
+	}
+	return fs.Store(ctx, file, fileMeta)
+}
+
+// DeleteStoredFile deletes a file from file storage by its storage key.
+func (s *Common[T]) DeleteStoredFile(ctx context.Context, storageKey string) error {
+	if storageKey == "" {
+		return nil
+	}
+	fs, err := filestore.Get()
+	if err != nil {
+		return err
+	}
+	return fs.Delete(ctx, storageKey)
+}
+
+// RetrieveFile retrieves a file's content stream from file storage.
+func (s *Common[T]) RetrieveFile(ctx context.Context, storageKey string) (io.ReadCloser, error) {
+	if storageKey == "" {
+		return nil, filestore.ErrStorageKeyNotFound
+	}
+	fs, err := filestore.Get()
+	if err != nil {
+		return nil, err
+	}
+	reader, _, err := fs.Retrieve(ctx, storageKey)
+	return reader, err
+}
+
+// DownloadResult contains the result of a Download operation.
+// Either Reader is set (for proxy/streaming) or SignedURL is set (for redirect).
+type DownloadResult struct {
+	ContentType string
+	Filename    string
+	Size        int64
+	Reader      io.ReadCloser // nil if SignedURL is set
+	SignedURL   string        // non-empty for redirect
+}
+
+// Download retrieves a file for download, handling both proxy and signed URL modes.
+// Returns a DownloadResult that indicates either streaming (Reader set) or redirect (SignedURL set).
+// The storage implementation decides whether to return a signed URL or not.
+func (s *Common[T]) Download(ctx context.Context, id string) (*DownloadResult, error) {
+	item, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	fr, ok := any(item).(filestore.FileResource)
+	if !ok {
+		return nil, filestore.ErrStorageKeyNotFound
+	}
+
+	storageKey := fr.GetStorageKey()
+	if storageKey == "" {
+		return nil, filestore.ErrStorageKeyNotFound
+	}
+
+	storage, err := filestore.Get()
+	if err != nil {
+		return nil, err
+	}
+
+	// Try signed URL first - storage implementation decides if supported
+	signedURL, err := storage.GenerateSignedURL(ctx, storageKey)
+	if err != nil {
+		return nil, err
+	}
+	if signedURL != "" {
+		return &DownloadResult{SignedURL: signedURL}, nil
+	}
+
+	// Fall back to proxy mode
+	reader, err := s.RetrieveFile(ctx, storageKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DownloadResult{
+		ContentType: fr.GetContentType(),
+		Filename:    fr.GetFilename(),
+		Size:        fr.GetSize(),
+		Reader:      reader,
+	}, nil
 }

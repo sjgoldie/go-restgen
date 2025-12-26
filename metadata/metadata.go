@@ -93,27 +93,31 @@ type TypeMetadata struct {
 
 	// Audit
 	Auditor any // AuditFunc[T] stored as any for type erasure
+
+	// File resource
+	IsFileResource bool // Whether this type is a file resource (uses multipart upload)
 }
 
 // Clone returns a deep copy of the TypeMetadata.
 // Slices and maps are fully copied; pointer fields (ParentMeta) reference the same object.
 func (m *TypeMetadata) Clone() *TypeMetadata {
 	result := &TypeMetadata{
-		TypeID:        m.TypeID,
-		TypeName:      m.TypeName,
-		TableName:     m.TableName,
-		URLParamUUID:  m.URLParamUUID,
-		ModelType:     m.ModelType,
-		ParentType:    m.ParentType,
-		ParentMeta:    m.ParentMeta, // Intentionally shared - parent is not owned by this metadata
-		ForeignKeyCol: m.ForeignKeyCol,
-		RelationName:  m.RelationName,
-		ParentFKField: m.ParentFKField,
-		DefaultSort:   m.DefaultSort,
-		DefaultLimit:  m.DefaultLimit,
-		MaxLimit:      m.MaxLimit,
-		Validator:     m.Validator,
-		Auditor:       m.Auditor,
+		TypeID:         m.TypeID,
+		TypeName:       m.TypeName,
+		TableName:      m.TableName,
+		URLParamUUID:   m.URLParamUUID,
+		ModelType:      m.ModelType,
+		ParentType:     m.ParentType,
+		ParentMeta:     m.ParentMeta, // Intentionally shared - parent is not owned by this metadata
+		ForeignKeyCol:  m.ForeignKeyCol,
+		RelationName:   m.RelationName,
+		ParentFKField:  m.ParentFKField,
+		DefaultSort:    m.DefaultSort,
+		DefaultLimit:   m.DefaultLimit,
+		MaxLimit:       m.MaxLimit,
+		Validator:      m.Validator,
+		Auditor:        m.Auditor,
+		IsFileResource: m.IsFileResource,
 	}
 
 	// Deep copy slices

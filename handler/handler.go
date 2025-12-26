@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -24,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	apperrors "github.com/sjgoldie/go-restgen/errors"
+	"github.com/sjgoldie/go-restgen/filestore"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/service"
 )
@@ -42,7 +44,7 @@ func init() {
 // parsing, validation, error handling, and response formatting.
 
 // CustomGetFunc is the signature for custom Get handlers.
-// The custom function receives all parsed/validated inputs and returns the item.
+// Returns the item for JSON response.
 type CustomGetFunc[T any] func(
 	ctx context.Context,
 	svc *service.Common[T],
@@ -62,13 +64,16 @@ type CustomGetAllFunc[T any] func(
 ) ([]*T, int, error)
 
 // CustomCreateFunc is the signature for custom Create handlers.
-// The custom function receives the decoded item and returns the created item.
+// The custom function receives the decoded item and optional file data.
+// If file is not nil and meta.IsFileResource, the function should store the file.
 type CustomCreateFunc[T any] func(
 	ctx context.Context,
 	svc *service.Common[T],
 	meta *metadata.TypeMetadata,
 	auth *metadata.AuthInfo,
 	item T,
+	file io.Reader,
+	fileMeta filestore.FileMetadata,
 ) (*T, error)
 
 // CustomUpdateFunc is the signature for custom Update handlers.
@@ -288,7 +293,6 @@ func parseQueryOptions(query url.Values) *metadata.QueryOptions {
 }
 
 // StandardGet is the default Get implementation that calls svc.Get.
-// Use this when no custom logic is needed.
 func StandardGet[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) (*T, error) {
 	return svc.Get(ctx, id)
 }
@@ -374,15 +378,47 @@ func Get[T any](getFunc CustomGetFunc[T]) http.HandlerFunc {
 	}
 }
 
-// StandardCreate is the default Create implementation that calls svc.Create.
-// Use this when no custom logic is needed.
-func StandardCreate[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item T) (*T, error) {
-	return svc.Create(ctx, item)
+// StandardCreate is the default Create implementation.
+// If file is provided and meta.IsFileResource, stores the file and sets fields on item.
+func StandardCreate[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item T, file io.Reader, fileMeta filestore.FileMetadata) (*T, error) {
+	var storageKey string
+
+	// If file is provided and this is a file resource, store the file and set fields
+	if file != nil && meta.IsFileResource {
+		var err error
+		storageKey, err = svc.StoreFile(ctx, file, fileMeta)
+		if err != nil {
+			return nil, err
+		}
+
+		// Set file fields on the item
+		if fr, ok := any(&item).(filestore.FileResource); ok {
+			fr.SetStorageKey(storageKey)
+			fr.SetFilename(fileMeta.Filename)
+			fr.SetContentType(fileMeta.ContentType)
+			fr.SetSize(fileMeta.Size)
+		}
+	}
+
+	// Create the DB record
+	savedItem, err := svc.Create(ctx, item)
+	if err != nil {
+		// Clean up stored file on DB error
+		if storageKey != "" {
+			if delErr := svc.DeleteStoredFile(ctx, storageKey); delErr != nil {
+				slog.Warn("failed to delete orphaned file after DB error", "key", storageKey, "error", delErr)
+			}
+		}
+		return nil, err
+	}
+
+	return savedItem, nil
 }
 
 // Create handles POST requests to create a new item of type T.
 // The createFunc parameter controls how the item is created - use StandardCreate for default behavior
 // or provide a custom function for specialized logic.
+// Automatically detects multipart form data for file uploads.
 func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svc, err := service.New[T]()
@@ -406,14 +442,53 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
 
 		var item T
-		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
-			slog.Warn("failed to decode request body", "error", err)
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		var file io.Reader
+		var fileMeta filestore.FileMetadata
+
+		// Parse request body - either multipart form or JSON
+		contentType := r.Header.Get("Content-Type")
+		if strings.HasPrefix(contentType, "multipart/form-data") {
+			// Parse multipart form
+			if err := r.ParseMultipartForm(32 << 20); err != nil {
+				slog.Warn("failed to parse multipart form", "error", err)
+				http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			// Get the file
+			formFile, header, err := r.FormFile("file")
+			if err == nil {
+				defer func() { _ = formFile.Close() }()
+				file = formFile
+				fileMeta = filestore.FileMetadata{
+					Filename:    header.Filename,
+					ContentType: header.Header.Get("Content-Type"),
+					Size:        header.Size,
+				}
+				if fileMeta.ContentType == "" {
+					fileMeta.ContentType = "application/octet-stream"
+				}
+			}
+
+			// JSON metadata comes from form field in multipart
+			if metadataValues, ok := r.MultipartForm.Value["metadata"]; ok && len(metadataValues) > 0 {
+				if err := json.Unmarshal([]byte(metadataValues[0]), &item); err != nil {
+					slog.Warn("failed to parse metadata JSON", "error", err)
+					http.Error(w, "bad request: invalid metadata JSON", http.StatusBadRequest)
+					return
+				}
+			}
+		} else {
+			// JSON body
+			if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
+				slog.Warn("failed to decode request body", "error", err)
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
 		}
 
 		// Call the provided function
-		savedItem, err := createFunc(ctx, svc, meta, auth, item)
+		savedItem, err := createFunc(ctx, svc, meta, auth, item, file, fileMeta)
 		if err != nil {
 			handleMutationError(w, err, "create")
 			return
@@ -508,10 +583,34 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 	}
 }
 
-// StandardDelete is the default Delete implementation that calls svc.Delete.
-// Use this when no custom logic is needed.
+// StandardDelete is the default Delete implementation.
+// If the item implements FileResource, also deletes the file from storage.
 func StandardDelete[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) error {
-	return svc.Delete(ctx, id)
+	// Get the item first (validates existence and permissions)
+	item, err := svc.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	// Extract storage key if this is a file resource (via type assertion)
+	var storageKey string
+	if fr, ok := any(item).(filestore.FileResource); ok {
+		storageKey = fr.GetStorageKey()
+	}
+
+	// Delete the DB record
+	if err := svc.Delete(ctx, id); err != nil {
+		return err
+	}
+
+	// Delete from storage if there was a file (log but don't fail if this fails)
+	if storageKey != "" {
+		if err := svc.DeleteStoredFile(ctx, storageKey); err != nil {
+			slog.Warn("failed to delete file from storage", "key", storageKey, "error", err)
+		}
+	}
+
+	return nil
 }
 
 // Delete handles DELETE requests to delete an item of type T by ID.
@@ -576,6 +675,85 @@ func Delete[T any](deleteFunc CustomDeleteFunc[T]) http.HandlerFunc {
 		}
 
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// Download handles GET requests to download a file resource.
+// Streams the file for proxy mode, redirects to signed URL for signed URL mode.
+func Download[T any]() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		svc, err := service.New[T]()
+		if err != nil {
+			slog.Warn("failed to create service", "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		ctx := r.Context()
+
+		meta, err := metadata.FromContext(ctx)
+		if err != nil {
+			slog.Warn("metadata not found in context", "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		id := chi.URLParam(r, meta.URLParamUUID)
+		if id == "" {
+			slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		result, err := svc.Download(ctx, id)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				http.Error(w, "request timeout", http.StatusGatewayTimeout)
+				return
+			}
+			if errors.Is(err, apperrors.ErrNotFound) || errors.Is(err, filestore.ErrStorageKeyNotFound) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			if errors.Is(err, apperrors.ErrUnavailable) {
+				w.Header().Set("Retry-After", "5")
+				http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			slog.Warn("failed to download file", "id", id, "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Redirect mode
+		if result.SignedURL != "" {
+			http.Redirect(w, r, result.SignedURL, http.StatusTemporaryRedirect)
+			return
+		}
+
+		// Stream mode
+		defer func() { _ = result.Reader.Close() }()
+
+		contentType := result.ContentType
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		w.Header().Set("Content-Type", contentType)
+
+		if result.Size > 0 {
+			w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
+		}
+		if result.Filename != "" {
+			w.Header().Set("Content-Disposition", "attachment; filename=\""+result.Filename+"\"")
+		}
+
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.Copy(w, result.Reader); err != nil {
+			slog.Warn("failed to stream file", "error", err)
+		}
 	}
 }
 

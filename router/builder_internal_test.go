@@ -1,12 +1,24 @@
 package router
 
 import (
+	"context"
+	"io"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/sjgoldie/go-restgen/filestore"
 	"github.com/sjgoldie/go-restgen/metadata"
+	"github.com/uptrace/bun"
 )
 
 const testFieldName = "Name"
+
+// testModel is a simple model for testing route registration
+type testModel struct {
+	bun.BaseModel `bun:"table:test_models"`
+	ID            int    `bun:"id,pk,autoincrement" json:"id"`
+	Name          string `bun:"name" json:"name"`
+}
 
 func TestMergeQueryConfigs(t *testing.T) {
 	t.Run("empty configs returns clone of original", func(t *testing.T) {
@@ -290,5 +302,49 @@ func TestRegisterChildAuthConfig(t *testing.T) {
 		if parentGet.ChildAuth["new"] != newChild {
 			t.Error("new child auth not added")
 		}
+	})
+}
+
+// mockFileStorage is a test implementation of filestore.FileStorage
+type mockFileStorage struct{}
+
+func (m *mockFileStorage) Store(_ context.Context, _ io.Reader, _ filestore.FileMetadata) (string, error) {
+	return "test-key", nil
+}
+
+func (m *mockFileStorage) Retrieve(_ context.Context, _ string) (io.ReadCloser, filestore.FileMetadata, error) {
+	return nil, filestore.FileMetadata{}, nil
+}
+
+func (m *mockFileStorage) Delete(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockFileStorage) GenerateSignedURL(_ context.Context, _ string) (string, error) {
+	return "https://example.com/signed", nil
+}
+
+func TestAsFileResource(t *testing.T) {
+	t.Run("returns FileResourceConfig", func(t *testing.T) {
+		config := AsFileResource()
+		if config != (FileResourceConfig{}) {
+			t.Error("expected empty FileResourceConfig struct")
+		}
+	})
+}
+
+func TestFileResourceRegistration(t *testing.T) {
+	t.Run("succeeds when filestore is initialized", func(t *testing.T) {
+		// Initialize if not already done (singleton)
+		if !filestore.IsInitialized() {
+			storage := &mockFileStorage{}
+			if err := filestore.Initialize(storage); err != nil {
+				t.Fatalf("failed to initialize filestore: %v", err)
+			}
+		}
+
+		r := chi.NewRouter()
+		b := NewBuilder(r)
+		RegisterRoutes[testModel](b, "/test", AsFileResource())
 	})
 }

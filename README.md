@@ -1044,6 +1044,226 @@ router.RegisterRoutes[Project](b, "/projects",
 
 See the [custom handlers example](./examples/custom) for a complete working example.
 
+## File Resources
+
+go-restgen supports file upload and download with pluggable storage backends. Files are stored in external storage (local filesystem, S3, etc.) while metadata is stored in the database.
+
+### Features
+
+- **Multipart form upload** - Standard form-based file uploads with optional metadata
+- **Pluggable storage** - Implement `filestore.FileStorage` for any backend
+- **Two download modes**:
+  - **Proxy mode**: Files stream through your server (full auth control on downloads)
+  - **Signed URL mode**: Clients download directly from storage (scalable, CDN-friendly)
+- **Automatic metadata handling** - Filename, content type, and size tracked automatically
+
+### Defining a File Resource
+
+Embed `filestore.FileFields` in your model to make it a file resource:
+
+```go
+import "github.com/sjgoldie/go-restgen/filestore"
+
+type Image struct {
+    bun.BaseModel `bun:"table:images"`
+    ID            int       `bun:"id,pk,autoincrement" json:"id"`
+    PostID        int       `bun:"post_id,notnull" json:"post_id"`
+    Post          *Post     `bun:"rel:belongs-to,join:post_id=id" json:"-"`
+    filestore.FileFields    // Embeds StorageKey, Filename, ContentType, Size, DownloadURL
+    AltText       string    `bun:"alt_text" json:"alt_text,omitempty"`
+    CreatedAt     time.Time `bun:"created_at,notnull" json:"created_at"`
+}
+```
+
+`FileFields` embeds these fields:
+- `StorageKey` - Internal key for locating the file in storage (not exposed in JSON)
+- `Filename` - Original filename from upload
+- `ContentType` - MIME type of the file
+- `Size` - File size in bytes
+- `DownloadURL` - Generated URL for downloading (populated at response time)
+
+### Implementing Storage
+
+Implement the `filestore.FileStorage` interface:
+
+```go
+type FileStorage interface {
+    Store(ctx context.Context, r io.Reader, meta FileMetadata) (key string, err error)
+    Retrieve(ctx context.Context, key string) (io.ReadCloser, FileMetadata, error)
+    Delete(ctx context.Context, key string) error
+    GenerateSignedURL(ctx context.Context, key string) (string, error)
+}
+```
+
+#### GenerateSignedURL Controls Download Mode
+
+The `GenerateSignedURL` method determines how files are downloaded:
+
+- **Return a URL** → Signed URL mode: Clients download directly from storage
+- **Return empty string `""`** → Proxy mode: Files stream through your server via `/download` endpoint
+
+This design gives you full control per-storage-implementation, and even per-file if needed.
+
+**Proxy mode implementation** (downloads through your server):
+
+```go
+func (s *LocalStorage) GenerateSignedURL(ctx context.Context, key string) (string, error) {
+    return "", nil  // Empty string = proxy mode
+}
+```
+
+**Signed URL mode implementation** (direct download from storage):
+
+```go
+func (s *LocalStorage) GenerateSignedURL(ctx context.Context, key string) (string, error) {
+    return s.urlPrefix + "/" + key, nil  // URL = signed URL mode
+}
+```
+
+#### Complete Example
+
+```go
+type LocalStorage struct {
+    basePath  string
+    urlPrefix string  // Set for signed URL mode, empty for proxy mode
+}
+
+func (s *LocalStorage) Store(ctx context.Context, r io.Reader, meta filestore.FileMetadata) (string, error) {
+    key := uuid.New().String()
+    filePath := filepath.Join(s.basePath, key)
+    f, err := os.Create(filePath)
+    if err != nil {
+        return "", err
+    }
+    defer f.Close()
+    _, err = io.Copy(f, r)
+    return key, err
+}
+
+func (s *LocalStorage) Retrieve(ctx context.Context, key string) (io.ReadCloser, filestore.FileMetadata, error) {
+    f, err := os.Open(filepath.Join(s.basePath, key))
+    if err != nil {
+        return nil, filestore.FileMetadata{}, err
+    }
+    stat, _ := f.Stat()
+    return f, filestore.FileMetadata{Size: stat.Size()}, nil
+}
+
+func (s *LocalStorage) Delete(ctx context.Context, key string) error {
+    return os.Remove(filepath.Join(s.basePath, key))
+}
+
+func (s *LocalStorage) GenerateSignedURL(ctx context.Context, key string) (string, error) {
+    if s.urlPrefix == "" {
+        return "", nil  // Proxy mode
+    }
+    return s.urlPrefix + "/" + key, nil  // Signed URL mode
+}
+```
+
+### Registering File Routes
+
+Initialize file storage (global singleton like datastore), then use `AsFileResource()` option with `RegisterRoutes`:
+
+```go
+// Create your storage implementation (this is YOUR code, not the framework)
+storage := &MyS3Storage{bucket: "my-bucket", client: s3Client}
+
+// Initialize file storage globally (like datastore)
+if err := filestore.Initialize(storage); err != nil {
+    log.Fatal(err)
+}
+
+// Register parent with nested file resource
+b := router.NewBuilder(r)
+router.RegisterRoutes[Post](b, "/posts",
+    router.AllPublic(),
+    func(b *router.Builder) {
+        router.RegisterRoutes[Image](b, "/images",
+            router.AsFileResource(),  // Mark as file resource
+            router.AllPublic(),
+            router.WithFilters("Filename", "ContentType"),
+            router.WithSorts("Filename", "CreatedAt"),
+        )
+    },
+)
+```
+
+### Generated Endpoints
+
+**Proxy mode** generates:
+- `POST /posts/{id}/images` - Upload file (multipart form)
+- `GET /posts/{id}/images` - List files
+- `GET /posts/{id}/images/{id}` - Get file metadata
+- `GET /posts/{id}/images/{id}/download` - Download file (streams through server)
+- `DELETE /posts/{id}/images/{id}` - Delete file
+
+**Signed URL mode** generates the same endpoints except no `/download` endpoint. The `download_url` in responses points directly to storage.
+
+### Uploading Files
+
+Upload using multipart form with a `file` field and optional `metadata` JSON field:
+
+```bash
+curl -X POST http://localhost:8080/posts/1/images \
+  -F "file=@photo.jpg" \
+  -F 'metadata={"alt_text":"A beautiful photo"}'
+```
+
+Response includes the generated download URL:
+
+```json
+{
+    "id": 1,
+    "post_id": 1,
+    "filename": "photo.jpg",
+    "content_type": "image/jpeg",
+    "size": 12345,
+    "download_url": "/posts/1/images/1/download",
+    "alt_text": "A beautiful photo",
+    "created_at": "2025-01-01T00:00:00Z"
+}
+```
+
+### Proxy vs Signed URL Mode
+
+The mode is determined by your `GenerateSignedURL` implementation:
+
+| Feature | Proxy Mode (`return ""`) | Signed URL Mode (`return url`) |
+|---------|--------------------------|--------------------------------|
+| Download endpoint | `/resource/{id}/download` | Direct URL to storage |
+| Server load | All downloads through server | Minimal (only metadata) |
+| Auth on download | Full control | URL is the auth (time-limited in production) |
+| Best for | Small files, strict auth | Large files, CDN, S3/Minio |
+
+### S3/Minio Integration
+
+For production use with S3 or Minio:
+
+```go
+func (s *S3Storage) Store(ctx context.Context, r io.Reader, meta filestore.FileMetadata) (string, error) {
+    key := uuid.New().String()
+    _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+        Bucket:      &s.bucket,
+        Key:         &key,
+        Body:        r,
+        ContentType: &meta.ContentType,
+    })
+    return key, err
+}
+
+func (s *S3Storage) GenerateSignedURL(ctx context.Context, key string) (string, error) {
+    presignClient := s3.NewPresignClient(s.client)
+    req, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+        Bucket: &s.bucket,
+        Key:    &key,
+    }, s3.WithPresignExpires(15*time.Minute))
+    return req.URL, err
+}
+```
+
+See the [files_proxy example](./examples/files_proxy) and [files_signed example](./examples/files_signed) for complete working implementations.
+
 ## Architecture
 
 go-restgen follows a clean layered architecture:
@@ -1165,6 +1385,8 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[Validation](./examples/validator)** - Business rule validation with state machine transitions
 - **[Audit](./examples/audit)** - Audit logging with transactional consistency
 - **[Relations](./examples/relations)** - Loading related resources via `?include=` with auth
+- **[File Upload (Proxy)](./examples/files_proxy)** - File upload/download with proxy mode (files stream through server)
+- **[File Upload (Signed URL)](./examples/files_signed)** - File upload/download with signed URL mode (direct to storage)
 
 All examples include comprehensive Bruno API tests. See [`bruno/README.md`](./bruno/README.md) for details.
 
@@ -1231,8 +1453,10 @@ go-restgen builds on these excellent projects:
 - [x] UUID primary key support
 - [x] Relation includes via `?include=` with auth enforcement
 - [x] Single routes for belongs-to relations (`AsSingleRoute`)
+- [x] File upload/download with pluggable storage (proxy and signed URL modes)
 - [ ] MySQL support
 - [ ] OpenAPI/Swagger generation
+- [ ] Standalone examples (separate go.mod per example to avoid polluting main module)
 
 ## Contributing
 

@@ -104,6 +104,7 @@ type DownloadResult struct {
 
 // Download retrieves a file for download, handling both proxy and signed URL modes.
 // Returns a DownloadResult that indicates either streaming (Reader set) or redirect (SignedURL set).
+// The storage implementation decides whether to return a signed URL or not.
 func (s *Common[T]) Download(ctx context.Context, id string) (*DownloadResult, error) {
 	item, err := s.Get(ctx, id)
 	if err != nil {
@@ -125,15 +126,16 @@ func (s *Common[T]) Download(ctx context.Context, id string) (*DownloadResult, e
 		return nil, err
 	}
 
-	mode, _ := filestore.GetMode()
-	if mode == filestore.StorageSignedURL {
-		signedURL, err := storage.GenerateSignedURL(ctx, storageKey)
-		if err != nil {
-			return nil, err
-		}
+	// Try signed URL first - storage implementation decides if supported
+	signedURL, err := storage.GenerateSignedURL(ctx, storageKey)
+	if err != nil {
+		return nil, err
+	}
+	if signedURL != "" {
 		return &DownloadResult{SignedURL: signedURL}, nil
 	}
 
+	// Fall back to proxy mode
 	reader, err := s.RetrieveFile(ctx, storageKey)
 	if err != nil {
 		return nil, err

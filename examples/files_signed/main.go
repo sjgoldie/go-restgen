@@ -97,7 +97,7 @@ func main() {
 	}
 
 	// Initialize file storage (global singleton, like datastore)
-	if err := filestore.Initialize(storage, filestore.StorageSignedURL); err != nil {
+	if err := filestore.Initialize(storage); err != nil {
 		log.Fatal("Failed to initialize file storage:", err)
 	}
 

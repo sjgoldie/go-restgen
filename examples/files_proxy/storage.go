@@ -84,8 +84,7 @@ func (s *LocalStorage) Delete(ctx context.Context, key string) error {
 	return os.Remove(filePath)
 }
 
-// GenerateSignedURL returns a URL for the file
-// For local storage, this just returns a path-based URL (not truly "signed")
+// GenerateSignedURL returns empty string - this storage uses proxy mode
 func (s *LocalStorage) GenerateSignedURL(ctx context.Context, key string) (string, error) {
-	return s.urlPrefix + "/" + key, nil
+	return "", nil
 }

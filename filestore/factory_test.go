@@ -38,11 +38,6 @@ func TestFileStoreSingleton(t *testing.T) {
 		if err == nil {
 			t.Error("Get() should return error when not initialized")
 		}
-
-		_, err = GetMode()
-		if err == nil {
-			t.Error("GetMode() should return error when not initialized")
-		}
 	})
 
 	// Step 2: Initialize with valid storage
@@ -52,7 +47,7 @@ func TestFileStoreSingleton(t *testing.T) {
 		}
 
 		ms := &mockStorage{}
-		if err := Initialize(ms, StorageProxy); err != nil {
+		if err := Initialize(ms); err != nil {
 			t.Fatalf("Initialize() error = %v", err)
 		}
 
@@ -61,7 +56,7 @@ func TestFileStoreSingleton(t *testing.T) {
 		}
 	})
 
-	// Step 3: After initialization, Get and GetMode should work
+	// Step 3: After initialization, Get should work
 	t.Run("after initialization", func(t *testing.T) {
 		if !IsInitialized() {
 			t.Skip("singleton not initialized")
@@ -74,14 +69,6 @@ func TestFileStoreSingleton(t *testing.T) {
 		if fs == nil {
 			t.Error("Get() returned nil storage")
 		}
-
-		m, err := GetMode()
-		if err != nil {
-			t.Fatalf("GetMode() error = %v", err)
-		}
-		if m != StorageProxy {
-			t.Errorf("GetMode() = %v, want StorageProxy", m)
-		}
 	})
 
 	// Step 4: Second Initialize call should be ignored (sync.Once behavior)
@@ -90,16 +77,16 @@ func TestFileStoreSingleton(t *testing.T) {
 			t.Skip("singleton not initialized")
 		}
 
-		// Try to reinitialize with different mode - should be ignored
-		err := Initialize(&mockStorage{}, StorageSignedURL)
+		// Try to reinitialize - should be ignored
+		err := Initialize(&mockStorage{})
 		if err != nil {
 			t.Fatalf("Second Initialize() error = %v", err)
 		}
 
-		// Mode should still be StorageProxy from first init
-		m, _ := GetMode()
-		if m != StorageProxy {
-			t.Errorf("Mode changed after second Initialize(), got %v want StorageProxy", m)
+		// Should still work
+		fs, _ := Get()
+		if fs == nil {
+			t.Error("Get() returned nil after second Initialize()")
 		}
 	})
 }
@@ -112,7 +99,7 @@ func TestInitializeWithNil(t *testing.T) {
 		t.Skip("singleton already initialized, cannot test nil initialization")
 	}
 
-	err := Initialize(nil, StorageProxy)
+	err := Initialize(nil)
 	if err == nil {
 		t.Error("Initialize(nil) should return error")
 	}

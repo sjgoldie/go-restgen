@@ -1095,12 +1095,37 @@ type FileStorage interface {
 }
 ```
 
-Example local filesystem implementation:
+#### GenerateSignedURL Controls Download Mode
+
+The `GenerateSignedURL` method determines how files are downloaded:
+
+- **Return a URL** → Signed URL mode: Clients download directly from storage
+- **Return empty string `""`** → Proxy mode: Files stream through your server via `/download` endpoint
+
+This design gives you full control per-storage-implementation, and even per-file if needed.
+
+**Proxy mode implementation** (downloads through your server):
+
+```go
+func (s *LocalStorage) GenerateSignedURL(ctx context.Context, key string) (string, error) {
+    return "", nil  // Empty string = proxy mode
+}
+```
+
+**Signed URL mode implementation** (direct download from storage):
+
+```go
+func (s *LocalStorage) GenerateSignedURL(ctx context.Context, key string) (string, error) {
+    return s.urlPrefix + "/" + key, nil  // URL = signed URL mode
+}
+```
+
+#### Complete Example
 
 ```go
 type LocalStorage struct {
     basePath  string
-    urlPrefix string
+    urlPrefix string  // Set for signed URL mode, empty for proxy mode
 }
 
 func (s *LocalStorage) Store(ctx context.Context, r io.Reader, meta filestore.FileMetadata) (string, error) {
@@ -1129,7 +1154,10 @@ func (s *LocalStorage) Delete(ctx context.Context, key string) error {
 }
 
 func (s *LocalStorage) GenerateSignedURL(ctx context.Context, key string) (string, error) {
-    return s.urlPrefix + "/" + key, nil
+    if s.urlPrefix == "" {
+        return "", nil  // Proxy mode
+    }
+    return s.urlPrefix + "/" + key, nil  // Signed URL mode
 }
 ```
 
@@ -1142,7 +1170,7 @@ Initialize file storage (global singleton like datastore), then use `AsFileResou
 storage := &MyS3Storage{bucket: "my-bucket", client: s3Client}
 
 // Initialize file storage globally (like datastore)
-if err := filestore.Initialize(storage, filestore.StorageProxy); err != nil {
+if err := filestore.Initialize(storage); err != nil {
     log.Fatal(err)
 }
 
@@ -1199,8 +1227,10 @@ Response includes the generated download URL:
 
 ### Proxy vs Signed URL Mode
 
-| Feature | Proxy Mode | Signed URL Mode |
-|---------|------------|-----------------|
+The mode is determined by your `GenerateSignedURL` implementation:
+
+| Feature | Proxy Mode (`return ""`) | Signed URL Mode (`return url`) |
+|---------|--------------------------|--------------------------------|
 | Download endpoint | `/resource/{id}/download` | Direct URL to storage |
 | Server load | All downloads through server | Minimal (only metadata) |
 | Auth on download | Full control | URL is the auth (time-limited in production) |

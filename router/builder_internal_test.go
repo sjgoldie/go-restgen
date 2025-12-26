@@ -338,7 +338,7 @@ func TestFileResourceRegistration(t *testing.T) {
 		// Initialize if not already done (singleton)
 		if !filestore.IsInitialized() {
 			storage := &mockFileStorage{}
-			if err := filestore.Initialize(storage, filestore.StorageProxy); err != nil {
+			if err := filestore.Initialize(storage); err != nil {
 				t.Fatalf("failed to initialize filestore: %v", err)
 			}
 		}

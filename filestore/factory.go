@@ -11,14 +11,6 @@ import (
 // ErrStorageKeyNotFound is returned when a file resource doesn't have a storage key
 var ErrStorageKeyNotFound = errors.New("storage key not found on file resource")
 
-// StorageMode determines how downloads are served
-type StorageMode int
-
-const (
-	StorageProxy     StorageMode = iota // Binary streamed through server (default, secure)
-	StorageSignedURL                    // Direct URL to storage (requires storage support)
-)
-
 // FileMetadata contains metadata about a stored file
 type FileMetadata struct {
 	ContentType string
@@ -37,16 +29,16 @@ type FileStorage interface {
 	// Delete removes a file from storage
 	Delete(ctx context.Context, key string) error
 
-	// GenerateSignedURL returns a signed URL for direct access to the file
-	// Only called when StorageMode is StorageSignedURL
+	// GenerateSignedURL returns a signed URL for direct access to the file.
+	// If the storage supports signed URLs, it returns the URL.
+	// If not supported, it returns an empty string (not an error).
+	// Errors are only returned for actual failures (e.g., network issues).
 	GenerateSignedURL(ctx context.Context, key string) (string, error)
 }
 
 var (
 	// singleton instance for file storage
 	storage FileStorage
-	// storageMode determines how downloads are served
-	mode StorageMode
 	// once ensures Initialize is only called once
 	once sync.Once
 	// initErr stores any initialization error
@@ -56,14 +48,13 @@ var (
 // Initialize sets the global file storage singleton
 // This must be called during application startup before any file handlers are used
 // It is safe to call from multiple goroutines, but only the first call will take effect
-func Initialize(fs FileStorage, m StorageMode) error {
+func Initialize(fs FileStorage) error {
 	once.Do(func() {
 		if fs == nil {
 			initErr = fmt.Errorf("file storage cannot be nil")
 			return
 		}
 		storage = fs
-		mode = m
 	})
 	return initErr
 }
@@ -75,15 +66,6 @@ func Get() (FileStorage, error) {
 		return nil, fmt.Errorf("file storage not initialized - call filestore.Initialize() first")
 	}
 	return storage, nil
-}
-
-// GetMode returns the configured storage mode
-// Returns an error if Initialize() hasn't been called
-func GetMode() (StorageMode, error) {
-	if storage == nil {
-		return StorageProxy, fmt.Errorf("file storage not initialized - call filestore.Initialize() first")
-	}
-	return mode, nil
 }
 
 // IsInitialized returns true if file storage has been initialized

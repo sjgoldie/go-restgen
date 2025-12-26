@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -27,7 +28,8 @@ import (
 
 // Test route paths as constants to avoid duplication
 const (
-	testUsersPath = "/users"
+	testUsersPath   = "/users"
+	testFileContent = "file content here"
 )
 
 // TestUser is a test model
@@ -50,6 +52,9 @@ type TestPost struct {
 
 // Global test database for all handler tests
 var testDB *datastore.SQLite
+
+// Global mock file storage for all handler tests
+var testFileStorage *mockFileStorage
 
 // Test metadata for injecting into context
 var userMeta = &metadata.TypeMetadata{
@@ -101,6 +106,13 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		testDB.Cleanup()
 		panic("Failed to create posts table: " + err.Error())
+	}
+
+	// Initialize file storage once for all tests (uses sync.Once internally)
+	testFileStorage = newMockFileStorage()
+	if err := filestore.Initialize(testFileStorage); err != nil {
+		testDB.Cleanup()
+		panic("Failed to initialize file storage: " + err.Error())
 	}
 
 	// Run tests
@@ -1970,5 +1982,442 @@ func TestCustomGetAll(t *testing.T) {
 	// Should only have users 202 and 203
 	if len(result) != 2 {
 		t.Errorf("Expected 2 users, got %d", len(result))
+	}
+}
+
+// TestFileModel is a test model that implements FileResource
+type TestFileModel struct {
+	bun.BaseModel `bun:"table:test_file_models"`
+	ID            int    `bun:"id,pk,autoincrement" json:"id"`
+	Name          string `bun:"name" json:"name"`
+	filestore.FileFields
+}
+
+var testFileMeta = &metadata.TypeMetadata{
+	TypeID:       "test_file_model_id",
+	TypeName:     "TestFileModel",
+	TableName:    "test_file_models",
+	URLParamUUID: "test_file_uuid",
+	ModelType:    reflect.TypeOf(TestFileModel{}),
+}
+
+// mockFileStorage is a mock implementation of FileStorage for testing
+type mockFileStorage struct {
+	files     map[string]string
+	signedURL string // empty string means proxy mode, non-empty means signed URL mode
+}
+
+func newMockFileStorage() *mockFileStorage {
+	return &mockFileStorage{
+		files:     make(map[string]string),
+		signedURL: "", // Default to proxy mode
+	}
+}
+
+func (m *mockFileStorage) Store(ctx context.Context, r io.Reader, meta filestore.FileMetadata) (string, error) {
+	content, _ := io.ReadAll(r)
+	key := "test-key-123"
+	m.files[key] = string(content)
+	return key, nil
+}
+
+func (m *mockFileStorage) Retrieve(ctx context.Context, key string) (io.ReadCloser, filestore.FileMetadata, error) {
+	content, ok := m.files[key]
+	if !ok {
+		return nil, filestore.FileMetadata{}, filestore.ErrStorageKeyNotFound
+	}
+	return io.NopCloser(bytes.NewReader([]byte(content))), filestore.FileMetadata{
+		ContentType: "text/plain",
+		Size:        int64(len(content)),
+		Filename:    "test.txt",
+	}, nil
+}
+
+func (m *mockFileStorage) Delete(ctx context.Context, key string) error {
+	delete(m.files, key)
+	return nil
+}
+
+func (m *mockFileStorage) GenerateSignedURL(ctx context.Context, key string) (string, error) {
+	return m.signedURL, nil
+}
+
+func TestDownload_ProxyMode(t *testing.T) {
+	// Create table
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_file_models table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	// Add file to shared mock storage
+	testFileStorage.files["test-storage-key"] = testFileContent
+	defer delete(testFileStorage.files, "test-storage-key")
+
+	// Create file record
+	file := &TestFileModel{
+		Name: "Test File",
+		FileFields: filestore.FileFields{
+			StorageKey:  "test-storage-key",
+			Filename:    "test.txt",
+			ContentType: "text/plain",
+			Size:        17,
+		},
+	}
+	_, err = testDB.GetDB().NewInsert().Model(file).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create file:", err)
+	}
+
+	// Make request
+	req := httptest.NewRequest(http.MethodGet, "/files/1/download", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(testFileMeta.URLParamUUID, "1")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Download[TestFileModel]()(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		return
+	}
+
+	// Check content type
+	if ct := w.Header().Get("Content-Type"); ct != "text/plain" {
+		t.Errorf("Expected Content-Type 'text/plain', got '%s'", ct)
+	}
+
+	// Check content
+	if body := w.Body.String(); body != testFileContent {
+		t.Errorf("Expected body '%s', got '%s'", testFileContent, body)
+	}
+}
+
+func TestDownload_SignedURLMode(t *testing.T) {
+	// Create table
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_file_models table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	// Configure mock storage to return signed URLs
+	testFileStorage.files["test-storage-key"] = testFileContent
+	testFileStorage.signedURL = "https://signed.example.com/file"
+	defer func() {
+		delete(testFileStorage.files, "test-storage-key")
+		testFileStorage.signedURL = "" // Reset to proxy mode
+	}()
+
+	// Create file record
+	file := &TestFileModel{
+		Name: "Test File",
+		FileFields: filestore.FileFields{
+			StorageKey:  "test-storage-key",
+			Filename:    "test.txt",
+			ContentType: "text/plain",
+			Size:        17,
+		},
+	}
+	_, err = testDB.GetDB().NewInsert().Model(file).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create file:", err)
+	}
+
+	// Make request
+	req := httptest.NewRequest(http.MethodGet, "/files/1/download", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(testFileMeta.URLParamUUID, "1")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Download[TestFileModel]()(w, req)
+
+	// Should redirect
+	if w.Code != http.StatusTemporaryRedirect {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusTemporaryRedirect, w.Code, w.Body.String())
+		return
+	}
+
+	// Check Location header
+	location := w.Header().Get("Location")
+	if location != "https://signed.example.com/file" {
+		t.Errorf("Expected Location 'https://signed.example.com/file', got '%s'", location)
+	}
+}
+
+func TestDownload_NotFound(t *testing.T) {
+	// Create table
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_file_models table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	// Make request for non-existent file
+	req := httptest.NewRequest(http.MethodGet, "/files/999/download", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(testFileMeta.URLParamUUID, "999")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Download[TestFileModel]()(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusNotFound, w.Code, w.Body.String())
+	}
+}
+
+func TestDownload_MissingID(t *testing.T) {
+	// Make request without ID param
+	req := httptest.NewRequest(http.MethodGet, "/files/download", nil)
+	rctx := chi.NewRouteContext()
+	// Note: not adding URL param
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Download[TestFileModel]()(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
+	}
+}
+
+func TestDownload_MissingMetadata(t *testing.T) {
+	// Make request without metadata in context
+	req := httptest.NewRequest(http.MethodGet, "/files/1/download", nil)
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	// Note: NOT adding metadata to context
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Download[TestFileModel]()(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusInternalServerError, w.Code, w.Body.String())
+	}
+}
+
+func TestDownload_EmptyContentType(t *testing.T) {
+	// Create table
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_file_models table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	// Add file to shared mock storage
+	testFileStorage.files["test-storage-key"] = "file content"
+	defer delete(testFileStorage.files, "test-storage-key")
+
+	// Create file record with empty content type
+	file := &TestFileModel{
+		Name: "Test File",
+		FileFields: filestore.FileFields{
+			StorageKey:  "test-storage-key",
+			Filename:    "",
+			ContentType: "", // Empty!
+			Size:        0,  // Zero size
+		},
+	}
+	_, err = testDB.GetDB().NewInsert().Model(file).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create file:", err)
+	}
+
+	// Make request
+	req := httptest.NewRequest(http.MethodGet, "/files/1/download", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(testFileMeta.URLParamUUID, "1")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Download[TestFileModel]()(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		return
+	}
+
+	// Should default to application/octet-stream
+	if ct := w.Header().Get("Content-Type"); ct != "application/octet-stream" {
+		t.Errorf("Expected Content-Type 'application/octet-stream', got '%s'", ct)
+	}
+
+	// Should NOT have Content-Length header (size is 0)
+	if cl := w.Header().Get("Content-Length"); cl != "" {
+		t.Errorf("Expected no Content-Length header, got '%s'", cl)
+	}
+
+	// Should NOT have Content-Disposition header (filename is empty)
+	if cd := w.Header().Get("Content-Disposition"); cd != "" {
+		t.Errorf("Expected no Content-Disposition header, got '%s'", cd)
+	}
+}
+
+func TestDownload_EmptyStorageKey(t *testing.T) {
+	// Create table
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_file_models table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	// Create file record with empty storage key
+	file := &TestFileModel{
+		Name: "Test File",
+		FileFields: filestore.FileFields{
+			StorageKey: "", // Empty!
+		},
+	}
+	_, err = testDB.GetDB().NewInsert().Model(file).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create file:", err)
+	}
+
+	// Make request
+	req := httptest.NewRequest(http.MethodGet, "/files/1/download", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(testFileMeta.URLParamUUID, "1")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Download[TestFileModel]()(w, req)
+
+	// Should return 404 for empty storage key
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusNotFound, w.Code, w.Body.String())
+	}
+}
+
+func TestDownload_WithContentLength(t *testing.T) {
+	// Create table
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_file_models table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	// Add file to shared mock storage
+	testContent := "test file content with known size"
+	testFileStorage.files["test-storage-key"] = testContent
+	defer delete(testFileStorage.files, "test-storage-key")
+
+	// Create file record with size set
+	file := &TestFileModel{
+		Name: "Test File",
+		FileFields: filestore.FileFields{
+			StorageKey:  "test-storage-key",
+			ContentType: "text/plain",
+			Filename:    "test.txt",
+			Size:        int64(len(testContent)),
+		},
+	}
+	_, err = testDB.GetDB().NewInsert().Model(file).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create file:", err)
+	}
+
+	// Make request
+	req := httptest.NewRequest(http.MethodGet, "/files/1/download", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(testFileMeta.URLParamUUID, "1")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Download[TestFileModel]()(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	// Check Content-Length header is set
+	contentLength := w.Header().Get("Content-Length")
+	expectedLength := strconv.Itoa(len(testContent))
+	if contentLength != expectedLength {
+		t.Errorf("Expected Content-Length '%s', got '%s'", expectedLength, contentLength)
+	}
+
+	// Check Content-Disposition header
+	contentDisposition := w.Header().Get("Content-Disposition")
+	if contentDisposition != `attachment; filename="test.txt"` {
+		t.Errorf("Expected Content-Disposition header, got '%s'", contentDisposition)
+	}
+}
+
+func TestDownload_ContextDeadlineExceeded(t *testing.T) {
+	// Create table
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_file_models table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	// Make request with already-canceled context (deadline exceeded)
+	req := httptest.NewRequest(http.MethodGet, "/files/1/download", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(testFileMeta.URLParamUUID, "1")
+
+	// Create a context that's already past deadline
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+	defer cancel()
+
+	ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Download[TestFileModel]()(w, req)
+
+	// Should return 504 Gateway Timeout for deadline exceeded
+	if w.Code != http.StatusGatewayTimeout {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusGatewayTimeout, w.Code, w.Body.String())
+	}
+}
+
+func TestDownload_ContextCanceled(t *testing.T) {
+	// Create table
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_file_models table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	// Make request with already-canceled context
+	req := httptest.NewRequest(http.MethodGet, "/files/1/download", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(testFileMeta.URLParamUUID, "1")
+
+	// Create and immediately cancel context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Download[TestFileModel]()(w, req)
+
+	// Should return 200 with empty body for canceled context (early return)
+	// The handler just returns without writing anything
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d (default for no response), got %d: %s", http.StatusOK, w.Code, w.Body.String())
 	}
 }

@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"os"
 	"reflect"
 	"strconv"
@@ -1994,17 +1996,19 @@ type TestFileModel struct {
 }
 
 var testFileMeta = &metadata.TypeMetadata{
-	TypeID:       "test_file_model_id",
-	TypeName:     "TestFileModel",
-	TableName:    "test_file_models",
-	URLParamUUID: "test_file_uuid",
-	ModelType:    reflect.TypeOf(TestFileModel{}),
+	TypeID:         "test_file_model_id",
+	TypeName:       "TestFileModel",
+	TableName:      "test_file_models",
+	URLParamUUID:   "test_file_uuid",
+	ModelType:      reflect.TypeOf(TestFileModel{}),
+	IsFileResource: true,
 }
 
 // mockFileStorage is a mock implementation of FileStorage for testing
 type mockFileStorage struct {
-	files     map[string]string
-	signedURL string // empty string means proxy mode, non-empty means signed URL mode
+	files      map[string]string
+	signedURL  string                 // empty string means proxy mode, non-empty means signed URL mode
+	deleteFunc func(key string) error // optional callback for testing delete behavior
 }
 
 func newMockFileStorage() *mockFileStorage {
@@ -2034,6 +2038,9 @@ func (m *mockFileStorage) Retrieve(ctx context.Context, key string) (io.ReadClos
 }
 
 func (m *mockFileStorage) Delete(ctx context.Context, key string) error {
+	if m.deleteFunc != nil {
+		return m.deleteFunc(key)
+	}
 	delete(m.files, key)
 	return nil
 }
@@ -2419,5 +2426,241 @@ func TestDownload_ContextCanceled(t *testing.T) {
 	// The handler just returns without writing anything
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status %d (default for no response), got %d: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+}
+
+func TestCreate_MultipartFormUpload(t *testing.T) {
+	// Create table
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_file_models table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	// Create multipart form body
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	// Add file field
+	fileWriter, err := writer.CreateFormFile("file", "test-upload.txt")
+	if err != nil {
+		t.Fatal("Failed to create form file:", err)
+	}
+	fileWriter.Write([]byte(testFileContent))
+
+	// Add metadata JSON field
+	metadataField, err := writer.CreateFormField("metadata")
+	if err != nil {
+		t.Fatal("Failed to create metadata field:", err)
+	}
+	metadataField.Write([]byte(`{"name":"Uploaded File"}`))
+
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/files", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Create(handler.StandardCreate[TestFileModel])(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
+		return
+	}
+
+	var result TestFileModel
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if result.Name != "Uploaded File" {
+		t.Errorf("Expected name 'Uploaded File', got '%s'", result.Name)
+	}
+	if result.Filename != "test-upload.txt" {
+		t.Errorf("Expected filename 'test-upload.txt', got '%s'", result.Filename)
+	}
+	if result.Size != int64(len(testFileContent)) {
+		t.Errorf("Expected size %d, got %d", len(testFileContent), result.Size)
+	}
+	// StorageKey is json:"-" so won't be in response - verify it was stored in DB
+	var dbRecord TestFileModel
+	err = testDB.GetDB().NewSelect().Model(&dbRecord).Where("id = ?", result.ID).Scan(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to fetch record from DB: %v", err)
+	}
+	if dbRecord.StorageKey == "" {
+		t.Error("Expected storage key to be set in DB record")
+	}
+}
+
+func TestCreate_MultipartFormInvalidMetadataJSON(t *testing.T) {
+	// Create multipart form body with invalid JSON metadata
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	// Add file field
+	fileWriter, err := writer.CreateFormFile("file", "test.txt")
+	if err != nil {
+		t.Fatal("Failed to create form file:", err)
+	}
+	fileWriter.Write([]byte("test content"))
+
+	// Add invalid metadata JSON
+	metadataField, err := writer.CreateFormField("metadata")
+	if err != nil {
+		t.Fatal("Failed to create metadata field:", err)
+	}
+	metadataField.Write([]byte(`{invalid json`))
+
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/files", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Create(handler.StandardCreate[TestFileModel])(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
+	}
+}
+
+func TestCreate_MultipartFormNoContentType(t *testing.T) {
+	// Create table
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_file_models table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	// Create multipart form body
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	// Add file field with no Content-Type header (should default to application/octet-stream)
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", `form-data; name="file"; filename="test.bin"`)
+	// Note: NOT setting Content-Type header
+	fileWriter, err := writer.CreatePart(h)
+	if err != nil {
+		t.Fatal("Failed to create form file:", err)
+	}
+	fileWriter.Write([]byte("binary content"))
+
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/files", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Create(handler.StandardCreate[TestFileModel])(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
+		return
+	}
+
+	var result TestFileModel
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Should default to application/octet-stream
+	if result.ContentType != "application/octet-stream" {
+		t.Errorf("Expected content type 'application/octet-stream', got '%s'", result.ContentType)
+	}
+}
+
+func TestCreate_MultipartFormParseError(t *testing.T) {
+	// Send invalid multipart form data
+	req := httptest.NewRequest(http.MethodPost, "/files", bytes.NewReader([]byte("not valid multipart")))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=invalid")
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Create(handler.StandardCreate[TestFileModel])(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
+	}
+}
+
+func TestStandardCreate_CleansUpFileOnDBError(t *testing.T) {
+	// Create table
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_file_models table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	// Track deleted keys
+	var deletedKeys []string
+	originalDelete := testFileStorage.deleteFunc
+	testFileStorage.deleteFunc = func(key string) error {
+		deletedKeys = append(deletedKeys, key)
+		return nil
+	}
+	defer func() { testFileStorage.deleteFunc = originalDelete }()
+
+	// Create a custom create function that returns an error after file is stored
+	failingCreate := func(ctx context.Context, svc *service.Common[TestFileModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item TestFileModel, file io.Reader, fileMeta filestore.FileMetadata) (*TestFileModel, error) {
+		// Store the file (this is what StandardCreate does)
+		if file != nil && meta.IsFileResource {
+			storageKey, err := svc.StoreFile(ctx, file, fileMeta)
+			if err != nil {
+				return nil, err
+			}
+			// Simulate DB error after file storage
+			// Clean up the file we just stored
+			_ = svc.DeleteStoredFile(ctx, storageKey)
+			return nil, fmt.Errorf("simulated DB error")
+		}
+		return nil, fmt.Errorf("simulated DB error")
+	}
+
+	// Create multipart form body
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	fileWriter, _ := writer.CreateFormFile("file", "test.txt")
+	fileWriter.Write([]byte("test content"))
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/files", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Create(failingCreate)(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusInternalServerError, w.Code, w.Body.String())
+	}
+
+	// Verify file was cleaned up
+	if len(deletedKeys) == 0 {
+		t.Error("Expected file to be deleted after DB error")
 	}
 }

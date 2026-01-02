@@ -58,8 +58,35 @@ type AuthInfo struct {
 	Scopes []string // List of scopes/permissions the user has
 }
 
+// authInfoKeyType is the context key type for storing AuthInfo
+type authInfoKeyType string
+
 // AuthInfoKey is the context key for storing AuthInfo
-const AuthInfoKey = "authInfo"
+const AuthInfoKey authInfoKeyType = "restgen_auth_info"
+
+// parentIDsKeyType is the context key type for storing parent IDs
+type parentIDsKeyType string
+
+// ParentIDsKey is the context key for storing parent IDs in nested routes
+const ParentIDsKey parentIDsKeyType = "restgen_parent_ids"
+
+// ownershipEnforcedKeyType is the context key type for ownership enforcement flag
+type ownershipEnforcedKeyType string
+
+// OwnershipEnforcedKey is the context key for the ownership enforcement flag
+const OwnershipEnforcedKey ownershipEnforcedKeyType = "restgen_ownership_enforced"
+
+// ownershipUserIDKeyType is the context key type for ownership user ID
+type ownershipUserIDKeyType string
+
+// OwnershipUserIDKey is the context key for the ownership user ID
+const OwnershipUserIDKey ownershipUserIDKeyType = "restgen_ownership_user_id"
+
+// ownershipFieldsKeyType is the context key type for ownership fields
+type ownershipFieldsKeyType string
+
+// OwnershipFieldsKey is the context key for the ownership fields
+const OwnershipFieldsKey ownershipFieldsKeyType = "restgen_ownership_fields"
 
 // TypeMetadata contains all metadata for a registered type
 type TypeMetadata struct {

@@ -24,14 +24,6 @@ type Builder struct {
 	parentAuthList *AuthConfig            // Parent's auth config for LIST (for populating ChildAuth)
 }
 
-// NewBuilder creates a new Builder for registering routes
-func NewBuilder(r chi.Router) *Builder {
-	return &Builder{
-		router:     r,
-		parentMeta: nil,
-	}
-}
-
 // customHandlers holds optional custom handler functions for a route registration
 type customHandlers[T any] struct {
 	get    handler.CustomGetFunc[T]
@@ -57,6 +49,21 @@ type actionEntry[T any] struct {
 
 // FileResourceConfig marks a route as a file resource
 type FileResourceConfig struct{}
+
+// metadataSetup holds the prepared metadata and auth configuration for route registration
+type metadataSetup struct {
+	meta               *metadata.TypeMetadata
+	authMap            map[string]*AuthConfig
+	metadataMiddleware func(http.Handler) http.Handler
+}
+
+// NewBuilder creates a new Builder for registering routes
+func NewBuilder(r chi.Router) *Builder {
+	return &Builder{
+		router:     r,
+		parentMeta: nil,
+	}
+}
 
 // AsFileResource marks this route as a file resource.
 // File resources use multipart form uploads instead of JSON.
@@ -128,13 +135,6 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 	}
 
 	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, relationName, singleRoute, isFileResource, pkField)
-}
-
-// metadataSetup holds the prepared metadata and auth configuration for route registration
-type metadataSetup struct {
-	meta               *metadata.TypeMetadata
-	authMap            map[string]*AuthConfig
-	metadataMiddleware func(http.Handler) http.Handler
 }
 
 // prepareMetadata assembles type metadata and auth configuration before route registration.
@@ -440,7 +440,7 @@ func createParentIDMiddleware(paramUUID string) func(http.Handler) http.Handler 
 
 			// Get existing parent IDs from context or create new map
 			ctx := r.Context()
-			parentIDs, ok := ctx.Value("parentIDs").(map[string]string)
+			parentIDs, ok := ctx.Value(metadata.ParentIDsKey).(map[string]string)
 			if !ok || parentIDs == nil {
 				parentIDs = make(map[string]string)
 			}
@@ -449,7 +449,7 @@ func createParentIDMiddleware(paramUUID string) func(http.Handler) http.Handler 
 			parentIDs[paramUUID] = parentID
 
 			// Store updated map in context
-			ctx = context.WithValue(ctx, "parentIDs", parentIDs) //nolint:staticcheck // Framework-internal context key
+			ctx = context.WithValue(ctx, metadata.ParentIDsKey, parentIDs)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

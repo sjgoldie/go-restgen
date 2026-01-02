@@ -14,6 +14,16 @@ type Common[T any] struct {
 	store *datastore.Wrapper[T]
 }
 
+// DownloadResult contains the result of a Download operation.
+// Either Reader is set (for proxy/streaming) or SignedURL is set (for redirect).
+type DownloadResult struct {
+	ContentType string
+	Filename    string
+	Size        int64
+	Reader      io.ReadCloser // nil if SignedURL is set
+	SignedURL   string        // non-empty for redirect
+}
+
 // GetAll retrieves all items of type T
 // Returns items, total count (0 if not requested), and error
 func (s *Common[T]) GetAll(ctx context.Context) ([]*T, int, error) {
@@ -90,16 +100,6 @@ func (s *Common[T]) RetrieveFile(ctx context.Context, storageKey string) (io.Rea
 	}
 	reader, _, err := fs.Retrieve(ctx, storageKey)
 	return reader, err
-}
-
-// DownloadResult contains the result of a Download operation.
-// Either Reader is set (for proxy/streaming) or SignedURL is set (for redirect).
-type DownloadResult struct {
-	ContentType string
-	Filename    string
-	Size        int64
-	Reader      io.ReadCloser // nil if SignedURL is set
-	SignedURL   string        // non-empty for redirect
 }
 
 // Download retrieves a file for download, handling both proxy and signed URL modes.

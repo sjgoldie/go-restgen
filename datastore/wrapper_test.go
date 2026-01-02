@@ -538,8 +538,8 @@ func TestOwnership_SingleField_GetAll(t *testing.T) {
 	}
 
 	// GetAll with ownership enforcement for alice
-	ctxWithOwnership := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxWithOwnership = context.WithValue(ctxWithOwnership, "ownershipUserID", "alice")
+	ctxWithOwnership := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxWithOwnership = context.WithValue(ctxWithOwnership, metadata.OwnershipUserIDKey, "alice")
 
 	retrieved, _, err := wrapper.GetAll(ctxWithOwnership)
 	if err != nil {
@@ -573,8 +573,8 @@ func TestOwnership_SingleField_Get(t *testing.T) {
 	}
 
 	// Get with ownership enforcement for alice (should succeed)
-	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
+	ctxAlice := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxAlice = context.WithValue(ctxAlice, metadata.OwnershipUserIDKey, "alice")
 
 	retrieved, err := wrapper.Get(ctxAlice, strconv.Itoa(created.ID))
 	if err != nil {
@@ -585,8 +585,8 @@ func TestOwnership_SingleField_Get(t *testing.T) {
 	}
 
 	// Get with ownership enforcement for bob (should fail)
-	ctxBob := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxBob = context.WithValue(ctxBob, "ownershipUserID", "bob")
+	ctxBob := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxBob = context.WithValue(ctxBob, metadata.OwnershipUserIDKey, "bob")
 
 	_, err = wrapper.Get(ctxBob, strconv.Itoa(created.ID))
 	if err == nil {
@@ -615,7 +615,7 @@ func TestOwnership_MultipleFields_GetAll(t *testing.T) {
 	parentIDs := map[string]string{
 		"blog_id": strconv.Itoa(createdBlog.ID),
 	}
-	ctxWithParent := context.WithValue(ctxPost, "parentIDs", parentIDs)
+	ctxWithParent := context.WithValue(ctxPost, metadata.ParentIDsKey, parentIDs)
 
 	posts := []TestOwnedPost{
 		{BlogID: createdBlog.ID, AuthorID: "alice", EditorID: "", Title: "Alice authored"},
@@ -632,8 +632,8 @@ func TestOwnership_MultipleFields_GetAll(t *testing.T) {
 
 	// GetAll with ownership enforcement for alice
 	// Should get posts where alice is author OR editor
-	ctxAlice := context.WithValue(ctxPost, "ownershipEnforced", true)
-	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
+	ctxAlice := context.WithValue(ctxPost, metadata.OwnershipEnforcedKey, true)
+	ctxAlice = context.WithValue(ctxAlice, metadata.OwnershipUserIDKey, "alice")
 
 	retrieved, _, err := postWrapper.GetAll(ctxAlice)
 	if err != nil {
@@ -674,14 +674,14 @@ func TestOwnership_BypassScope_Admin(t *testing.T) {
 	}
 
 	// GetAll with ownership enforcement for charlie, but charlie is admin
-	ctxCharlie := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxCharlie = context.WithValue(ctxCharlie, "ownershipUserID", "charlie")
+	ctxCharlie := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxCharlie = context.WithValue(ctxCharlie, metadata.OwnershipUserIDKey, "charlie")
 
 	authInfo := &metadata.AuthInfo{
 		UserID: "charlie",
 		Scopes: []string{"admin"},
 	}
-	ctxCharlie = context.WithValue(ctxCharlie, "authInfo", authInfo)
+	ctxCharlie = context.WithValue(ctxCharlie, metadata.AuthInfoKey, authInfo)
 
 	retrieved, _, err := wrapper.GetAll(ctxCharlie)
 	if err != nil {
@@ -716,14 +716,14 @@ func TestOwnership_BypassScope_Moderator(t *testing.T) {
 	}
 
 	// GetAll with ownership enforcement for diana, but diana is moderator
-	ctxDiana := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxDiana = context.WithValue(ctxDiana, "ownershipUserID", "diana")
+	ctxDiana := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxDiana = context.WithValue(ctxDiana, metadata.OwnershipUserIDKey, "diana")
 
-	authInfo := &metadata.AuthInfo{
+	authInfoDiana := &metadata.AuthInfo{
 		UserID: "diana",
 		Scopes: []string{"moderator"},
 	}
-	ctxDiana = context.WithValue(ctxDiana, "authInfo", authInfo)
+	ctxDiana = context.WithValue(ctxDiana, metadata.AuthInfoKey, authInfoDiana)
 
 	retrieved, _, err := wrapper.GetAll(ctxDiana)
 	if err != nil {
@@ -744,8 +744,8 @@ func TestOwnership_SetOwnershipField_OnCreate(t *testing.T) {
 	ctx := ctxWithMeta(testOwnedBlogMeta)
 
 	// Create with ownership enforcement
-	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
+	ctxAlice := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxAlice = context.WithValue(ctxAlice, metadata.OwnershipUserIDKey, "alice")
 
 	blog := TestOwnedBlog{
 		AuthorID: "", // Will be set automatically
@@ -816,8 +816,8 @@ func TestOwnership_TypeWithoutOwnershipConfig(t *testing.T) {
 
 	// GetAll with ownership enforcement, but TestUser has no ownership config
 	// Should return all users (ownership filter is skipped for types without config)
-	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
+	ctxAlice := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxAlice = context.WithValue(ctxAlice, metadata.OwnershipUserIDKey, "alice")
 
 	retrieved, _, err := wrapper.GetAll(ctxAlice)
 	if err != nil {
@@ -848,14 +848,14 @@ func TestOwnership_NestedResourceValidation(t *testing.T) {
 
 	// Try to create post under alice's blog as bob (with ownership enforcement)
 	// This should fail because bob can't access alice's blog
-	ctxBob := context.WithValue(ctxPost, "ownershipEnforced", true)
-	ctxBob = context.WithValue(ctxBob, "ownershipUserID", "bob")
+	ctxBob := context.WithValue(ctxPost, metadata.OwnershipEnforcedKey, true)
+	ctxBob = context.WithValue(ctxBob, metadata.OwnershipUserIDKey, "bob")
 
 	// Add parent ID to context
 	parentIDs := map[string]string{
 		"blog_id": strconv.Itoa(createdBlog.ID),
 	}
-	ctxBob = context.WithValue(ctxBob, "parentIDs", parentIDs)
+	ctxBob = context.WithValue(ctxBob, metadata.ParentIDsKey, parentIDs)
 
 	post := TestOwnedPost{
 		BlogID:   createdBlog.ID,
@@ -870,9 +870,9 @@ func TestOwnership_NestedResourceValidation(t *testing.T) {
 	}
 
 	// Create post as alice (should succeed)
-	ctxAlice := context.WithValue(ctxPost, "ownershipEnforced", true)
-	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
-	ctxAlice = context.WithValue(ctxAlice, "parentIDs", parentIDs)
+	ctxAlice := context.WithValue(ctxPost, metadata.OwnershipEnforcedKey, true)
+	ctxAlice = context.WithValue(ctxAlice, metadata.OwnershipUserIDKey, "alice")
+	ctxAlice = context.WithValue(ctxAlice, metadata.ParentIDsKey, parentIDs)
 
 	post.AuthorID = "alice"
 	created, err := postWrapper.Create(ctxAlice, post)
@@ -1686,7 +1686,7 @@ func TestWrapper_UUID_NestedCreate(t *testing.T) {
 	postWrapper := &datastore.Wrapper[TestUUIDPost]{Store: db}
 	parentIDs := map[string]string{"blogId": createdBlog.ID.String()}
 	postCtx := context.WithValue(context.Background(), metadata.MetadataKey, postMeta)
-	postCtx = context.WithValue(postCtx, "parentIDs", parentIDs)
+	postCtx = context.WithValue(postCtx, metadata.ParentIDsKey, parentIDs)
 
 	post := TestUUIDPost{Title: "Test Post"}
 	createdPost, err := postWrapper.Create(postCtx, post)
@@ -1982,7 +1982,7 @@ func TestInclude_BasicRelation(t *testing.T) {
 
 	postWrapper := &datastore.Wrapper[TestIncludePost]{Store: db}
 	postCtx := context.WithValue(context.Background(), metadata.MetadataKey, postMeta)
-	postCtx = context.WithValue(postCtx, "parentIDs", map[string]string{"authorId": strconv.Itoa(createdAuthor.ID)})
+	postCtx = context.WithValue(postCtx, metadata.ParentIDsKey, map[string]string{"authorId": strconv.Itoa(createdAuthor.ID)})
 
 	for _, post := range posts {
 		_, err := db.GetDB().NewInsert().Model(&post).Exec(context.Background())
@@ -1994,12 +1994,12 @@ func TestInclude_BasicRelation(t *testing.T) {
 	// Test: Get author with include=Posts as Alice
 	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
 	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
-	getCtx = context.WithValue(getCtx, "authInfo", &metadata.AuthInfo{UserID: "alice", Scopes: []string{"user"}})
+	getCtx = context.WithValue(getCtx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "alice", Scopes: []string{"user"}})
 	// Set AllowedIncludes to authorize "Posts" with ownership filtering
 	getCtx = context.WithValue(getCtx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Posts": true})
 	// Set ownership context (normally set by middleware)
-	getCtx = context.WithValue(getCtx, "ownershipEnforced", true)
-	getCtx = context.WithValue(getCtx, "ownershipUserID", "alice")
+	getCtx = context.WithValue(getCtx, metadata.OwnershipEnforcedKey, true)
+	getCtx = context.WithValue(getCtx, metadata.OwnershipUserIDKey, "alice")
 
 	retrieved, err := authorWrapper.Get(getCtx, strconv.Itoa(createdAuthor.ID))
 	if err != nil {
@@ -2051,7 +2051,7 @@ func TestInclude_AdminBypass(t *testing.T) {
 	// Test: Admin should see all posts
 	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
 	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
-	getCtx = context.WithValue(getCtx, "authInfo", &metadata.AuthInfo{UserID: "admin", Scopes: []string{"user", "admin"}})
+	getCtx = context.WithValue(getCtx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "admin", Scopes: []string{"user", "admin"}})
 	// Admin has bypass scope, so AllowedIncludes shows false (don't apply ownership)
 	getCtx = context.WithValue(getCtx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Posts": false})
 
@@ -2097,7 +2097,7 @@ func TestInclude_NoAuth(t *testing.T) {
 	// Test: Unauthenticated request should see no posts
 	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
 	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
-	// No authInfo in context
+	// No metadata.AuthInfoKey in context
 
 	retrieved, err := authorWrapper.Get(getCtx, strconv.Itoa(createdAuthor.ID))
 	if err != nil {
@@ -2179,12 +2179,12 @@ func TestInclude_GetAllWithRelation(t *testing.T) {
 	// Test: GetAll with include as alice
 	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
 	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
-	getCtx = context.WithValue(getCtx, "authInfo", &metadata.AuthInfo{UserID: "alice", Scopes: []string{"user"}})
+	getCtx = context.WithValue(getCtx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "alice", Scopes: []string{"user"}})
 	// Set AllowedIncludes to authorize "Posts" with ownership filtering
 	getCtx = context.WithValue(getCtx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Posts": true})
 	// Set ownership context (normally set by middleware)
-	getCtx = context.WithValue(getCtx, "ownershipEnforced", true)
-	getCtx = context.WithValue(getCtx, "ownershipUserID", "alice")
+	getCtx = context.WithValue(getCtx, metadata.OwnershipEnforcedKey, true)
+	getCtx = context.WithValue(getCtx, metadata.OwnershipUserIDKey, "alice")
 
 	retrieved, _, err := authorWrapper.GetAll(getCtx)
 	if err != nil {
@@ -2260,12 +2260,12 @@ func TestInclude_NoOwnershipConfig(t *testing.T) {
 	// Test: Any user should see all posts (no ownership filter on child type)
 	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
 	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
-	getCtx = context.WithValue(getCtx, "authInfo", &metadata.AuthInfo{UserID: "charlie", Scopes: []string{"user"}})
+	getCtx = context.WithValue(getCtx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "charlie", Scopes: []string{"user"}})
 	// AllowedIncludes says to apply ownership, but child has no OwnershipFields
 	// so the ownership filter will be a no-op (applyOwnershipFilterWithMeta skips it)
 	getCtx = context.WithValue(getCtx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Posts": true})
-	getCtx = context.WithValue(getCtx, "ownershipEnforced", true)
-	getCtx = context.WithValue(getCtx, "ownershipUserID", "charlie")
+	getCtx = context.WithValue(getCtx, metadata.OwnershipEnforcedKey, true)
+	getCtx = context.WithValue(getCtx, metadata.OwnershipUserIDKey, "charlie")
 
 	retrieved, err := authorWrapper.Get(getCtx, strconv.Itoa(createdAuthor.ID))
 	if err != nil {

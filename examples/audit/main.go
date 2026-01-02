@@ -45,7 +45,7 @@ func (j *Job) BeforeAppendModel(ctx context.Context, query bun.Query) error {
 	return nil
 }
 
-// JobAuditLog - stores audit records for Job changes
+// JobAuditLog stores audit records for Job changes
 type JobAuditLog struct {
 	bun.BaseModel `bun:"table:job_audit_logs"`
 	ID            int       `bun:"id,pk,autoincrement" json:"id"`

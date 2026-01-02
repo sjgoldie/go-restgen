@@ -20,6 +20,12 @@ type Wrapper[T any] struct {
 	Store Store
 }
 
+// preFetchResult holds the result of pre-fetching items for batch operations
+type preFetchResult[T any] struct {
+	ids           []string
+	existingItems []*T
+}
+
 // GetAll retrieves all items of type T from the datastore
 // Filters from context are applied automatically
 // Relations can be loaded via ?include= query parameter (parsed into QueryOptions.Include)
@@ -122,7 +128,7 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 		parentMeta := meta.ParentMeta
 
 		// Extract parent ID from context
-		parentIDs, ok := ctx.Value("parentIDs").(map[string]string)
+		parentIDs, ok := ctx.Value(metadata.ParentIDsKey).(map[string]string)
 		if !ok || parentIDs == nil {
 			return nil, fmt.Errorf("parent context missing for nested resource")
 		}
@@ -477,7 +483,7 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 	}
 
 	// Extract parent IDs from context
-	parentIDs, ok := ctx.Value("parentIDs").(map[string]string)
+	parentIDs, ok := ctx.Value(metadata.ParentIDsKey).(map[string]string)
 	if !ok || parentIDs == nil {
 		return query, nil
 	}
@@ -568,13 +574,13 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 // Uses the provided metadata for ownership configuration
 func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata) (*bun.SelectQuery, error) {
 	// Check if ownership is enforced
-	enforced, ok := ctx.Value("ownershipEnforced").(bool)
+	enforced, ok := ctx.Value(metadata.OwnershipEnforcedKey).(bool)
 	if !ok || !enforced {
 		return query, nil
 	}
 
 	// Get ownership information from context
-	userID, ok := ctx.Value("ownershipUserID").(string)
+	userID, ok := ctx.Value(metadata.OwnershipUserIDKey).(string)
 	if !ok || userID == "" {
 		return nil, fmt.Errorf("ownership enforced but user ID missing from context")
 	}
@@ -586,7 +592,7 @@ func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bu
 
 	// Check if user has bypass scope
 	// Compare user's scopes (from AuthInfo in context) with bypass scopes from metadata
-	if authInfo, ok := ctx.Value("authInfo").(*metadata.AuthInfo); ok && authInfo != nil && len(meta.BypassScopes) > 0 {
+	if authInfo, ok := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo); ok && authInfo != nil && len(meta.BypassScopes) > 0 {
 		// Check if user has any bypass scope
 		for _, bypassScope := range meta.BypassScopes {
 			for _, userScope := range authInfo.Scopes {
@@ -637,13 +643,13 @@ func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bu
 // (Bypass scopes only affect filtering on reads, not field population on creates)
 func (w *Wrapper[T]) setOwnershipField(ctx context.Context, item *T) error {
 	// Check if ownership is enforced
-	enforced, ok := ctx.Value("ownershipEnforced").(bool)
+	enforced, ok := ctx.Value(metadata.OwnershipEnforcedKey).(bool)
 	if !ok || !enforced {
 		return nil
 	}
 
 	// Get ownership information from context
-	userID, ok := ctx.Value("ownershipUserID").(string)
+	userID, ok := ctx.Value(metadata.OwnershipUserIDKey).(string)
 	if !ok || userID == "" {
 		return fmt.Errorf("ownership enforced but user ID missing from context")
 	}
@@ -999,7 +1005,7 @@ func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 			// Validate parent and set FK if nested
 			if meta.ParentMeta != nil {
 				parentMeta := meta.ParentMeta
-				parentIDs, ok := ctx.Value("parentIDs").(map[string]string)
+				parentIDs, ok := ctx.Value(metadata.ParentIDsKey).(map[string]string)
 				if !ok || parentIDs == nil {
 					return fmt.Errorf("parent context missing for nested resource")
 				}
@@ -1155,12 +1161,6 @@ func (w *Wrapper[T]) extractID(item *T, pkFieldName string) string {
 		return ""
 	}
 	return fmt.Sprintf("%v", idField.Interface())
-}
-
-// preFetchResult holds the result of pre-fetching items for batch operations
-type preFetchResult[T any] struct {
-	ids           []string
-	existingItems []*T
 }
 
 // preFetchItems validates and fetches existing items before a batch operation.

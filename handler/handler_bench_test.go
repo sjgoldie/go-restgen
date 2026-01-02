@@ -24,7 +24,7 @@ import (
 // Benchmark Models - 4-level nested hierarchy
 // ============================================================================
 
-// BenchBlog - Level 1 (root)
+// BenchBlog represents a blog for benchmarking (Level 1 - root)
 type BenchBlog struct {
 	bun.BaseModel `bun:"table:bench_blogs"`
 	ID            int          `bun:"id,pk,autoincrement" json:"id"`
@@ -34,7 +34,7 @@ type BenchBlog struct {
 	Posts         []*BenchPost `bun:"rel:has-many,join:id=blog_id" json:"-"`
 }
 
-// BenchPost - Level 2 (nested under Blog)
+// BenchPost represents a post for benchmarking (Level 2 - nested under Blog)
 type BenchPost struct {
 	bun.BaseModel `bun:"table:bench_posts"`
 	ID            int             `bun:"id,pk,autoincrement" json:"id"`
@@ -47,7 +47,7 @@ type BenchPost struct {
 	Comments      []*BenchComment `bun:"rel:has-many,join:id=post_id" json:"-"`
 }
 
-// BenchComment - Level 3 (nested under Post)
+// BenchComment represents a comment for benchmarking (Level 3 - nested under Post)
 type BenchComment struct {
 	bun.BaseModel `bun:"table:bench_comments"`
 	ID            int              `bun:"id,pk,autoincrement" json:"id"`
@@ -59,7 +59,7 @@ type BenchComment struct {
 	Reactions     []*BenchReaction `bun:"rel:has-many,join:id=comment_id" json:"-"`
 }
 
-// BenchReaction - Level 4 (nested under Comment)
+// BenchReaction represents a reaction for benchmarking (Level 4 - nested under Comment)
 type BenchReaction struct {
 	bun.BaseModel `bun:"table:bench_reactions"`
 	ID            int           `bun:"id,pk,autoincrement" json:"id"`
@@ -506,9 +506,8 @@ func BenchmarkAuthPermutations(b *testing.B) {
 			// Add ownership context only for the "WithOwnership" scenario
 			if scenario.name == "WithOwnership" {
 				ctx := req.Context()
-				ctx = context.WithValue(ctx, "ownershipEnforced", true)
-				ctx = context.WithValue(ctx, "ownershipUserID", scenario.userID)
-				ctx = context.WithValue(ctx, "ownershipFields", []string{"OwnerID"})
+				ctx = context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+				ctx = context.WithValue(ctx, metadata.OwnershipUserIDKey, scenario.userID)
 				req = req.WithContext(ctx)
 			}
 

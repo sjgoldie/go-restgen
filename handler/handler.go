@@ -98,6 +98,55 @@ type CustomDeleteFunc[T any] func(
 	id string,
 ) error
 
+// ActionFunc is the signature for custom action handlers.
+// Actions operate on an existing resource and can optionally return an updated item.
+// The payload is the raw request body for custom parsing.
+type ActionFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	id string,
+	item *T,
+	payload []byte,
+) (*T, error)
+
+// CustomBatchCreateFunc is the signature for custom batch create handlers.
+type CustomBatchCreateFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	items []T,
+) ([]*T, error)
+
+// CustomBatchUpdateFunc is the signature for custom batch update handlers.
+type CustomBatchUpdateFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	items []T,
+) ([]*T, error)
+
+// CustomBatchDeleteFunc is the signature for custom batch delete handlers.
+type CustomBatchDeleteFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	items []T,
+) error
+
+// batchSetup holds common setup data for batch operations
+type batchSetup[T any] struct {
+	svc   *service.Common[T]
+	meta  *metadata.TypeMetadata
+	auth  *metadata.AuthInfo
+	items []T
+	ctx   context.Context
+}
+
 // handleMutationError handles errors from Create/Update operations
 func handleMutationError(w http.ResponseWriter, err error, operation string) {
 	if errors.Is(err, context.Canceled) {
@@ -793,19 +842,6 @@ func setIDField[T any](item *T, id string, pkFieldName string) error {
 	return nil
 }
 
-// ActionFunc is the signature for custom action handlers.
-// Actions operate on an existing resource and can optionally return an updated item.
-// The payload is the raw request body for custom parsing.
-type ActionFunc[T any] func(
-	ctx context.Context,
-	svc *service.Common[T],
-	meta *metadata.TypeMetadata,
-	auth *metadata.AuthInfo,
-	id string,
-	item *T,
-	payload []byte,
-) (*T, error)
-
 // Action handles POST requests for custom actions on a resource.
 // Actions are registered at POST /resources/{id}/{action-name}.
 // The item is fetched first (validating existence and permissions), then passed to the action function.
@@ -874,33 +910,6 @@ func Action[T any](actionFunc ActionFunc[T]) http.HandlerFunc {
 	}
 }
 
-// CustomBatchCreateFunc is the signature for custom batch create handlers.
-type CustomBatchCreateFunc[T any] func(
-	ctx context.Context,
-	svc *service.Common[T],
-	meta *metadata.TypeMetadata,
-	auth *metadata.AuthInfo,
-	items []T,
-) ([]*T, error)
-
-// CustomBatchUpdateFunc is the signature for custom batch update handlers.
-type CustomBatchUpdateFunc[T any] func(
-	ctx context.Context,
-	svc *service.Common[T],
-	meta *metadata.TypeMetadata,
-	auth *metadata.AuthInfo,
-	items []T,
-) ([]*T, error)
-
-// CustomBatchDeleteFunc is the signature for custom batch delete handlers.
-type CustomBatchDeleteFunc[T any] func(
-	ctx context.Context,
-	svc *service.Common[T],
-	meta *metadata.TypeMetadata,
-	auth *metadata.AuthInfo,
-	items []T,
-) error
-
 // StandardBatchCreate is the default batch create implementation.
 func StandardBatchCreate[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, items []T) ([]*T, error) {
 	return svc.BatchCreate(ctx, items)
@@ -914,15 +923,6 @@ func StandardBatchUpdate[T any](ctx context.Context, svc *service.Common[T], met
 // StandardBatchDelete is the default batch delete implementation.
 func StandardBatchDelete[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, items []T) error {
 	return svc.BatchDelete(ctx, items)
-}
-
-// batchSetup holds common setup data for batch operations
-type batchSetup[T any] struct {
-	svc   *service.Common[T]
-	meta  *metadata.TypeMetadata
-	auth  *metadata.AuthInfo
-	items []T
-	ctx   context.Context
 }
 
 // setupBatch performs common validation and setup for batch operations.

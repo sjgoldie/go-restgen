@@ -1,0 +1,21 @@
+meta {
+  name: Batch Delete Non-existent - Fails
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{baseUrl}}/products/batch
+  body: json
+  auth: none
+}
+
+body:json {
+  [
+    {"id": 99999}
+  ]
+}
+
+assert {
+  res.status: eq 404
+}

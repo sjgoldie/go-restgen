@@ -7,13 +7,6 @@ import (
 	"github.com/sjgoldie/go-restgen/metadata"
 )
 
-// Context keys for ownership enforcement
-const (
-	ownershipEnforcedKey = "ownershipEnforced"
-	ownershipUserIDKey   = "ownershipUserID"
-	ownershipFieldsKey   = "ownershipFields"
-)
-
 // authStatus represents the result of an auth check
 type authStatus int
 
@@ -114,9 +107,9 @@ func blockUnauthorized(next http.Handler) http.Handler {
 func applyOwnershipContext(ctx context.Context, authInfo *AuthInfo, ownership *OwnershipConfig) context.Context {
 	// Always set ownership context - this ensures ownership fields are populated on create
 	// The datastore layer will check bypass scopes to skip filtering on reads
-	ctx = context.WithValue(ctx, ownershipEnforcedKey, true)           //nolint:staticcheck // Using string keys for simplicity
-	ctx = context.WithValue(ctx, ownershipUserIDKey, authInfo.UserID)  //nolint:staticcheck // Using string keys for simplicity
-	ctx = context.WithValue(ctx, ownershipFieldsKey, ownership.Fields) //nolint:staticcheck // Using string keys for simplicity
+	ctx = context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctx = context.WithValue(ctx, metadata.OwnershipUserIDKey, authInfo.UserID)
+	ctx = context.WithValue(ctx, metadata.OwnershipFieldsKey, ownership.Fields)
 
 	return ctx
 }

@@ -15,7 +15,15 @@ const (
 	MethodPost   = "POST"
 	MethodPut    = "PUT"
 	MethodDelete = "DELETE"
-	MethodAll    = "ALL"
+	MethodAll    = "ALL" // Expands to single operations only (GET, LIST, POST, PUT, DELETE)
+
+	// Batch methods for bulk operations via /resources/batch
+	MethodBatchCreate = "BATCH_CREATE" // POST /resources/batch
+	MethodBatchUpdate = "BATCH_UPDATE" // PUT /resources/batch
+	MethodBatchDelete = "BATCH_DELETE" // DELETE /resources/batch
+
+	// MethodAllWithBatch expands to all methods including batch operations
+	MethodAllWithBatch = "ALL_WITH_BATCH"
 )
 
 // Special internal scopes (prefixed to avoid clashing with user-defined scopes)
@@ -59,13 +67,19 @@ func mergeAuthConfigs(configs []AuthConfig) map[string]*AuthConfig {
 	return result
 }
 
-// expandMethods expands MethodAll to individual HTTP methods
+// expandMethods expands MethodAll and MethodAllWithBatch to individual HTTP methods
 func expandMethods(methods []string) []string {
 	var expanded []string
 	for _, method := range methods {
-		if method == MethodAll {
+		switch method {
+		case MethodAll:
+			// MethodAll expands to single operations only (no batch)
 			expanded = append(expanded, MethodGet, MethodList, MethodPost, MethodPut, MethodDelete)
-		} else {
+		case MethodAllWithBatch:
+			// MethodAllWithBatch expands to all methods including batch
+			expanded = append(expanded, MethodGet, MethodList, MethodPost, MethodPut, MethodDelete,
+				MethodBatchCreate, MethodBatchUpdate, MethodBatchDelete)
+		default:
 			expanded = append(expanded, method)
 		}
 	}
@@ -153,4 +167,27 @@ func PublicGet() AuthConfig {
 		Methods: []string{MethodGet},
 		Scopes:  []string{ScopePublic},
 	}
+}
+
+// AllPublicWithBatch returns an AuthConfig that allows public access to all methods including batch
+func AllPublicWithBatch() AuthConfig {
+	return AuthConfig{
+		Methods: []string{MethodAllWithBatch},
+		Scopes:  []string{ScopePublic},
+	}
+}
+
+// AllScopedWithBatch returns an AuthConfig that requires specific scope(s) for all methods including batch
+func AllScopedWithBatch(scopes ...string) AuthConfig {
+	return AuthConfig{
+		Methods: []string{MethodAllWithBatch},
+		Scopes:  scopes,
+	}
+}
+
+// hasBatchMethods checks if any batch methods are configured in the auth map
+func hasBatchMethods(authMap map[string]*AuthConfig) bool {
+	return authMap[MethodBatchCreate] != nil ||
+		authMap[MethodBatchUpdate] != nil ||
+		authMap[MethodBatchDelete] != nil
 }

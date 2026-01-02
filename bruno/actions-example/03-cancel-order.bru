@@ -1,0 +1,24 @@
+meta {
+  name: Cancel Order Action
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/cancel
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "reason": "Customer requested cancellation"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{orderId}}
+  res.body.status: eq cancelled
+  res.body.cancel_reason: eq Customer requested cancellation
+}

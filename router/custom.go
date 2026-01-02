@@ -67,3 +67,101 @@ type CustomDeleteConfig[T any] struct {
 func WithCustomDelete[T any](fn handler.CustomDeleteFunc[T]) CustomDeleteConfig[T] {
 	return CustomDeleteConfig[T]{Fn: fn}
 }
+
+// ActionConfig holds action endpoint configuration for route registration.
+// Actions are custom operations on a single resource (e.g., POST /orders/{id}/cancel).
+type ActionConfig[T any] struct {
+	Name string
+	Fn   handler.ActionFunc[T]
+	Auth AuthConfig
+}
+
+// WithAction creates an ActionConfig for use in RegisterRoutes.
+// Actions are registered as POST /resource/{id}/{name} endpoints.
+// The action handler receives the pre-fetched item and raw request body.
+//
+// Example:
+//
+//	router.RegisterRoutes[Order](b, "/orders",
+//	    router.AllPublic(),
+//	    router.WithAction("cancel", cancelHandler, router.AuthConfig{
+//	        Scopes: []string{"user"},
+//	    }),
+//	)
+func WithAction[T any](name string, fn handler.ActionFunc[T], auth AuthConfig) ActionConfig[T] {
+	return ActionConfig[T]{Name: name, Fn: fn, Auth: auth}
+}
+
+// BatchLimitConfig holds the batch limit configuration for route registration.
+type BatchLimitConfig struct {
+	Limit int
+}
+
+// WithBatchLimit sets the maximum number of items allowed in batch operations.
+// If not set, there is no limit on batch size.
+// Batch endpoints are only created if batch methods have auth configured.
+//
+// Example:
+//
+//	router.RegisterRoutes[Post](b, "/posts",
+//	    router.AllScopedWithBatch("admin"),
+//	    router.WithBatchLimit(100),
+//	)
+func WithBatchLimit(limit int) BatchLimitConfig {
+	return BatchLimitConfig{Limit: limit}
+}
+
+// CustomBatchCreateConfig holds custom batch create handler configuration.
+type CustomBatchCreateConfig[T any] struct {
+	Fn handler.CustomBatchCreateFunc[T]
+}
+
+// WithCustomBatchCreate creates a CustomBatchCreateConfig for use in RegisterRoutes.
+func WithCustomBatchCreate[T any](fn handler.CustomBatchCreateFunc[T]) CustomBatchCreateConfig[T] {
+	return CustomBatchCreateConfig[T]{Fn: fn}
+}
+
+// CustomBatchUpdateConfig holds custom batch update handler configuration.
+type CustomBatchUpdateConfig[T any] struct {
+	Fn handler.CustomBatchUpdateFunc[T]
+}
+
+// WithCustomBatchUpdate creates a CustomBatchUpdateConfig for use in RegisterRoutes.
+func WithCustomBatchUpdate[T any](fn handler.CustomBatchUpdateFunc[T]) CustomBatchUpdateConfig[T] {
+	return CustomBatchUpdateConfig[T]{Fn: fn}
+}
+
+// CustomBatchDeleteConfig holds custom batch delete handler configuration.
+type CustomBatchDeleteConfig[T any] struct {
+	Fn handler.CustomBatchDeleteFunc[T]
+}
+
+// WithCustomBatchDelete creates a CustomBatchDeleteConfig for use in RegisterRoutes.
+func WithCustomBatchDelete[T any](fn handler.CustomBatchDeleteFunc[T]) CustomBatchDeleteConfig[T] {
+	return CustomBatchDeleteConfig[T]{Fn: fn}
+}
+
+// PKFieldConfig holds custom primary key field configuration.
+type PKFieldConfig struct {
+	FieldName string
+}
+
+// WithAlternatePK overrides the default primary key field name.
+// By convention, go-restgen assumes the primary key field is named "ID".
+// Use this option when your model uses a different field name for the primary key.
+//
+// Example:
+//
+//	type MyModel struct {
+//	    bun.BaseModel `bun:"table:my_models"`
+//	    MyPK          int `bun:"my_pk,pk,autoincrement" json:"my_pk"`
+//	    Name          string `bun:"name" json:"name"`
+//	}
+//
+//	router.RegisterRoutes[MyModel](b, "/models",
+//	    router.AllPublic(),
+//	    router.WithAlternatePK("MyPK"),
+//	)
+func WithAlternatePK(fieldName string) PKFieldConfig {
+	return PKFieldConfig{FieldName: fieldName}
+}

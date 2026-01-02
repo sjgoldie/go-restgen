@@ -24,14 +24,6 @@ type Builder struct {
 	parentAuthList *AuthConfig            // Parent's auth config for LIST (for populating ChildAuth)
 }
 
-// NewBuilder creates a new Builder for registering routes
-func NewBuilder(r chi.Router) *Builder {
-	return &Builder{
-		router:     r,
-		parentMeta: nil,
-	}
-}
-
 // customHandlers holds optional custom handler functions for a route registration
 type customHandlers[T any] struct {
 	get    handler.CustomGetFunc[T]
@@ -41,8 +33,37 @@ type customHandlers[T any] struct {
 	delete handler.CustomDeleteFunc[T]
 }
 
+// batchHandlers holds optional custom batch handler functions
+type batchHandlers[T any] struct {
+	create handler.CustomBatchCreateFunc[T]
+	update handler.CustomBatchUpdateFunc[T]
+	delete handler.CustomBatchDeleteFunc[T]
+}
+
+// actionEntry holds a single action configuration with its auth
+type actionEntry[T any] struct {
+	name string
+	fn   handler.ActionFunc[T]
+	auth AuthConfig
+}
+
 // FileResourceConfig marks a route as a file resource
 type FileResourceConfig struct{}
+
+// metadataSetup holds the prepared metadata and auth configuration for route registration
+type metadataSetup struct {
+	meta               *metadata.TypeMetadata
+	authMap            map[string]*AuthConfig
+	metadataMiddleware func(http.Handler) http.Handler
+}
+
+// NewBuilder creates a new Builder for registering routes
+func NewBuilder(r chi.Router) *Builder {
+	return &Builder{
+		router:     r,
+		parentMeta: nil,
+	}
+}
 
 // AsFileResource marks this route as a file resource.
 // File resources use multipart form uploads instead of JSON.
@@ -52,19 +73,23 @@ func AsFileResource() FileResourceConfig {
 }
 
 // RegisterRoutes registers CRUD routes for a resource type T
-// Accepts optional auth configs, query configs, validator, auditor, custom handlers, and nested function for child routes
+// Accepts optional auth configs, query configs, validator, auditor, custom handlers, actions, and nested function for child routes
 // Configs can be mixed with nested function in any order
 func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
-	// Separate auth configs, query configs, validator, auditor, custom handlers, relation config, and nested function
+	// Separate auth configs, query configs, validator, auditor, custom handlers, actions, relation config, and nested function
 	var authConfigs []AuthConfig
 	var queryConfigs []QueryConfig
 	var validator metadata.ValidatorFunc[T]
 	var auditor metadata.AuditFunc[T]
 	var custom customHandlers[T]
+	var batch batchHandlers[T]
+	var batchLimit int
+	var actions []actionEntry[T]
 	var relationName string
 	var nested NestedFunc
 	var singleRoute *SingleRouteConfig
 	var isFileResource bool
+	var pkField string
 
 	for _, opt := range options {
 		switch v := opt.(type) {
@@ -86,22 +111,35 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			custom.update = v.Fn
 		case CustomDeleteConfig[T]:
 			custom.delete = v.Fn
+		case BatchLimitConfig:
+			batchLimit = v.Limit
+		case CustomBatchCreateConfig[T]:
+			batch.create = v.Fn
+		case CustomBatchUpdateConfig[T]:
+			batch.update = v.Fn
+		case CustomBatchDeleteConfig[T]:
+			batch.delete = v.Fn
+		case ActionConfig[T]:
+			actions = append(actions, actionEntry[T]{name: v.Name, fn: v.Fn, auth: v.Auth})
 		case RelationConfig:
 			relationName = v.Name
 		case SingleRouteConfig:
 			singleRoute = &v
 		case FileResourceConfig:
 			isFileResource = true
+		case PKFieldConfig:
+			pkField = v.FieldName
 		case func(*Builder):
 			nested = v
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, relationName, singleRoute, isFileResource)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, relationName, singleRoute, isFileResource, pkField)
 }
 
-// registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool) {
+// prepareMetadata assembles type metadata and auth configuration before route registration.
+// This extracts the setup phase from registerRoutesWithBuilder to reduce cyclomatic complexity.
+func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string) (string, *metadataSetup) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -125,9 +163,6 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 	// Get table name from bun tag
 	tableName := getTableName(tType)
 
-	// Get chi router from builder
-	r := b.router
-
 	// Check if this type has a parent relationship
 	var parentType reflect.Type
 	if b.parentMeta != nil {
@@ -143,12 +178,18 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 	// Validate parent relationship
 	validateParentRelationship(b.parentMeta, foreignKeyCol, typeName)
 
+	// Determine PK field name - default to "ID" convention
+	if pkField == "" {
+		pkField = "ID"
+	}
+
 	// Create metadata with all configuration
 	meta := &metadata.TypeMetadata{
 		TypeID:         typeID,
 		TypeName:       typeName,
 		TableName:      tableName,
 		URLParamUUID:   urlParamUUID,
+		PKField:        pkField,
 		ModelType:      tType,
 		ParentType:     parentType,
 		ParentMeta:     b.parentMeta,
@@ -198,8 +239,28 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 		meta.Auditor = auditor
 	}
 
+	// Set batch limit if provided
+	if batchLimit > 0 {
+		meta.BatchLimit = batchLimit
+	}
+
 	// Create middleware to inject metadata into context
 	metadataMiddleware := createMetadataMiddleware(meta)
+
+	return path, &metadataSetup{
+		meta:               meta,
+		authMap:            authMap,
+		metadataMiddleware: metadataMiddleware,
+	}
+}
+
+// registerRoutesWithBuilder is the internal implementation
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string) {
+	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField)
+	meta := setup.meta
+	authMap := setup.authMap
+	metadataMiddleware := setup.metadataMiddleware
+	r := b.router
 
 	// Register routes
 	r.Route(path, func(r chi.Router) {
@@ -251,11 +312,44 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 			}
 			r.Method("POST", "/", wrapHandler(handler.Create[T](createFunc), authMap[MethodPost]))
 
+			// Batch endpoints - /resources/batch
+			// Only register if batch methods have auth configured
+			if hasBatchMethods(authMap) {
+				r.Route("/batch", func(r chi.Router) {
+					// Batch create - POST /resources/batch
+					if authMap[MethodBatchCreate] != nil {
+						batchCreateFunc := batch.create
+						if batchCreateFunc == nil {
+							batchCreateFunc = handler.StandardBatchCreate[T]
+						}
+						r.Method("POST", "/", wrapHandler(handler.BatchCreate[T](batchCreateFunc), authMap[MethodBatchCreate]))
+					}
+
+					// Batch update - PUT /resources/batch
+					if authMap[MethodBatchUpdate] != nil {
+						batchUpdateFunc := batch.update
+						if batchUpdateFunc == nil {
+							batchUpdateFunc = handler.StandardBatchUpdate[T]
+						}
+						r.Method("PUT", "/", wrapHandler(handler.BatchUpdate[T](batchUpdateFunc), authMap[MethodBatchUpdate]))
+					}
+
+					// Batch delete - DELETE /resources/batch
+					if authMap[MethodBatchDelete] != nil {
+						batchDeleteFunc := batch.delete
+						if batchDeleteFunc == nil {
+							batchDeleteFunc = handler.StandardBatchDelete[T]
+						}
+						r.Method("DELETE", "/", wrapHandler(handler.BatchDelete[T](batchDeleteFunc), authMap[MethodBatchDelete]))
+					}
+				})
+			}
+
 			// Register item routes under /{id}
-			r.Route("/{"+urlParamUUID+"}", func(r chi.Router) {
+			r.Route("/{"+meta.URLParamUUID+"}", func(r chi.Router) {
 				// If there are nested routes, add middleware first
 				if nested != nil {
-					r.Use(createParentIDMiddleware(urlParamUUID))
+					r.Use(createParentIDMiddleware(meta.URLParamUUID))
 				}
 
 				// Get endpoint - GET /resources/{id}
@@ -287,6 +381,11 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 				// For signed URL mode: redirects to signed URL
 				if isFileResource {
 					r.Method("GET", "/download", wrapHandler(handler.Download[T](), authMap[MethodGet]))
+				}
+
+				// Register action endpoints - POST /resources/{id}/{action-name}
+				for _, action := range actions {
+					r.Method("POST", "/"+action.name, wrapHandler(handler.Action[T](action.fn), &action.auth))
 				}
 
 				nestedRouter = r
@@ -341,7 +440,7 @@ func createParentIDMiddleware(paramUUID string) func(http.Handler) http.Handler 
 
 			// Get existing parent IDs from context or create new map
 			ctx := r.Context()
-			parentIDs, ok := ctx.Value("parentIDs").(map[string]string)
+			parentIDs, ok := ctx.Value(metadata.ParentIDsKey).(map[string]string)
 			if !ok || parentIDs == nil {
 				parentIDs = make(map[string]string)
 			}
@@ -350,7 +449,7 @@ func createParentIDMiddleware(paramUUID string) func(http.Handler) http.Handler 
 			parentIDs[paramUUID] = parentID
 
 			// Store updated map in context
-			ctx = context.WithValue(ctx, "parentIDs", parentIDs) //nolint:staticcheck // Framework-internal context key
+			ctx = context.WithValue(ctx, metadata.ParentIDsKey, parentIDs)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

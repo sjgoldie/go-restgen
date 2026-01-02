@@ -14,6 +14,16 @@ type Common[T any] struct {
 	store *datastore.Wrapper[T]
 }
 
+// DownloadResult contains the result of a Download operation.
+// Either Reader is set (for proxy/streaming) or SignedURL is set (for redirect).
+type DownloadResult struct {
+	ContentType string
+	Filename    string
+	Size        int64
+	Reader      io.ReadCloser // nil if SignedURL is set
+	SignedURL   string        // non-empty for redirect
+}
+
 // GetAll retrieves all items of type T
 // Returns items, total count (0 if not requested), and error
 func (s *Common[T]) GetAll(ctx context.Context) ([]*T, int, error) {
@@ -92,16 +102,6 @@ func (s *Common[T]) RetrieveFile(ctx context.Context, storageKey string) (io.Rea
 	return reader, err
 }
 
-// DownloadResult contains the result of a Download operation.
-// Either Reader is set (for proxy/streaming) or SignedURL is set (for redirect).
-type DownloadResult struct {
-	ContentType string
-	Filename    string
-	Size        int64
-	Reader      io.ReadCloser // nil if SignedURL is set
-	SignedURL   string        // non-empty for redirect
-}
-
 // Download retrieves a file for download, handling both proxy and signed URL modes.
 // Returns a DownloadResult that indicates either streaming (Reader set) or redirect (SignedURL set).
 // The storage implementation decides whether to return a signed URL or not.
@@ -147,4 +147,23 @@ func (s *Common[T]) Download(ctx context.Context, id string) (*DownloadResult, e
 		Size:        fr.GetSize(),
 		Reader:      reader,
 	}, nil
+}
+
+// BatchCreate creates multiple items in a single transaction.
+// All items succeed or none do (all-or-nothing).
+func (s *Common[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
+	return s.store.BatchCreate(ctx, items)
+}
+
+// BatchUpdate updates multiple items in a single transaction.
+// All items succeed or none do (all-or-nothing).
+func (s *Common[T]) BatchUpdate(ctx context.Context, items []T) ([]*T, error) {
+	return s.store.BatchUpdate(ctx, items)
+}
+
+// BatchDelete deletes multiple items in a single transaction.
+// All items succeed or none do (all-or-nothing).
+// Items must have at least an ID field set.
+func (s *Common[T]) BatchDelete(ctx context.Context, items []T) error {
+	return s.store.BatchDelete(ctx, items)
 }

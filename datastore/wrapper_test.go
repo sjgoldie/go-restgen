@@ -31,6 +31,7 @@ var testUserMeta = &metadata.TypeMetadata{
 	TypeName:      "TestUser",
 	TableName:     "users",
 	URLParamUUID:  "id",
+	PKField:       "ID",
 	ModelType:     reflect.TypeOf(TestUser{}),
 	ParentType:    nil,
 	ParentMeta:    nil,
@@ -444,6 +445,7 @@ var testOwnedBlogMeta = &metadata.TypeMetadata{
 	TypeName:        "TestOwnedBlog",
 	TableName:       "test_owned_blogs",
 	URLParamUUID:    "blog_id",
+	PKField:         "ID",
 	ModelType:       reflect.TypeOf(TestOwnedBlog{}),
 	ParentType:      nil,
 	ParentMeta:      nil,
@@ -457,6 +459,7 @@ var testOwnedPostMeta = &metadata.TypeMetadata{
 	TypeName:        "TestOwnedPost",
 	TableName:       "test_owned_posts",
 	URLParamUUID:    "post_id",
+	PKField:         "ID",
 	ModelType:       reflect.TypeOf(TestOwnedPost{}),
 	ParentType:      reflect.TypeOf(TestOwnedBlog{}),
 	ParentMeta:      testOwnedBlogMeta,
@@ -470,6 +473,7 @@ var testOwnedArticleMeta = &metadata.TypeMetadata{
 	TypeName:        "TestOwnedArticle",
 	TableName:       "test_owned_articles",
 	URLParamUUID:    "article_id",
+	PKField:         "ID",
 	ModelType:       reflect.TypeOf(TestOwnedArticle{}),
 	ParentType:      nil,
 	ParentMeta:      nil,
@@ -534,8 +538,8 @@ func TestOwnership_SingleField_GetAll(t *testing.T) {
 	}
 
 	// GetAll with ownership enforcement for alice
-	ctxWithOwnership := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxWithOwnership = context.WithValue(ctxWithOwnership, "ownershipUserID", "alice")
+	ctxWithOwnership := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxWithOwnership = context.WithValue(ctxWithOwnership, metadata.OwnershipUserIDKey, "alice")
 
 	retrieved, _, err := wrapper.GetAll(ctxWithOwnership)
 	if err != nil {
@@ -569,8 +573,8 @@ func TestOwnership_SingleField_Get(t *testing.T) {
 	}
 
 	// Get with ownership enforcement for alice (should succeed)
-	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
+	ctxAlice := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxAlice = context.WithValue(ctxAlice, metadata.OwnershipUserIDKey, "alice")
 
 	retrieved, err := wrapper.Get(ctxAlice, strconv.Itoa(created.ID))
 	if err != nil {
@@ -581,8 +585,8 @@ func TestOwnership_SingleField_Get(t *testing.T) {
 	}
 
 	// Get with ownership enforcement for bob (should fail)
-	ctxBob := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxBob = context.WithValue(ctxBob, "ownershipUserID", "bob")
+	ctxBob := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxBob = context.WithValue(ctxBob, metadata.OwnershipUserIDKey, "bob")
 
 	_, err = wrapper.Get(ctxBob, strconv.Itoa(created.ID))
 	if err == nil {
@@ -611,7 +615,7 @@ func TestOwnership_MultipleFields_GetAll(t *testing.T) {
 	parentIDs := map[string]string{
 		"blog_id": strconv.Itoa(createdBlog.ID),
 	}
-	ctxWithParent := context.WithValue(ctxPost, "parentIDs", parentIDs)
+	ctxWithParent := context.WithValue(ctxPost, metadata.ParentIDsKey, parentIDs)
 
 	posts := []TestOwnedPost{
 		{BlogID: createdBlog.ID, AuthorID: "alice", EditorID: "", Title: "Alice authored"},
@@ -628,8 +632,8 @@ func TestOwnership_MultipleFields_GetAll(t *testing.T) {
 
 	// GetAll with ownership enforcement for alice
 	// Should get posts where alice is author OR editor
-	ctxAlice := context.WithValue(ctxPost, "ownershipEnforced", true)
-	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
+	ctxAlice := context.WithValue(ctxPost, metadata.OwnershipEnforcedKey, true)
+	ctxAlice = context.WithValue(ctxAlice, metadata.OwnershipUserIDKey, "alice")
 
 	retrieved, _, err := postWrapper.GetAll(ctxAlice)
 	if err != nil {
@@ -670,14 +674,14 @@ func TestOwnership_BypassScope_Admin(t *testing.T) {
 	}
 
 	// GetAll with ownership enforcement for charlie, but charlie is admin
-	ctxCharlie := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxCharlie = context.WithValue(ctxCharlie, "ownershipUserID", "charlie")
+	ctxCharlie := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxCharlie = context.WithValue(ctxCharlie, metadata.OwnershipUserIDKey, "charlie")
 
 	authInfo := &metadata.AuthInfo{
 		UserID: "charlie",
 		Scopes: []string{"admin"},
 	}
-	ctxCharlie = context.WithValue(ctxCharlie, "authInfo", authInfo)
+	ctxCharlie = context.WithValue(ctxCharlie, metadata.AuthInfoKey, authInfo)
 
 	retrieved, _, err := wrapper.GetAll(ctxCharlie)
 	if err != nil {
@@ -712,14 +716,14 @@ func TestOwnership_BypassScope_Moderator(t *testing.T) {
 	}
 
 	// GetAll with ownership enforcement for diana, but diana is moderator
-	ctxDiana := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxDiana = context.WithValue(ctxDiana, "ownershipUserID", "diana")
+	ctxDiana := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxDiana = context.WithValue(ctxDiana, metadata.OwnershipUserIDKey, "diana")
 
-	authInfo := &metadata.AuthInfo{
+	authInfoDiana := &metadata.AuthInfo{
 		UserID: "diana",
 		Scopes: []string{"moderator"},
 	}
-	ctxDiana = context.WithValue(ctxDiana, "authInfo", authInfo)
+	ctxDiana = context.WithValue(ctxDiana, metadata.AuthInfoKey, authInfoDiana)
 
 	retrieved, _, err := wrapper.GetAll(ctxDiana)
 	if err != nil {
@@ -740,8 +744,8 @@ func TestOwnership_SetOwnershipField_OnCreate(t *testing.T) {
 	ctx := ctxWithMeta(testOwnedBlogMeta)
 
 	// Create with ownership enforcement
-	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
+	ctxAlice := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxAlice = context.WithValue(ctxAlice, metadata.OwnershipUserIDKey, "alice")
 
 	blog := TestOwnedBlog{
 		AuthorID: "", // Will be set automatically
@@ -812,8 +816,8 @@ func TestOwnership_TypeWithoutOwnershipConfig(t *testing.T) {
 
 	// GetAll with ownership enforcement, but TestUser has no ownership config
 	// Should return all users (ownership filter is skipped for types without config)
-	ctxAlice := context.WithValue(ctx, "ownershipEnforced", true)
-	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
+	ctxAlice := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctxAlice = context.WithValue(ctxAlice, metadata.OwnershipUserIDKey, "alice")
 
 	retrieved, _, err := wrapper.GetAll(ctxAlice)
 	if err != nil {
@@ -844,14 +848,14 @@ func TestOwnership_NestedResourceValidation(t *testing.T) {
 
 	// Try to create post under alice's blog as bob (with ownership enforcement)
 	// This should fail because bob can't access alice's blog
-	ctxBob := context.WithValue(ctxPost, "ownershipEnforced", true)
-	ctxBob = context.WithValue(ctxBob, "ownershipUserID", "bob")
+	ctxBob := context.WithValue(ctxPost, metadata.OwnershipEnforcedKey, true)
+	ctxBob = context.WithValue(ctxBob, metadata.OwnershipUserIDKey, "bob")
 
 	// Add parent ID to context
 	parentIDs := map[string]string{
 		"blog_id": strconv.Itoa(createdBlog.ID),
 	}
-	ctxBob = context.WithValue(ctxBob, "parentIDs", parentIDs)
+	ctxBob = context.WithValue(ctxBob, metadata.ParentIDsKey, parentIDs)
 
 	post := TestOwnedPost{
 		BlogID:   createdBlog.ID,
@@ -866,9 +870,9 @@ func TestOwnership_NestedResourceValidation(t *testing.T) {
 	}
 
 	// Create post as alice (should succeed)
-	ctxAlice := context.WithValue(ctxPost, "ownershipEnforced", true)
-	ctxAlice = context.WithValue(ctxAlice, "ownershipUserID", "alice")
-	ctxAlice = context.WithValue(ctxAlice, "parentIDs", parentIDs)
+	ctxAlice := context.WithValue(ctxPost, metadata.OwnershipEnforcedKey, true)
+	ctxAlice = context.WithValue(ctxAlice, metadata.OwnershipUserIDKey, "alice")
+	ctxAlice = context.WithValue(ctxAlice, metadata.ParentIDsKey, parentIDs)
 
 	post.AuthorID = "alice"
 	created, err := postWrapper.Create(ctxAlice, post)
@@ -1647,6 +1651,7 @@ func TestWrapper_UUID_NestedCreate(t *testing.T) {
 		TypeName:     "TestUUIDBlog",
 		TableName:    "uuid_blogs",
 		URLParamUUID: "blogId",
+		PKField:      "ID",
 		ModelType:    reflect.TypeOf(TestUUIDBlog{}),
 	}
 
@@ -1670,6 +1675,7 @@ func TestWrapper_UUID_NestedCreate(t *testing.T) {
 		TypeName:      "TestUUIDPost",
 		TableName:     "uuid_posts",
 		URLParamUUID:  "postId",
+		PKField:       "ID",
 		ModelType:     reflect.TypeOf(TestUUIDPost{}),
 		ParentType:    reflect.TypeOf(TestUUIDBlog{}),
 		ParentMeta:    blogMeta,
@@ -1680,7 +1686,7 @@ func TestWrapper_UUID_NestedCreate(t *testing.T) {
 	postWrapper := &datastore.Wrapper[TestUUIDPost]{Store: db}
 	parentIDs := map[string]string{"blogId": createdBlog.ID.String()}
 	postCtx := context.WithValue(context.Background(), metadata.MetadataKey, postMeta)
-	postCtx = context.WithValue(postCtx, "parentIDs", parentIDs)
+	postCtx = context.WithValue(postCtx, metadata.ParentIDsKey, parentIDs)
 
 	post := TestUUIDPost{Title: "Test Post"}
 	createdPost, err := postWrapper.Create(postCtx, post)
@@ -1910,6 +1916,7 @@ func createIncludeTestMeta() (*metadata.TypeMetadata, *metadata.TypeMetadata) {
 		TypeName:     "TestIncludeAuthor",
 		TableName:    "include_authors",
 		URLParamUUID: "authorId",
+		PKField:      "ID",
 		ModelType:    reflect.TypeOf(TestIncludeAuthor{}),
 		ChildMeta:    make(map[string]*metadata.TypeMetadata),
 	}
@@ -1919,6 +1926,7 @@ func createIncludeTestMeta() (*metadata.TypeMetadata, *metadata.TypeMetadata) {
 		TypeName:        "TestIncludePost",
 		TableName:       "include_posts",
 		URLParamUUID:    "postId",
+		PKField:         "ID",
 		ModelType:       reflect.TypeOf(TestIncludePost{}),
 		ParentType:      reflect.TypeOf(TestIncludeAuthor{}),
 		ParentMeta:      authorMeta,
@@ -1933,6 +1941,7 @@ func createIncludeTestMeta() (*metadata.TypeMetadata, *metadata.TypeMetadata) {
 		TypeName:        "TestIncludeComment",
 		TableName:       "include_comments",
 		URLParamUUID:    "commentId",
+		PKField:         "ID",
 		ModelType:       reflect.TypeOf(TestIncludeComment{}),
 		ParentType:      reflect.TypeOf(TestIncludePost{}),
 		ParentMeta:      postMeta,
@@ -1973,7 +1982,7 @@ func TestInclude_BasicRelation(t *testing.T) {
 
 	postWrapper := &datastore.Wrapper[TestIncludePost]{Store: db}
 	postCtx := context.WithValue(context.Background(), metadata.MetadataKey, postMeta)
-	postCtx = context.WithValue(postCtx, "parentIDs", map[string]string{"authorId": strconv.Itoa(createdAuthor.ID)})
+	postCtx = context.WithValue(postCtx, metadata.ParentIDsKey, map[string]string{"authorId": strconv.Itoa(createdAuthor.ID)})
 
 	for _, post := range posts {
 		_, err := db.GetDB().NewInsert().Model(&post).Exec(context.Background())
@@ -1985,12 +1994,12 @@ func TestInclude_BasicRelation(t *testing.T) {
 	// Test: Get author with include=Posts as Alice
 	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
 	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
-	getCtx = context.WithValue(getCtx, "authInfo", &metadata.AuthInfo{UserID: "alice", Scopes: []string{"user"}})
+	getCtx = context.WithValue(getCtx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "alice", Scopes: []string{"user"}})
 	// Set AllowedIncludes to authorize "Posts" with ownership filtering
 	getCtx = context.WithValue(getCtx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Posts": true})
 	// Set ownership context (normally set by middleware)
-	getCtx = context.WithValue(getCtx, "ownershipEnforced", true)
-	getCtx = context.WithValue(getCtx, "ownershipUserID", "alice")
+	getCtx = context.WithValue(getCtx, metadata.OwnershipEnforcedKey, true)
+	getCtx = context.WithValue(getCtx, metadata.OwnershipUserIDKey, "alice")
 
 	retrieved, err := authorWrapper.Get(getCtx, strconv.Itoa(createdAuthor.ID))
 	if err != nil {
@@ -2042,7 +2051,7 @@ func TestInclude_AdminBypass(t *testing.T) {
 	// Test: Admin should see all posts
 	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
 	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
-	getCtx = context.WithValue(getCtx, "authInfo", &metadata.AuthInfo{UserID: "admin", Scopes: []string{"user", "admin"}})
+	getCtx = context.WithValue(getCtx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "admin", Scopes: []string{"user", "admin"}})
 	// Admin has bypass scope, so AllowedIncludes shows false (don't apply ownership)
 	getCtx = context.WithValue(getCtx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Posts": false})
 
@@ -2088,7 +2097,7 @@ func TestInclude_NoAuth(t *testing.T) {
 	// Test: Unauthenticated request should see no posts
 	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
 	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
-	// No authInfo in context
+	// No metadata.AuthInfoKey in context
 
 	retrieved, err := authorWrapper.Get(getCtx, strconv.Itoa(createdAuthor.ID))
 	if err != nil {
@@ -2170,12 +2179,12 @@ func TestInclude_GetAllWithRelation(t *testing.T) {
 	// Test: GetAll with include as alice
 	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
 	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
-	getCtx = context.WithValue(getCtx, "authInfo", &metadata.AuthInfo{UserID: "alice", Scopes: []string{"user"}})
+	getCtx = context.WithValue(getCtx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "alice", Scopes: []string{"user"}})
 	// Set AllowedIncludes to authorize "Posts" with ownership filtering
 	getCtx = context.WithValue(getCtx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Posts": true})
 	// Set ownership context (normally set by middleware)
-	getCtx = context.WithValue(getCtx, "ownershipEnforced", true)
-	getCtx = context.WithValue(getCtx, "ownershipUserID", "alice")
+	getCtx = context.WithValue(getCtx, metadata.OwnershipEnforcedKey, true)
+	getCtx = context.WithValue(getCtx, metadata.OwnershipUserIDKey, "alice")
 
 	retrieved, _, err := authorWrapper.GetAll(getCtx)
 	if err != nil {
@@ -2204,6 +2213,7 @@ func TestInclude_NoOwnershipConfig(t *testing.T) {
 		TypeName:     "TestIncludeAuthor",
 		TableName:    "include_authors",
 		URLParamUUID: "authorId",
+		PKField:      "ID",
 		ModelType:    reflect.TypeOf(TestIncludeAuthor{}),
 		ChildMeta:    make(map[string]*metadata.TypeMetadata),
 	}
@@ -2213,6 +2223,7 @@ func TestInclude_NoOwnershipConfig(t *testing.T) {
 		TypeName:      "TestIncludePost",
 		TableName:     "include_posts",
 		URLParamUUID:  "postId",
+		PKField:       "ID",
 		ModelType:     reflect.TypeOf(TestIncludePost{}),
 		ParentType:    reflect.TypeOf(TestIncludeAuthor{}),
 		ParentMeta:    authorMeta,
@@ -2249,12 +2260,12 @@ func TestInclude_NoOwnershipConfig(t *testing.T) {
 	// Test: Any user should see all posts (no ownership filter on child type)
 	opts := &metadata.QueryOptions{Include: []string{"Posts"}}
 	getCtx := context.WithValue(authorCtx, metadata.QueryOptionsKey, opts)
-	getCtx = context.WithValue(getCtx, "authInfo", &metadata.AuthInfo{UserID: "charlie", Scopes: []string{"user"}})
+	getCtx = context.WithValue(getCtx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "charlie", Scopes: []string{"user"}})
 	// AllowedIncludes says to apply ownership, but child has no OwnershipFields
 	// so the ownership filter will be a no-op (applyOwnershipFilterWithMeta skips it)
 	getCtx = context.WithValue(getCtx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Posts": true})
-	getCtx = context.WithValue(getCtx, "ownershipEnforced", true)
-	getCtx = context.WithValue(getCtx, "ownershipUserID", "charlie")
+	getCtx = context.WithValue(getCtx, metadata.OwnershipEnforcedKey, true)
+	getCtx = context.WithValue(getCtx, metadata.OwnershipUserIDKey, "charlie")
 
 	retrieved, err := authorWrapper.Get(getCtx, strconv.Itoa(createdAuthor.ID))
 	if err != nil {
@@ -2463,5 +2474,474 @@ func TestWrapper_UpdateByParentRelation(t *testing.T) {
 	}
 	if retrieved.Name != "Updated Name" {
 		t.Errorf("Expected persisted name 'Updated Name', got %s", retrieved.Name)
+	}
+}
+
+// Batch operation tests
+
+// BatchTestAuthor is a test model for batch nested tests
+type BatchTestAuthor struct {
+	bun.BaseModel `bun:"table:batch_authors"`
+	ID            int       `bun:"id,pk,autoincrement"`
+	Name          string    `bun:"name,notnull"`
+	Email         string    `bun:"email,notnull"`
+	CreatedAt     time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+}
+
+// BatchTestArticle is a test model for batch nested tests
+type BatchTestArticle struct {
+	bun.BaseModel `bun:"table:batch_articles"`
+	ID            int       `bun:"id,pk,autoincrement"`
+	AuthorID      int       `bun:"author_id,notnull"`
+	Title         string    `bun:"title,notnull"`
+	Content       string    `bun:"content"`
+	CreatedAt     time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+}
+
+var batchTestAuthorMeta = &metadata.TypeMetadata{
+	TypeID:        "batch_test_author_id",
+	TypeName:      "BatchTestAuthor",
+	TableName:     "batch_authors",
+	URLParamUUID:  "authorId",
+	PKField:       "ID",
+	ModelType:     reflect.TypeOf(BatchTestAuthor{}),
+	ParentType:    nil,
+	ParentMeta:    nil,
+	ForeignKeyCol: "",
+}
+
+var batchTestArticleMeta = &metadata.TypeMetadata{
+	TypeID:        "batch_test_article_id",
+	TypeName:      "BatchTestArticle",
+	TableName:     "batch_articles",
+	URLParamUUID:  "articleId",
+	PKField:       "ID",
+	ModelType:     reflect.TypeOf(BatchTestArticle{}),
+	ParentType:    reflect.TypeOf(BatchTestAuthor{}),
+	ParentMeta:    batchTestAuthorMeta,
+	ForeignKeyCol: "author_id",
+}
+
+func setupBatchNestedTestDB(t *testing.T) (*datastore.SQLite, func()) {
+	t.Helper()
+
+	db, err := datastore.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal("Failed to create test database:", err)
+	}
+
+	// Create schemas
+	ctx := context.Background()
+	_, err = db.GetDB().NewCreateTable().Model((*BatchTestAuthor)(nil)).IfNotExists().Exec(ctx)
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create batch_authors table:", err)
+	}
+
+	_, err = db.GetDB().NewCreateTable().Model((*BatchTestArticle)(nil)).IfNotExists().Exec(ctx)
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create batch_articles table:", err)
+	}
+
+	cleanup := func() {
+		db.GetDB().NewDropTable().Model((*BatchTestArticle)(nil)).IfExists().Exec(ctx)
+		db.GetDB().NewDropTable().Model((*BatchTestAuthor)(nil)).IfExists().Exec(ctx)
+		db.Cleanup()
+	}
+
+	return db, cleanup
+}
+
+func TestWrapper_BatchCreate_Success(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+		{Name: "User 2", Email: "user2@example.com"},
+		{Name: "User 3", Email: "user3@example.com"},
+	}
+
+	results, err := wrapper.BatchCreate(ctx, users)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	if len(results) != 3 {
+		t.Errorf("Expected 3 results, got %d", len(results))
+	}
+
+	// Verify all items have IDs assigned
+	for i, result := range results {
+		if result.ID == 0 {
+			t.Errorf("Result %d has no ID assigned", i)
+		}
+	}
+
+	// Verify items are in the database
+	all, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+	if len(all) != 3 {
+		t.Errorf("Expected 3 items in database, got %d", len(all))
+	}
+}
+
+func TestWrapper_BatchCreate_NoMetadata(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := context.Background() // No metadata
+
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+	}
+
+	_, err := wrapper.BatchCreate(ctx, users)
+	if err == nil {
+		t.Error("Expected error when metadata is missing")
+	}
+}
+
+func TestWrapper_BatchUpdate_Success(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	// First create some users
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+		{Name: "User 2", Email: "user2@example.com"},
+	}
+	created, err := wrapper.BatchCreate(ctx, users)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	// Update them - copy full object to preserve CreatedAt
+	updates := []TestUser{
+		{ID: created[0].ID, Name: "Updated 1", Email: "updated1@example.com", CreatedAt: created[0].CreatedAt},
+		{ID: created[1].ID, Name: "Updated 2", Email: "updated2@example.com", CreatedAt: created[1].CreatedAt},
+	}
+
+	results, err := wrapper.BatchUpdate(ctx, updates)
+	if err != nil {
+		t.Fatal("BatchUpdate failed:", err)
+	}
+
+	if len(results) != 2 {
+		t.Errorf("Expected 2 results, got %d", len(results))
+	}
+
+	// Verify updates
+	for i, result := range results {
+		expectedName := "Updated " + strconv.Itoa(i+1)
+		if result.Name != expectedName {
+			t.Errorf("Expected name '%s', got '%s'", expectedName, result.Name)
+		}
+	}
+}
+
+func TestWrapper_BatchUpdate_NotFound(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	// Try to update non-existent items
+	updates := []TestUser{
+		{ID: 999, Name: "Does not exist", Email: "none@example.com"},
+	}
+
+	_, err := wrapper.BatchUpdate(ctx, updates)
+	if err == nil {
+		t.Error("Expected error when updating non-existent item")
+	}
+	if !errors.Is(err, apperrors.ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestWrapper_BatchUpdate_MissingID(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	// Try to update without ID
+	updates := []TestUser{
+		{Name: "No ID", Email: "noid@example.com"},
+	}
+
+	_, err := wrapper.BatchUpdate(ctx, updates)
+	if err == nil {
+		t.Error("Expected error when ID is missing")
+	}
+}
+
+func TestWrapper_BatchDelete_Success(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	// First create some users
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+		{Name: "User 2", Email: "user2@example.com"},
+		{Name: "User 3", Email: "user3@example.com"},
+	}
+	created, err := wrapper.BatchCreate(ctx, users)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	// Delete first two
+	deletes := []TestUser{
+		{ID: created[0].ID},
+		{ID: created[1].ID},
+	}
+
+	err = wrapper.BatchDelete(ctx, deletes)
+	if err != nil {
+		t.Fatal("BatchDelete failed:", err)
+	}
+
+	// Verify only one remains
+	all, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+	if len(all) != 1 {
+		t.Errorf("Expected 1 item remaining, got %d", len(all))
+	}
+	if all[0].ID != created[2].ID {
+		t.Errorf("Expected remaining item to be ID %d, got %d", created[2].ID, all[0].ID)
+	}
+}
+
+func TestWrapper_BatchDelete_NotFound(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	// Try to delete non-existent items
+	deletes := []TestUser{
+		{ID: 999},
+	}
+
+	err := wrapper.BatchDelete(ctx, deletes)
+	if err == nil {
+		t.Error("Expected error when deleting non-existent item")
+	}
+	if !errors.Is(err, apperrors.ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestWrapper_BatchDelete_MissingID(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	// Try to delete without ID
+	deletes := []TestUser{
+		{Name: "No ID"},
+	}
+
+	err := wrapper.BatchDelete(ctx, deletes)
+	if err == nil {
+		t.Error("Expected error when ID is missing")
+	}
+}
+
+func TestWrapper_BatchCreate_Transactional(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create a validator that will fail on second item
+	validator := metadata.ValidatorFunc[TestUser](func(vc metadata.ValidationContext[TestUser]) error {
+		if vc.New != nil && vc.New.Name == "FAIL" {
+			return apperrors.NewValidationError("validation failed")
+		}
+		return nil
+	})
+
+	validatorMeta := &metadata.TypeMetadata{
+		TypeID:       "test_validator_id",
+		TypeName:     "TestUser",
+		TableName:    "users",
+		URLParamUUID: "id",
+		PKField:      "ID",
+		ModelType:    reflect.TypeOf(TestUser{}),
+		Validator:    validator,
+	}
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, validatorMeta)
+
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+		{Name: "FAIL", Email: "fail@example.com"}, // This will fail validation
+		{Name: "User 3", Email: "user3@example.com"},
+	}
+
+	_, err := wrapper.BatchCreate(ctx, users)
+	if err == nil {
+		t.Error("Expected validation error")
+	}
+
+	// Verify transaction was rolled back - no items should be in database
+	all, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+	if len(all) != 0 {
+		t.Errorf("Expected 0 items (transaction rolled back), got %d", len(all))
+	}
+}
+
+func TestWrapper_BatchCreate_NestedResource_MissingParent(t *testing.T) {
+	db, cleanup := setupBatchNestedTestDB(t)
+	defer cleanup()
+
+	articleWrapper := &datastore.Wrapper[BatchTestArticle]{Store: db}
+	ctxArticle := ctxWithMeta(batchTestArticleMeta)
+	// No parent IDs in context
+
+	articles := []BatchTestArticle{
+		{Title: "Article 1", Content: "Content 1"},
+	}
+
+	_, err := articleWrapper.BatchCreate(ctxArticle, articles)
+	if err == nil {
+		t.Error("Expected error when parent context is missing")
+	}
+}
+
+func TestWrapper_BatchUpdate_Transactional(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create a validator that will fail on specific name
+	validator := metadata.ValidatorFunc[TestUser](func(vc metadata.ValidationContext[TestUser]) error {
+		if vc.New != nil && vc.New.Name == "FAIL_UPDATE" {
+			return apperrors.NewValidationError("update validation failed")
+		}
+		return nil
+	})
+
+	validatorMeta := &metadata.TypeMetadata{
+		TypeID:       "test_validator_id",
+		TypeName:     "TestUser",
+		TableName:    "users",
+		URLParamUUID: "id",
+		PKField:      "ID",
+		ModelType:    reflect.TypeOf(TestUser{}),
+		Validator:    validator,
+	}
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, validatorMeta)
+
+	// Create initial users
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+		{Name: "User 2", Email: "user2@example.com"},
+	}
+	created, err := wrapper.BatchCreate(ctx, users)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	// Try to update - second one will fail validation
+	updates := []TestUser{
+		{ID: created[0].ID, Name: "Updated 1", Email: "u1@example.com", CreatedAt: created[0].CreatedAt},
+		{ID: created[1].ID, Name: "FAIL_UPDATE", Email: "u2@example.com", CreatedAt: created[1].CreatedAt},
+	}
+
+	_, err = wrapper.BatchUpdate(ctx, updates)
+	if err == nil {
+		t.Error("Expected validation error")
+	}
+
+	// Verify first user was NOT updated (transaction rolled back)
+	user1, err := wrapper.Get(ctx, strconv.Itoa(created[0].ID))
+	if err != nil {
+		t.Fatal("Get failed:", err)
+	}
+	if user1.Name != "User 1" {
+		t.Errorf("Expected name 'User 1' (unchanged), got '%s'", user1.Name)
+	}
+}
+
+func TestWrapper_BatchDelete_Transactional(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create a validator that will fail on delete
+	validator := metadata.ValidatorFunc[TestUser](func(vc metadata.ValidationContext[TestUser]) error {
+		if vc.Operation == metadata.OpDelete && vc.Old != nil && vc.Old.Name == "NO_DELETE" {
+			return apperrors.NewValidationError("cannot delete this user")
+		}
+		return nil
+	})
+
+	validatorMeta := &metadata.TypeMetadata{
+		TypeID:       "test_validator_id",
+		TypeName:     "TestUser",
+		TableName:    "users",
+		URLParamUUID: "id",
+		PKField:      "ID",
+		ModelType:    reflect.TypeOf(TestUser{}),
+		Validator:    validator,
+	}
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, validatorMeta)
+
+	// Create users
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+		{Name: "NO_DELETE", Email: "nodelete@example.com"},
+	}
+	created, err := wrapper.BatchCreate(ctx, users)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	// Try to delete both - second one will fail validation
+	deletes := []TestUser{
+		{ID: created[0].ID},
+		{ID: created[1].ID},
+	}
+
+	err = wrapper.BatchDelete(ctx, deletes)
+	if err == nil {
+		t.Error("Expected validation error")
+	}
+
+	// Verify both users still exist (transaction rolled back)
+	all, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+	if len(all) != 2 {
+		t.Errorf("Expected 2 users (transaction rolled back), got %d", len(all))
 	}
 }

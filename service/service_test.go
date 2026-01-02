@@ -34,6 +34,7 @@ var testModelMeta = &metadata.TypeMetadata{
 	TypeName:      "TestModel",
 	TableName:     "test_models",
 	URLParamUUID:  "id",
+	PKField:       "ID",
 	ModelType:     reflect.TypeOf(TestModel{}),
 	ParentType:    nil,
 	ParentMeta:    nil,
@@ -954,5 +955,110 @@ func TestService_DeleteStoredFile(t *testing.T) {
 	// Verify file was deleted
 	if _, ok := testFileStorage.files["key-to-delete"]; ok {
 		t.Error("File should have been deleted")
+	}
+}
+
+// Batch operation tests
+
+func TestService_BatchCreate(t *testing.T) {
+	cleanTable(t)
+
+	svc, err := service.New[TestModel]()
+	if err != nil {
+		t.Fatal("Failed to create service:", err)
+	}
+	ctx := ctxWithMeta(testModelMeta)
+
+	items := []TestModel{
+		{Name: "User 1", Email: "batch1@example.com"},
+		{Name: "User 2", Email: "batch2@example.com"},
+	}
+
+	results, err := svc.BatchCreate(ctx, items)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	if len(results) != 2 {
+		t.Errorf("Expected 2 results, got %d", len(results))
+	}
+}
+
+func TestService_BatchUpdate(t *testing.T) {
+	cleanTable(t)
+
+	svc, err := service.New[TestModel]()
+	if err != nil {
+		t.Fatal("Failed to create service:", err)
+	}
+	ctx := ctxWithMeta(testModelMeta)
+
+	// Create items first
+	items := []TestModel{
+		{Name: "User 1", Email: "batchupd1@example.com"},
+		{Name: "User 2", Email: "batchupd2@example.com"},
+	}
+	created, err := svc.BatchCreate(ctx, items)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	// Update them
+	updates := []TestModel{
+		{ID: created[0].ID, Name: "Updated 1", Email: "batchupd1@example.com"},
+		{ID: created[1].ID, Name: "Updated 2", Email: "batchupd2@example.com"},
+	}
+
+	results, err := svc.BatchUpdate(ctx, updates)
+	if err != nil {
+		t.Fatal("BatchUpdate failed:", err)
+	}
+
+	if len(results) != 2 {
+		t.Errorf("Expected 2 results, got %d", len(results))
+	}
+
+	if results[0].Name != "Updated 1" {
+		t.Errorf("Expected 'Updated 1', got '%s'", results[0].Name)
+	}
+}
+
+func TestService_BatchDelete(t *testing.T) {
+	cleanTable(t)
+
+	svc, err := service.New[TestModel]()
+	if err != nil {
+		t.Fatal("Failed to create service:", err)
+	}
+	ctx := ctxWithMeta(testModelMeta)
+
+	// Create items first
+	items := []TestModel{
+		{Name: "User 1", Email: "batchdel1@example.com"},
+		{Name: "User 2", Email: "batchdel2@example.com"},
+	}
+	created, err := svc.BatchCreate(ctx, items)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	// Delete them
+	deletes := []TestModel{
+		{ID: created[0].ID},
+		{ID: created[1].ID},
+	}
+
+	err = svc.BatchDelete(ctx, deletes)
+	if err != nil {
+		t.Fatal("BatchDelete failed:", err)
+	}
+
+	// Verify they're gone
+	all, _, err := svc.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+	if len(all) != 0 {
+		t.Errorf("Expected 0 users after delete, got %d", len(all))
 	}
 }

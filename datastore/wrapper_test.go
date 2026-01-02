@@ -2476,3 +2476,472 @@ func TestWrapper_UpdateByParentRelation(t *testing.T) {
 		t.Errorf("Expected persisted name 'Updated Name', got %s", retrieved.Name)
 	}
 }
+
+// Batch operation tests
+
+// BatchTestAuthor is a test model for batch nested tests
+type BatchTestAuthor struct {
+	bun.BaseModel `bun:"table:batch_authors"`
+	ID            int       `bun:"id,pk,autoincrement"`
+	Name          string    `bun:"name,notnull"`
+	Email         string    `bun:"email,notnull"`
+	CreatedAt     time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+}
+
+// BatchTestArticle is a test model for batch nested tests
+type BatchTestArticle struct {
+	bun.BaseModel `bun:"table:batch_articles"`
+	ID            int       `bun:"id,pk,autoincrement"`
+	AuthorID      int       `bun:"author_id,notnull"`
+	Title         string    `bun:"title,notnull"`
+	Content       string    `bun:"content"`
+	CreatedAt     time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+}
+
+var batchTestAuthorMeta = &metadata.TypeMetadata{
+	TypeID:        "batch_test_author_id",
+	TypeName:      "BatchTestAuthor",
+	TableName:     "batch_authors",
+	URLParamUUID:  "authorId",
+	PKField:       "ID",
+	ModelType:     reflect.TypeOf(BatchTestAuthor{}),
+	ParentType:    nil,
+	ParentMeta:    nil,
+	ForeignKeyCol: "",
+}
+
+var batchTestArticleMeta = &metadata.TypeMetadata{
+	TypeID:        "batch_test_article_id",
+	TypeName:      "BatchTestArticle",
+	TableName:     "batch_articles",
+	URLParamUUID:  "articleId",
+	PKField:       "ID",
+	ModelType:     reflect.TypeOf(BatchTestArticle{}),
+	ParentType:    reflect.TypeOf(BatchTestAuthor{}),
+	ParentMeta:    batchTestAuthorMeta,
+	ForeignKeyCol: "author_id",
+}
+
+func setupBatchNestedTestDB(t *testing.T) (*datastore.SQLite, func()) {
+	t.Helper()
+
+	db, err := datastore.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal("Failed to create test database:", err)
+	}
+
+	// Create schemas
+	ctx := context.Background()
+	_, err = db.GetDB().NewCreateTable().Model((*BatchTestAuthor)(nil)).IfNotExists().Exec(ctx)
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create batch_authors table:", err)
+	}
+
+	_, err = db.GetDB().NewCreateTable().Model((*BatchTestArticle)(nil)).IfNotExists().Exec(ctx)
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create batch_articles table:", err)
+	}
+
+	cleanup := func() {
+		db.GetDB().NewDropTable().Model((*BatchTestArticle)(nil)).IfExists().Exec(ctx)
+		db.GetDB().NewDropTable().Model((*BatchTestAuthor)(nil)).IfExists().Exec(ctx)
+		db.Cleanup()
+	}
+
+	return db, cleanup
+}
+
+func TestWrapper_BatchCreate_Success(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+		{Name: "User 2", Email: "user2@example.com"},
+		{Name: "User 3", Email: "user3@example.com"},
+	}
+
+	results, err := wrapper.BatchCreate(ctx, users)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	if len(results) != 3 {
+		t.Errorf("Expected 3 results, got %d", len(results))
+	}
+
+	// Verify all items have IDs assigned
+	for i, result := range results {
+		if result.ID == 0 {
+			t.Errorf("Result %d has no ID assigned", i)
+		}
+	}
+
+	// Verify items are in the database
+	all, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+	if len(all) != 3 {
+		t.Errorf("Expected 3 items in database, got %d", len(all))
+	}
+}
+
+func TestWrapper_BatchCreate_NoMetadata(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := context.Background() // No metadata
+
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+	}
+
+	_, err := wrapper.BatchCreate(ctx, users)
+	if err == nil {
+		t.Error("Expected error when metadata is missing")
+	}
+}
+
+func TestWrapper_BatchUpdate_Success(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	// First create some users
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+		{Name: "User 2", Email: "user2@example.com"},
+	}
+	created, err := wrapper.BatchCreate(ctx, users)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	// Update them - copy full object to preserve CreatedAt
+	updates := []TestUser{
+		{ID: created[0].ID, Name: "Updated 1", Email: "updated1@example.com", CreatedAt: created[0].CreatedAt},
+		{ID: created[1].ID, Name: "Updated 2", Email: "updated2@example.com", CreatedAt: created[1].CreatedAt},
+	}
+
+	results, err := wrapper.BatchUpdate(ctx, updates)
+	if err != nil {
+		t.Fatal("BatchUpdate failed:", err)
+	}
+
+	if len(results) != 2 {
+		t.Errorf("Expected 2 results, got %d", len(results))
+	}
+
+	// Verify updates
+	for i, result := range results {
+		expectedName := "Updated " + strconv.Itoa(i+1)
+		if result.Name != expectedName {
+			t.Errorf("Expected name '%s', got '%s'", expectedName, result.Name)
+		}
+	}
+}
+
+func TestWrapper_BatchUpdate_NotFound(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	// Try to update non-existent items
+	updates := []TestUser{
+		{ID: 999, Name: "Does not exist", Email: "none@example.com"},
+	}
+
+	_, err := wrapper.BatchUpdate(ctx, updates)
+	if err == nil {
+		t.Error("Expected error when updating non-existent item")
+	}
+	if !errors.Is(err, apperrors.ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestWrapper_BatchUpdate_MissingID(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	// Try to update without ID
+	updates := []TestUser{
+		{Name: "No ID", Email: "noid@example.com"},
+	}
+
+	_, err := wrapper.BatchUpdate(ctx, updates)
+	if err == nil {
+		t.Error("Expected error when ID is missing")
+	}
+}
+
+func TestWrapper_BatchDelete_Success(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	// First create some users
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+		{Name: "User 2", Email: "user2@example.com"},
+		{Name: "User 3", Email: "user3@example.com"},
+	}
+	created, err := wrapper.BatchCreate(ctx, users)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	// Delete first two
+	deletes := []TestUser{
+		{ID: created[0].ID},
+		{ID: created[1].ID},
+	}
+
+	err = wrapper.BatchDelete(ctx, deletes)
+	if err != nil {
+		t.Fatal("BatchDelete failed:", err)
+	}
+
+	// Verify only one remains
+	all, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+	if len(all) != 1 {
+		t.Errorf("Expected 1 item remaining, got %d", len(all))
+	}
+	if all[0].ID != created[2].ID {
+		t.Errorf("Expected remaining item to be ID %d, got %d", created[2].ID, all[0].ID)
+	}
+}
+
+func TestWrapper_BatchDelete_NotFound(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	// Try to delete non-existent items
+	deletes := []TestUser{
+		{ID: 999},
+	}
+
+	err := wrapper.BatchDelete(ctx, deletes)
+	if err == nil {
+		t.Error("Expected error when deleting non-existent item")
+	}
+	if !errors.Is(err, apperrors.ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestWrapper_BatchDelete_MissingID(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := ctxWithMeta(testUserMeta)
+
+	// Try to delete without ID
+	deletes := []TestUser{
+		{Name: "No ID"},
+	}
+
+	err := wrapper.BatchDelete(ctx, deletes)
+	if err == nil {
+		t.Error("Expected error when ID is missing")
+	}
+}
+
+func TestWrapper_BatchCreate_Transactional(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create a validator that will fail on second item
+	validator := metadata.ValidatorFunc[TestUser](func(vc metadata.ValidationContext[TestUser]) error {
+		if vc.New != nil && vc.New.Name == "FAIL" {
+			return apperrors.NewValidationError("validation failed")
+		}
+		return nil
+	})
+
+	validatorMeta := &metadata.TypeMetadata{
+		TypeID:       "test_validator_id",
+		TypeName:     "TestUser",
+		TableName:    "users",
+		URLParamUUID: "id",
+		PKField:      "ID",
+		ModelType:    reflect.TypeOf(TestUser{}),
+		Validator:    validator,
+	}
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, validatorMeta)
+
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+		{Name: "FAIL", Email: "fail@example.com"}, // This will fail validation
+		{Name: "User 3", Email: "user3@example.com"},
+	}
+
+	_, err := wrapper.BatchCreate(ctx, users)
+	if err == nil {
+		t.Error("Expected validation error")
+	}
+
+	// Verify transaction was rolled back - no items should be in database
+	all, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+	if len(all) != 0 {
+		t.Errorf("Expected 0 items (transaction rolled back), got %d", len(all))
+	}
+}
+
+func TestWrapper_BatchCreate_NestedResource_MissingParent(t *testing.T) {
+	db, cleanup := setupBatchNestedTestDB(t)
+	defer cleanup()
+
+	articleWrapper := &datastore.Wrapper[BatchTestArticle]{Store: db}
+	ctxArticle := ctxWithMeta(batchTestArticleMeta)
+	// No parent IDs in context
+
+	articles := []BatchTestArticle{
+		{Title: "Article 1", Content: "Content 1"},
+	}
+
+	_, err := articleWrapper.BatchCreate(ctxArticle, articles)
+	if err == nil {
+		t.Error("Expected error when parent context is missing")
+	}
+}
+
+func TestWrapper_BatchUpdate_Transactional(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create a validator that will fail on specific name
+	validator := metadata.ValidatorFunc[TestUser](func(vc metadata.ValidationContext[TestUser]) error {
+		if vc.New != nil && vc.New.Name == "FAIL_UPDATE" {
+			return apperrors.NewValidationError("update validation failed")
+		}
+		return nil
+	})
+
+	validatorMeta := &metadata.TypeMetadata{
+		TypeID:       "test_validator_id",
+		TypeName:     "TestUser",
+		TableName:    "users",
+		URLParamUUID: "id",
+		PKField:      "ID",
+		ModelType:    reflect.TypeOf(TestUser{}),
+		Validator:    validator,
+	}
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, validatorMeta)
+
+	// Create initial users
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+		{Name: "User 2", Email: "user2@example.com"},
+	}
+	created, err := wrapper.BatchCreate(ctx, users)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	// Try to update - second one will fail validation
+	updates := []TestUser{
+		{ID: created[0].ID, Name: "Updated 1", Email: "u1@example.com", CreatedAt: created[0].CreatedAt},
+		{ID: created[1].ID, Name: "FAIL_UPDATE", Email: "u2@example.com", CreatedAt: created[1].CreatedAt},
+	}
+
+	_, err = wrapper.BatchUpdate(ctx, updates)
+	if err == nil {
+		t.Error("Expected validation error")
+	}
+
+	// Verify first user was NOT updated (transaction rolled back)
+	user1, err := wrapper.Get(ctx, strconv.Itoa(created[0].ID))
+	if err != nil {
+		t.Fatal("Get failed:", err)
+	}
+	if user1.Name != "User 1" {
+		t.Errorf("Expected name 'User 1' (unchanged), got '%s'", user1.Name)
+	}
+}
+
+func TestWrapper_BatchDelete_Transactional(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create a validator that will fail on delete
+	validator := metadata.ValidatorFunc[TestUser](func(vc metadata.ValidationContext[TestUser]) error {
+		if vc.Operation == metadata.OpDelete && vc.Old != nil && vc.Old.Name == "NO_DELETE" {
+			return apperrors.NewValidationError("cannot delete this user")
+		}
+		return nil
+	})
+
+	validatorMeta := &metadata.TypeMetadata{
+		TypeID:       "test_validator_id",
+		TypeName:     "TestUser",
+		TableName:    "users",
+		URLParamUUID: "id",
+		PKField:      "ID",
+		ModelType:    reflect.TypeOf(TestUser{}),
+		Validator:    validator,
+	}
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, validatorMeta)
+
+	// Create users
+	users := []TestUser{
+		{Name: "User 1", Email: "user1@example.com"},
+		{Name: "NO_DELETE", Email: "nodelete@example.com"},
+	}
+	created, err := wrapper.BatchCreate(ctx, users)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	// Try to delete both - second one will fail validation
+	deletes := []TestUser{
+		{ID: created[0].ID},
+		{ID: created[1].ID},
+	}
+
+	err = wrapper.BatchDelete(ctx, deletes)
+	if err == nil {
+		t.Error("Expected validation error")
+	}
+
+	// Verify both users still exist (transaction rolled back)
+	all, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+	if len(all) != 2 {
+		t.Errorf("Expected 2 users (transaction rolled back), got %d", len(all))
+	}
+}

@@ -16,6 +16,9 @@ import (
 	"github.com/sjgoldie/go-restgen/service"
 )
 
+// Common test bodies
+const testBatchSingleUserBody = `[{"name": "User 1", "email": "user1@example.com"}]`
+
 // testFileResourceRejection is a helper for testing that batch operations reject file resources
 func testFileResourceRejection(t *testing.T, method, path, body string, setupHandler func(chi.Router, *metadata.TypeMetadata)) {
 	t.Helper()
@@ -375,8 +378,7 @@ func TestBatchCreate_CustomHandler(t *testing.T) {
 		r.Post("/batch", handler.BatchCreate[TestUser](customFn))
 	})
 
-	body := `[{"name": "User 1", "email": "user1@example.com"}]`
-	req := httptest.NewRequest("POST", "/users/batch", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/users/batch", strings.NewReader(testBatchSingleUserBody))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -471,8 +473,7 @@ func TestBatchCreate_WithAuth(t *testing.T) {
 		r.Post("/batch", handler.BatchCreate[TestUser](customFn))
 	})
 
-	body := `[{"name": "User 1", "email": "user1@example.com"}]`
-	req := httptest.NewRequest("POST", "/users/batch", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/users/batch", strings.NewReader(testBatchSingleUserBody))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -539,6 +540,18 @@ func TestBatchCreate_ErrorHandling(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 			expectedMsg:    "invalid reference",
 		},
+		{
+			name:           "DeadlineExceeded",
+			err:            context.DeadlineExceeded,
+			expectedStatus: http.StatusGatewayTimeout,
+			expectedMsg:    "timeout",
+		},
+		{
+			name:           "Unavailable",
+			err:            apperrors.ErrUnavailable,
+			expectedStatus: http.StatusServiceUnavailable,
+			expectedMsg:    "temporarily unavailable",
+		},
 	}
 
 	for _, tc := range tests {
@@ -571,5 +584,62 @@ func TestBatchCreate_ErrorHandling(t *testing.T) {
 				t.Errorf("Expected error about %q, got %s", tc.expectedMsg, w.Body.String())
 			}
 		})
+	}
+}
+
+// TestBatchCreate_NoMetadata tests batch create without metadata in context
+func TestBatchCreate_NoMetadata(t *testing.T) {
+	cleanTable(t)
+
+	r := chi.NewRouter()
+	// No withMeta middleware - metadata missing from context
+	r.Post("/users/batch", handler.BatchCreate[TestUser](handler.StandardBatchCreate[TestUser]))
+
+	req := httptest.NewRequest("POST", "/users/batch", strings.NewReader(testBatchSingleUserBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestBatchUpdate_NoMetadata tests batch update without metadata in context
+func TestBatchUpdate_NoMetadata(t *testing.T) {
+	cleanTable(t)
+
+	r := chi.NewRouter()
+	r.Put("/users/batch", handler.BatchUpdate[TestUser](handler.StandardBatchUpdate[TestUser]))
+
+	body := `[{"id": 1, "name": "User 1", "email": "user1@example.com"}]`
+	req := httptest.NewRequest("PUT", "/users/batch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestBatchDelete_NoMetadata tests batch delete without metadata in context
+func TestBatchDelete_NoMetadata(t *testing.T) {
+	cleanTable(t)
+
+	r := chi.NewRouter()
+	r.Delete("/users/batch", handler.BatchDelete[TestUser](handler.StandardBatchDelete[TestUser]))
+
+	body := `[{"id": 1}]`
+	req := httptest.NewRequest("DELETE", "/users/batch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status 500, got %d: %s", w.Code, w.Body.String())
 	}
 }

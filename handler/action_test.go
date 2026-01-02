@@ -307,3 +307,25 @@ type testError struct {
 func (e *testError) Error() string {
 	return e.msg
 }
+
+// TestAction_NoMetadata tests action without metadata in context
+func TestAction_NoMetadata(t *testing.T) {
+	cleanTable(t)
+
+	actionFn := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, item *TestUser, payload []byte) (*TestUser, error) {
+		return item, nil
+	}
+
+	r := chi.NewRouter()
+	// No withMeta middleware - metadata missing from context
+	r.Post("/users/{id}/action", handler.Action[TestUser](actionFn))
+
+	req := httptest.NewRequest("POST", "/users/1/action", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status 500, got %d: %s", w.Code, w.Body.String())
+	}
+}

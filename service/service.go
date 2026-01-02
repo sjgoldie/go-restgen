@@ -148,3 +148,22 @@ func (s *Common[T]) Download(ctx context.Context, id string) (*DownloadResult, e
 		Reader:      reader,
 	}, nil
 }
+
+// BatchCreate creates multiple items in a single transaction.
+// All items succeed or none do (all-or-nothing).
+func (s *Common[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
+	return s.store.BatchCreate(ctx, items)
+}
+
+// BatchUpdate updates multiple items in a single transaction.
+// All items succeed or none do (all-or-nothing).
+func (s *Common[T]) BatchUpdate(ctx context.Context, items []T) ([]*T, error) {
+	return s.store.BatchUpdate(ctx, items)
+}
+
+// BatchDelete deletes multiple items in a single transaction.
+// All items succeed or none do (all-or-nothing).
+// Items must have at least an ID field set.
+func (s *Common[T]) BatchDelete(ctx context.Context, items []T) error {
+	return s.store.BatchDelete(ctx, items)
+}

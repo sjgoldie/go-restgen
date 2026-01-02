@@ -1,0 +1,26 @@
+meta {
+  name: Batch Update Products
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/products/batch
+  body: json
+  auth: none
+}
+
+body:json {
+  [
+    {"id": {{productId1}}, "name": "Widget A Updated", "sku": "WA001", "price": 8.99, "stock": 150},
+    {"id": {{productId2}}, "name": "Widget B Updated", "sku": "WB001", "price": 12.99, "stock": 75}
+  ]
+}
+
+assert {
+  res.status: eq 200
+  res.body[0].name: eq Widget A Updated
+  res.body[0].price: eq 8.99
+  res.body[1].name: eq Widget B Updated
+  res.body[1].price: eq 12.99
+}

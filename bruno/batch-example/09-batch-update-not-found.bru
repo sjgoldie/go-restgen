@@ -1,0 +1,21 @@
+meta {
+  name: Batch Update Non-existent - Fails
+  type: http
+  seq: 9
+}
+
+put {
+  url: {{baseUrl}}/products/batch
+  body: json
+  auth: none
+}
+
+body:json {
+  [
+    {"id": 99999, "name": "Does Not Exist", "sku": "DNE001", "price": 1.00, "stock": 0}
+  ]
+}
+
+assert {
+  res.status: eq 404
+}

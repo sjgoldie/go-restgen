@@ -64,6 +64,7 @@ var userMeta = &metadata.TypeMetadata{
 	TypeName:      "TestUser",
 	TableName:     "users",
 	URLParamUUID:  "id",
+	PKField:       "ID",
 	ModelType:     reflect.TypeOf(TestUser{}),
 	ParentType:    nil,
 	ForeignKeyCol: "",
@@ -870,6 +871,7 @@ func TestHandler_GetAll_QueryParams(t *testing.T) {
 		TypeName:         "TestUser",
 		TableName:        "users",
 		URLParamUUID:     "id",
+		PKField:          "ID",
 		ModelType:        reflect.TypeOf(TestUser{}),
 		FilterableFields: []string{"Name", "Email"},
 		SortableFields:   []string{"Name", "Email"},
@@ -977,6 +979,7 @@ func TestHandler_GetAll_FilterOperators(t *testing.T) {
 		TypeName:         "TestUser",
 		TableName:        "users",
 		URLParamUUID:     "id",
+		PKField:          "ID",
 		ModelType:        reflect.TypeOf(TestUser{}),
 		FilterableFields: []string{"Name", "Email", "ID"},
 		SortableFields:   []string{"Name", "Email"},
@@ -1110,6 +1113,7 @@ func TestHandler_ValidationError_Create(t *testing.T) {
 		TypeName:     "TestValidatedItem",
 		TableName:    "test_validated_items",
 		URLParamUUID: "id",
+		PKField:      "ID",
 		ModelType:    reflect.TypeOf(TestValidatedItem{}),
 		Validator:    validator,
 	}
@@ -1170,6 +1174,7 @@ func TestHandler_ValidationError_Update(t *testing.T) {
 		TypeName:     "TestValidatedItem",
 		TableName:    "test_validated_items",
 		URLParamUUID: "id",
+		PKField:      "ID",
 		ModelType:    reflect.TypeOf(TestValidatedItem{}),
 		Validator:    validator,
 	}
@@ -1234,6 +1239,7 @@ func TestHandler_ValidationError_Delete(t *testing.T) {
 		TypeName:     "TestValidatedItem",
 		TableName:    "test_validated_items",
 		URLParamUUID: "id",
+		PKField:      "ID",
 		ModelType:    reflect.TypeOf(TestValidatedItem{}),
 		Validator:    validator,
 	}
@@ -1317,6 +1323,7 @@ func TestHandler_UUID_CRUD(t *testing.T) {
 		TypeName:     "TestUUIDBlog",
 		TableName:    "uuid_blogs",
 		URLParamUUID: "blogId",
+		PKField:      "ID",
 		ModelType:    reflect.TypeOf(TestUUIDBlog{}),
 	}
 
@@ -1457,6 +1464,7 @@ func TestHandler_UUID_InvalidFormat(t *testing.T) {
 		TypeName:     "TestUUIDBlog",
 		TableName:    "uuid_blogs",
 		URLParamUUID: "blogId",
+		PKField:      "ID",
 		ModelType:    reflect.TypeOf(TestUUIDBlog{}),
 	}
 
@@ -1504,6 +1512,7 @@ func TestHandler_UUID_StringPK(t *testing.T) {
 		TypeName:     "TestStringPKModel",
 		TableName:    "string_pk_models",
 		URLParamUUID: "id",
+		PKField:      "ID",
 		ModelType:    reflect.TypeOf(TestStringPKModel{}),
 	}
 
@@ -1688,6 +1697,7 @@ func TestHandler_UnsupportedIDType(t *testing.T) {
 		TypeName:     "TestFloatIDModel",
 		TableName:    "float_id_models",
 		URLParamUUID: "id",
+		PKField:      "ID",
 		ModelType:    reflect.TypeOf(TestFloatIDModel{}),
 	}
 
@@ -2000,6 +2010,7 @@ var testFileMeta = &metadata.TypeMetadata{
 	TypeName:       "TestFileModel",
 	TableName:      "test_file_models",
 	URLParamUUID:   "test_file_uuid",
+	PKField:        "ID",
 	ModelType:      reflect.TypeOf(TestFileModel{}),
 	IsFileResource: true,
 }

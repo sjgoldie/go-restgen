@@ -67,6 +67,7 @@ type TypeMetadata struct {
 	TypeName        string        // Go type name (e.g., "User")
 	TableName       string        // Database table name
 	URLParamUUID    string        // UUID used as chi URL parameter name (e.g., "abc-123")
+	PKField         string        // Primary key field name (default: "ID", use WithAlternatePK to override)
 	ModelType       reflect.Type  // Go type of this model
 	ParentType      reflect.Type  // Go type of parent (nil if root)
 	ParentMeta      *TypeMetadata // Direct pointer to parent metadata (nil if root)
@@ -96,6 +97,9 @@ type TypeMetadata struct {
 
 	// File resource
 	IsFileResource bool // Whether this type is a file resource (uses multipart upload)
+
+	// Batch operations
+	BatchLimit int // Maximum items in batch operations (0 = no limit)
 }
 
 // Clone returns a deep copy of the TypeMetadata.
@@ -106,6 +110,7 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 		TypeName:       m.TypeName,
 		TableName:      m.TableName,
 		URLParamUUID:   m.URLParamUUID,
+		PKField:        m.PKField,
 		ModelType:      m.ModelType,
 		ParentType:     m.ParentType,
 		ParentMeta:     m.ParentMeta, // Intentionally shared - parent is not owned by this metadata
@@ -118,6 +123,7 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 		Validator:      m.Validator,
 		Auditor:        m.Auditor,
 		IsFileResource: m.IsFileResource,
+		BatchLimit:     m.BatchLimit,
 	}
 
 	// Deep copy slices

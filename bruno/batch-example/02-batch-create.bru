@@ -1,0 +1,33 @@
+meta {
+  name: Batch Create Products
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/products/batch
+  body: json
+  auth: none
+}
+
+body:json {
+  [
+    {"name": "Widget A", "sku": "WA001", "price": 9.99, "stock": 100},
+    {"name": "Widget B", "sku": "WB001", "price": 14.99, "stock": 50},
+    {"name": "Widget C", "sku": "WC001", "price": 19.99, "stock": 25}
+  ]
+}
+
+assert {
+  res.status: eq 201
+  res.body[0].id: isDefined
+  res.body[0].name: eq Widget A
+  res.body[1].name: eq Widget B
+  res.body[2].name: eq Widget C
+}
+
+script:post-response {
+  bru.setVar("productId1", res.body[0].id);
+  bru.setVar("productId2", res.body[1].id);
+  bru.setVar("productId3", res.body[2].id);
+}

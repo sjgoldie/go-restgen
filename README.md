@@ -1044,6 +1044,238 @@ router.RegisterRoutes[Project](b, "/projects",
 
 See the [custom handlers example](./examples/custom) for a complete working example.
 
+## Action Endpoints
+
+go-restgen supports custom action endpoints for operations beyond standard CRUD. Actions are custom operations on a single resource, like `POST /orders/{id}/cancel` or `POST /tasks/{id}/complete`.
+
+### Defining Actions
+
+Register actions using `WithAction()` when setting up routes:
+
+```go
+// Action handler signature
+func cancelOrder(
+    ctx context.Context,
+    svc *service.Common[Order],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    item *Order,      // Pre-fetched item (validates existence/ownership)
+    payload []byte,   // Raw request body
+) (*Order, error) {
+    // Parse action-specific payload
+    var req CancelRequest
+    if err := json.Unmarshal(payload, &req); err != nil {
+        return nil, err
+    }
+
+    // Perform action
+    item.Status = "cancelled"
+    item.CancelReason = req.Reason
+    return svc.Update(ctx, id, *item)
+}
+
+// Register routes with actions
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllPublic(),
+    router.WithAction("cancel", cancelOrder, router.AuthConfig{
+        Scopes: []string{"user"},
+    }),
+    router.WithAction("refund", refundOrder, router.AuthConfig{
+        Scopes: []string{"admin"},
+    }),
+)
+```
+
+### How Actions Work
+
+1. **Framework fetches the item first** - Validates existence, parent chain, and ownership
+2. **Raw payload passed to handler** - Decode into action-specific struct as needed
+3. **Return updated item or nil** - Returns 200 + JSON or 204 No Content
+
+### Auth Per Action
+
+Each action has its own auth configuration. Actions are **blocked by default** if no auth is provided:
+
+```go
+// Different auth per action
+router.WithAction("cancel", cancelOrder, router.AuthConfig{
+    Scopes: []string{"user"},
+    Ownership: &router.OwnershipConfig{
+        Fields:       []string{"OwnerID"},
+        BypassScopes: []string{"admin"},
+    },
+}),
+router.WithAction("approve", approveOrder, router.AuthConfig{
+    Scopes: []string{"manager", "admin"},
+}),
+```
+
+### Generated Endpoints
+
+```
+POST /orders/{id}/cancel   → cancelOrder handler
+POST /orders/{id}/refund   → refundOrder handler
+POST /orders/{id}/approve  → approveOrder handler
+```
+
+### Response Handling
+
+| Handler Returns | HTTP Response |
+|----------------|---------------|
+| `(*T, nil)` | 200 OK + JSON body |
+| `(nil, nil)` | 204 No Content |
+| `(_, error)` | Error response (400, 404, 500, etc.) |
+
+## Batch Operations
+
+go-restgen supports batch create, update, and delete operations via `/resource/batch` endpoints. Batch operations run in a transaction for all-or-nothing semantics.
+
+### Enabling Batch Operations
+
+Use `AllScopedWithBatch()` or `AllPublicWithBatch()` to enable batch endpoints:
+
+```go
+// All operations including batch require admin scope
+router.RegisterRoutes[Post](b, "/posts",
+    router.AllScopedWithBatch("admin"),
+    router.WithBatchLimit(100),  // Optional: limit batch size
+)
+
+// Or: public single ops, admin-only batch
+router.RegisterRoutes[Post](b, "/posts",
+    router.AllPublic(),
+    router.AuthConfig{
+        Methods: []string{router.MethodBatchCreate, router.MethodBatchUpdate, router.MethodBatchDelete},
+        Scopes:  []string{"admin"},
+    },
+)
+```
+
+**Important**: `MethodAll` does NOT include batch methods (safe default). Use `MethodAllWithBatch` or specific batch methods.
+
+### Generated Endpoints
+
+```
+POST   /posts/batch  → Batch create
+PUT    /posts/batch  → Batch update
+DELETE /posts/batch  → Batch delete
+```
+
+### Batch Create
+
+```bash
+POST /posts/batch
+Content-Type: application/json
+
+[
+    {"title": "Post 1", "content": "..."},
+    {"title": "Post 2", "content": "..."},
+    {"title": "Post 3", "content": "..."}
+]
+
+# Response: 201 Created
+[
+    {"id": 1, "title": "Post 1", ...},
+    {"id": 2, "title": "Post 2", ...},
+    {"id": 3, "title": "Post 3", ...}
+]
+```
+
+### Batch Update
+
+```bash
+PUT /posts/batch
+Content-Type: application/json
+
+[
+    {"id": 1, "title": "Updated Post 1", "content": "..."},
+    {"id": 2, "title": "Updated Post 2", "content": "..."}
+]
+
+# Response: 200 OK
+[
+    {"id": 1, "title": "Updated Post 1", ...},
+    {"id": 2, "title": "Updated Post 2", ...}
+]
+```
+
+### Batch Delete
+
+```bash
+DELETE /posts/batch
+Content-Type: application/json
+
+[{"id": 1}, {"id": 2}, {"id": 3}]
+
+# Response: 204 No Content
+```
+
+### Batch Limit
+
+Optionally limit batch size to prevent abuse:
+
+```go
+router.RegisterRoutes[Post](b, "/posts",
+    router.AllScopedWithBatch("admin"),
+    router.WithBatchLimit(100),  // Max 100 items per batch
+)
+```
+
+Exceeding the limit returns 400 Bad Request.
+
+### Transaction Semantics
+
+- **All-or-nothing**: If any item fails, the entire batch is rolled back
+- **Ownership validated per-item**: Each item is checked individually
+- **Validation runs per-item**: Custom validators are invoked for each item
+- **Audit runs per-item**: Audit records are created for each item in the same transaction
+
+### Custom Batch Handlers
+
+Override default batch behavior with custom handlers:
+
+```go
+router.RegisterRoutes[Post](b, "/posts",
+    router.AllScopedWithBatch("admin"),
+    router.WithCustomBatchCreate(func(ctx context.Context, svc *service.Common[Post], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, items []Post) ([]*Post, error) {
+        // Custom batch create logic
+        for i := range items {
+            items[i].CreatedBy = auth.UserID
+        }
+        return svc.BatchCreate(ctx, items)
+    }),
+)
+```
+
+### File Resources
+
+Batch operations have special handling for file resources:
+- **Batch DELETE works** - Legitimate use case for bulk cleanup
+- **Batch CREATE returns 501** - File uploads require multipart form
+- **Batch UPDATE returns 501** - File resources don't support update
+
+### Method Constants
+
+```go
+router.MethodBatchCreate    // "BATCH_CREATE"
+router.MethodBatchUpdate    // "BATCH_UPDATE"
+router.MethodBatchDelete    // "BATCH_DELETE"
+router.MethodAllWithBatch   // Expands to all methods including batch
+```
+
+### Helper Functions
+
+```go
+// Includes batch methods
+router.AllPublicWithBatch()              // All methods public including batch
+router.AllScopedWithBatch("admin")       // All methods require scope including batch
+
+// Does NOT include batch (existing helpers unchanged)
+router.AllPublic()                       // All standard methods public
+router.AllScoped("admin")                // All standard methods require scope
+```
+
 ## File Resources
 
 go-restgen supports file upload and download with pluggable storage backends. Files are stored in external storage (local filesystem, S3, etc.) while metadata is stored in the database.
@@ -1387,6 +1619,8 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[Relations](./examples/relations)** - Loading related resources via `?include=` with auth
 - **[File Upload (Proxy)](./examples/files_proxy)** - File upload/download with proxy mode (files stream through server)
 - **[File Upload (Signed URL)](./examples/files_signed)** - File upload/download with signed URL mode (direct to storage)
+- **[Action Endpoints](./examples/actions)** - Custom actions on resources (cancel, complete)
+- **[Batch Operations](./examples/batch)** - Bulk create, update, and delete operations
 
 All examples include comprehensive Bruno API tests. See [`bruno/README.md`](./bruno/README.md) for details.
 
@@ -1454,6 +1688,8 @@ go-restgen builds on these excellent projects:
 - [x] Relation includes via `?include=` with auth enforcement
 - [x] Single routes for belongs-to relations (`AsSingleRoute`)
 - [x] File upload/download with pluggable storage (proxy and signed URL modes)
+- [x] Action endpoints for custom operations (`POST /resource/{id}/action`)
+- [x] Batch operations for bulk create/update/delete (`/resource/batch`)
 - [ ] MySQL support
 - [ ] OpenAPI/Swagger generation
 - [ ] Standalone examples (separate go.mod per example to avoid polluting main module)

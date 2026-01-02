@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -561,7 +562,7 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 		// This ensures the path ID takes precedence and is required for Bun's WherePK()
 		// Skip for single routes with no URL param - custom function handles ID
 		if id != "" {
-			if err := setIDField(&item, id); err != nil {
+			if err := setIDField(&item, id, meta.PKField); err != nil {
 				slog.Warn("failed to set ID field", "error", err)
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
@@ -757,12 +758,13 @@ func Download[T any]() http.HandlerFunc {
 	}
 }
 
-// setIDField sets the ID field on a struct from a string value
-// Handles int, int64, string, and uuid.UUID field types
-func setIDField[T any](item *T, id string) error {
-	idField := reflect.ValueOf(item).Elem().FieldByName("ID")
+// setIDField sets the primary key field on a struct from a string value.
+// The pkFieldName parameter specifies which field to set (from metadata.PKField).
+// Handles int, int64, string, and uuid.UUID field types.
+func setIDField[T any](item *T, id string, pkFieldName string) error {
+	idField := reflect.ValueOf(item).Elem().FieldByName(pkFieldName)
 	if !idField.IsValid() || !idField.CanSet() {
-		return errors.New("ID field not found or not settable")
+		return fmt.Errorf("PK field %q not found or not settable", pkFieldName)
 	}
 
 	switch idField.Kind() {
@@ -784,9 +786,289 @@ func setIDField[T any](item *T, id string) error {
 			}
 			idField.Set(reflect.ValueOf(parsed))
 		} else {
-			return errors.New("unsupported ID field type: " + idField.Type().String())
+			return fmt.Errorf("unsupported PK field type: %s", idField.Type().String())
 		}
 	}
 
 	return nil
+}
+
+// ActionFunc is the signature for custom action handlers.
+// Actions operate on an existing resource and can optionally return an updated item.
+// The payload is the raw request body for custom parsing.
+type ActionFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	id string,
+	item *T,
+	payload []byte,
+) (*T, error)
+
+// Action handles POST requests for custom actions on a resource.
+// Actions are registered at POST /resources/{id}/{action-name}.
+// The item is fetched first (validating existence and permissions), then passed to the action function.
+func Action[T any](actionFunc ActionFunc[T]) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		svc, err := service.New[T]()
+		if err != nil {
+			slog.Warn("failed to create service", "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		ctx := r.Context()
+
+		meta, err := metadata.FromContext(ctx)
+		if err != nil {
+			slog.Warn("metadata not found in context", "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		id := chi.URLParam(r, meta.URLParamUUID)
+		if id == "" {
+			slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		// Fetch the item first (validates existence and permissions)
+		item, err := svc.Get(ctx, id)
+		if err != nil {
+			if errors.Is(err, apperrors.ErrNotFound) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			handleMutationError(w, err, "get for action")
+			return
+		}
+
+		// Read request body for action payload
+		payload, err := io.ReadAll(r.Body)
+		if err != nil {
+			slog.Warn("failed to read request body", "error", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
+
+		result, err := actionFunc(ctx, svc, meta, auth, id, item, payload)
+		if err != nil {
+			handleMutationError(w, err, "action")
+			return
+		}
+
+		if result == nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			slog.Warn("failed to encode response", "error", err)
+		}
+	}
+}
+
+// CustomBatchCreateFunc is the signature for custom batch create handlers.
+type CustomBatchCreateFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	items []T,
+) ([]*T, error)
+
+// CustomBatchUpdateFunc is the signature for custom batch update handlers.
+type CustomBatchUpdateFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	items []T,
+) ([]*T, error)
+
+// CustomBatchDeleteFunc is the signature for custom batch delete handlers.
+type CustomBatchDeleteFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	items []T,
+) error
+
+// StandardBatchCreate is the default batch create implementation.
+func StandardBatchCreate[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, items []T) ([]*T, error) {
+	return svc.BatchCreate(ctx, items)
+}
+
+// StandardBatchUpdate is the default batch update implementation.
+func StandardBatchUpdate[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, items []T) ([]*T, error) {
+	return svc.BatchUpdate(ctx, items)
+}
+
+// StandardBatchDelete is the default batch delete implementation.
+func StandardBatchDelete[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, items []T) error {
+	return svc.BatchDelete(ctx, items)
+}
+
+// batchSetup holds common setup data for batch operations
+type batchSetup[T any] struct {
+	svc   *service.Common[T]
+	meta  *metadata.TypeMetadata
+	auth  *metadata.AuthInfo
+	items []T
+	ctx   context.Context
+}
+
+// setupBatch performs common validation and setup for batch operations.
+// Returns nil if successful, otherwise writes error response and returns error.
+func setupBatch[T any](w http.ResponseWriter, r *http.Request, opName string) *batchSetup[T] {
+	svc, err := service.New[T]()
+	if err != nil {
+		slog.Warn("failed to create service", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return nil
+	}
+
+	ctx := r.Context()
+
+	meta, err := metadata.FromContext(ctx)
+	if err != nil {
+		slog.Warn("metadata not found in context", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return nil
+	}
+
+	if meta.IsFileResource {
+		http.Error(w, opName+" not supported for file resources", http.StatusNotImplemented)
+		return nil
+	}
+
+	var items []T
+	if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
+		slog.Warn("failed to decode batch request", "error", err)
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return nil
+	}
+
+	if len(items) == 0 {
+		http.Error(w, "batch request must contain at least one item", http.StatusBadRequest)
+		return nil
+	}
+
+	if meta.BatchLimit > 0 && len(items) > meta.BatchLimit {
+		http.Error(w, "batch size exceeds limit", http.StatusBadRequest)
+		return nil
+	}
+
+	auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
+
+	return &batchSetup[T]{
+		svc:   svc,
+		meta:  meta,
+		auth:  auth,
+		items: items,
+		ctx:   ctx,
+	}
+}
+
+// BatchCreate handles POST requests to /resources/batch for batch creation.
+func BatchCreate[T any](createFunc CustomBatchCreateFunc[T]) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setup := setupBatch[T](w, r, "batch create")
+		if setup == nil {
+			return
+		}
+
+		results, err := createFunc(setup.ctx, setup.svc, setup.meta, setup.auth, setup.items)
+		if err != nil {
+			handleBatchError(w, err, "batch create")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		if err := json.NewEncoder(w).Encode(results); err != nil {
+			slog.Warn("failed to encode response", "error", err)
+		}
+	}
+}
+
+// BatchUpdate handles PUT requests to /resources/batch for batch updates.
+func BatchUpdate[T any](updateFunc CustomBatchUpdateFunc[T]) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setup := setupBatch[T](w, r, "batch update")
+		if setup == nil {
+			return
+		}
+
+		results, err := updateFunc(setup.ctx, setup.svc, setup.meta, setup.auth, setup.items)
+		if err != nil {
+			handleBatchError(w, err, "batch update")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(results); err != nil {
+			slog.Warn("failed to encode response", "error", err)
+		}
+	}
+}
+
+// BatchDelete handles DELETE requests to /resources/batch for batch deletion.
+func BatchDelete[T any](deleteFunc CustomBatchDeleteFunc[T]) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setup := setupBatch[T](w, r, "batch delete")
+		if setup == nil {
+			return
+		}
+
+		if err := deleteFunc(setup.ctx, setup.svc, setup.meta, setup.auth, setup.items); err != nil {
+			handleBatchError(w, err, "batch delete")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// handleBatchError handles errors from batch operations
+func handleBatchError(w http.ResponseWriter, err error, operation string) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		http.Error(w, "request timeout", http.StatusGatewayTimeout)
+		return
+	}
+	var validationErr *apperrors.ValidationError
+	if errors.As(err, &validationErr) {
+		http.Error(w, validationErr.Message, http.StatusBadRequest)
+		return
+	}
+	if errors.Is(err, apperrors.ErrDuplicate) {
+		http.Error(w, "one or more resources already exist", http.StatusBadRequest)
+		return
+	}
+	if errors.Is(err, apperrors.ErrInvalidReference) {
+		http.Error(w, "one or more items have invalid reference", http.StatusBadRequest)
+		return
+	}
+	if errors.Is(err, apperrors.ErrNotFound) {
+		http.Error(w, "one or more items not found", http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, apperrors.ErrUnavailable) {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	slog.Warn("failed to "+operation, "error", err)
+	http.Error(w, "internal server error", http.StatusInternalServerError)
 }

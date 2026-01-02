@@ -1,0 +1,21 @@
+meta {
+  name: Action on Non-existent Order - 404
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/orders/99999/cancel
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "reason": "Test"
+  }
+}
+
+assert {
+  res.status: eq 404
+}

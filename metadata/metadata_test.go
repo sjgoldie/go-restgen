@@ -224,6 +224,7 @@ func TestQueryOptionsFromContext(t *testing.T) {
 	retrieved := QueryOptionsFromContext(ctx)
 	if retrieved == nil {
 		t.Fatal("QueryOptionsFromContext() returned nil")
+		return // unreachable, but satisfies staticcheck
 	}
 
 	if retrieved.Limit != 10 {

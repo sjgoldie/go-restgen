@@ -18,10 +18,9 @@ type NestedFunc func(b *Builder)
 
 // Builder provides context for registering nested routes and manages the chi router
 type Builder struct {
-	router         chi.Router             // Chi router being configured
-	parentMeta     *metadata.TypeMetadata // Metadata of the immediate parent (nil for root)
-	parentAuthGet  *AuthConfig            // Parent's auth config for GET (for populating ChildAuth)
-	parentAuthList *AuthConfig            // Parent's auth config for LIST (for populating ChildAuth)
+	router                  chi.Router             // Chi router being configured
+	parentMeta              *metadata.TypeMetadata // Metadata of the immediate parent (nil for root)
+	parentChildRelationAuth map[string]*AuthConfig // Parent's shared child relation auth map (children add to this via registerChildAuthConfig)
 }
 
 // customHandlers holds optional custom handler functions for a route registration
@@ -54,6 +53,7 @@ type FileResourceConfig struct{}
 type metadataSetup struct {
 	meta               *metadata.TypeMetadata
 	authMap            map[string]*AuthConfig
+	childRelationAuth  map[string]*AuthConfig // Shared map for child relation auth configs
 	metadataMiddleware func(http.Handler) http.Handler
 }
 
@@ -207,6 +207,16 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	// Merge auth configs (last wins for each method)
 	authMap := mergeAuthConfigs(authConfigs)
 
+	// Create shared child relation auth map for ?include= support
+	// All auth configs point to this same map, so when children register,
+	// all operations automatically get access to include the relations
+	childRelationAuth := make(map[string]*AuthConfig)
+	for _, config := range authMap {
+		if config != nil {
+			config.ChildAuth = childRelationAuth
+		}
+	}
+
 	// Register child's auth config with parent's auth configs (for ?include= authorization)
 	registerChildAuthConfig(b, relationName, authMap)
 
@@ -250,6 +260,7 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	return path, &metadataSetup{
 		meta:               meta,
 		authMap:            authMap,
+		childRelationAuth:  childRelationAuth,
 		metadataMiddleware: metadataMiddleware,
 	}
 }
@@ -384,8 +395,10 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 				}
 
 				// Register action endpoints - POST /resources/{id}/{action-name}
-				for _, action := range actions {
-					r.Method("POST", "/"+action.name, wrapHandler(handler.Action[T](action.fn), &action.auth))
+				for i := range actions {
+					// Assign shared childRelationAuth to action's auth config for ?include= support
+					actions[i].auth.ChildAuth = setup.childRelationAuth
+					r.Method("POST", "/"+actions[i].name, wrapHandler(handler.Action[T](actions[i].fn), &actions[i].auth))
 				}
 
 				nestedRouter = r
@@ -395,27 +408,33 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 		// Register nested routes (shared for both single and standard routes)
 		if nested != nil && nestedRouter != nil {
 			childBuilder := &Builder{
-				router:         nestedRouter,
-				parentMeta:     meta,
-				parentAuthGet:  authMap[MethodGet],
-				parentAuthList: authMap[MethodList],
+				router:                  nestedRouter,
+				parentMeta:              meta,
+				parentChildRelationAuth: setup.childRelationAuth,
 			}
 			nested(childBuilder)
 		}
 	})
 }
 
-// createMetadataMiddleware creates middleware that injects TypeMetadata into context
+// createMetadataMiddleware creates middleware that injects TypeMetadata and QueryOptions into context.
+// Query options are parsed here so all handlers (Get, GetAll, Action, Batch, etc.) have access.
 func createMetadataMiddleware(meta *metadata.TypeMetadata) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), metadata.MetadataKey, meta)
+
+			// Parse query options and add to context
+			opts := metadata.ParseQueryOptions(r.URL.Query())
+			ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
 // wrapHandler wraps a handler with auth middleware if configured, otherwise blocks unauthorized access
+// The authConfig's ChildAuth field is used for ?include= authorization
 func wrapHandler(h http.Handler, authConfig *AuthConfig) http.Handler {
 	if authConfig != nil {
 		return wrapWithAuth(h, authConfig)
@@ -568,29 +587,23 @@ func validateParentRelationship(parentMeta *metadata.TypeMetadata, foreignKeyCol
 	}
 }
 
-// registerChildAuthConfig registers the child's auth config with parent's auth configs
-// for ?include= authorization. Only applies when relationName is provided.
+// registerChildAuthConfig registers the child's auth config with the parent's shared
+// childRelationAuth map for ?include= authorization. Only applies when relationName is provided.
+// The child's GET auth is used since including a relation is reading that data.
 func registerChildAuthConfig(b *Builder, relationName string, authMap map[string]*AuthConfig) {
 	if relationName == "" {
 		return
 	}
 
-	childAuthGet := authMap[MethodGet]
-	if childAuthGet == nil {
+	// parentChildRelationAuth is nil for root-level routes (no parent)
+	if b.parentChildRelationAuth == nil {
 		return
 	}
 
-	if b.parentAuthGet != nil {
-		if b.parentAuthGet.ChildAuth == nil {
-			b.parentAuthGet.ChildAuth = make(map[string]*AuthConfig)
-		}
-		b.parentAuthGet.ChildAuth[relationName] = childAuthGet
+	childGetAuth := authMap[MethodGet]
+	if childGetAuth == nil {
+		return
 	}
 
-	if b.parentAuthList != nil {
-		if b.parentAuthList.ChildAuth == nil {
-			b.parentAuthList.ChildAuth = make(map[string]*AuthConfig)
-		}
-		b.parentAuthList.ChildAuth[relationName] = childAuthGet
-	}
+	b.parentChildRelationAuth[relationName] = childGetAuth
 }

@@ -217,7 +217,7 @@ func customUpdateMe(ctx context.Context, svc *service.Common[User], _ *metadata.
 }
 
 // Custom handler: GetAll tasks filtered by current user
-func customGetMyTasks(ctx context.Context, svc *service.Common[Task], _ *metadata.TypeMetadata, auth *metadata.AuthInfo, _ *metadata.QueryOptions) ([]*Task, int, error) {
+func customGetMyTasks(ctx context.Context, svc *service.Common[Task], _ *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*Task, int, error) {
 	if auth == nil {
 		return nil, 0, fmt.Errorf("not authenticated")
 	}

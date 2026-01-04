@@ -33,7 +33,7 @@ func TestWithCustomGet(t *testing.T) {
 }
 
 func TestWithCustomGetAll(t *testing.T) {
-	customFunc := func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions) ([]*CustomTestModel, int, error) {
+	customFunc := func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*CustomTestModel, int, error) {
 		return []*CustomTestModel{{ID: 1, Name: "test"}}, 1, nil
 	}
 
@@ -95,7 +95,7 @@ func TestCustomConfigTypesInSwitch(t *testing.T) {
 		return nil, nil
 	})
 
-	getAllConfig := WithCustomGetAll(func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions) ([]*CustomTestModel, int, error) {
+	getAllConfig := WithCustomGetAll(func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*CustomTestModel, int, error) {
 		return nil, 0, nil
 	})
 
@@ -154,7 +154,7 @@ func TestCustomFuncTypesMatchHandler(t *testing.T) {
 		return nil, nil
 	}
 
-	var _ handler.CustomGetAllFunc[CustomTestModel] = func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions) ([]*CustomTestModel, int, error) {
+	var _ handler.CustomGetAllFunc[CustomTestModel] = func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*CustomTestModel, int, error) {
 		return nil, 0, nil
 	}
 

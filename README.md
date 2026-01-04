@@ -217,7 +217,8 @@ router.RegisterRoutes[Author](b, "/authors",
 
 - **Relation name must match the struct field** - `WithRelationName("Posts")` maps to `Posts []*Post` field
 - **Unknown relation names are silently ignored** - for security, no error is returned
-- **Works with GET single item and LIST** - both `/authors/1?include=Posts` and `/authors?include=Posts`
+- **Works with GET, LIST, and Actions** - `/authors/1?include=Posts`, `/authors?include=Posts`, and `/orders/1/complete?include=Items`
+- **Does not work with Batch operations** - batch create/update return items without relations (reload separately if needed)
 - **Nested includes not supported** - only direct children can be included
 
 See the [relations example](./examples/relations) for a complete working example.

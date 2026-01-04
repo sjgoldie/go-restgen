@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -493,5 +494,338 @@ func TestGenerateTypeID(t *testing.T) {
 	// Check they contain underscores (UUID format with hyphens replaced)
 	if !strings.Contains(id1, "_") {
 		t.Error("GenerateTypeID() returned ID without underscores")
+	}
+}
+
+func TestParseQueryOptions_Empty(t *testing.T) {
+	query := url.Values{}
+	opts := ParseQueryOptions(query)
+
+	if opts == nil {
+		t.Fatal("ParseQueryOptions returned nil")
+	}
+	if len(opts.Filters) != 0 {
+		t.Errorf("Expected 0 filters, got %d", len(opts.Filters))
+	}
+	if len(opts.Sort) != 0 {
+		t.Errorf("Expected 0 sort fields, got %d", len(opts.Sort))
+	}
+	if opts.Limit != 0 {
+		t.Errorf("Expected limit 0, got %d", opts.Limit)
+	}
+	if opts.Offset != 0 {
+		t.Errorf("Expected offset 0, got %d", opts.Offset)
+	}
+	if opts.CountTotal {
+		t.Error("Expected CountTotal false")
+	}
+	if len(opts.Include) != 0 {
+		t.Errorf("Expected 0 includes, got %d", len(opts.Include))
+	}
+}
+
+func TestParseQueryOptions_Filters(t *testing.T) {
+	tests := []struct {
+		name          string
+		query         url.Values
+		expectedField string
+		expectedValue string
+		expectedOp    string
+	}{
+		{
+			name:          "simple filter",
+			query:         url.Values{"filter[name]": {"John"}},
+			expectedField: "name",
+			expectedValue: "John",
+			expectedOp:    "eq",
+		},
+		{
+			name:          "filter with eq operator",
+			query:         url.Values{"filter[status][eq]": {"active"}},
+			expectedField: "status",
+			expectedValue: "active",
+			expectedOp:    "eq",
+		},
+		{
+			name:          "filter with neq operator",
+			query:         url.Values{"filter[status][neq]": {"deleted"}},
+			expectedField: "status",
+			expectedValue: "deleted",
+			expectedOp:    "neq",
+		},
+		{
+			name:          "filter with gt operator",
+			query:         url.Values{"filter[age][gt]": {"18"}},
+			expectedField: "age",
+			expectedValue: "18",
+			expectedOp:    "gt",
+		},
+		{
+			name:          "filter with gte operator",
+			query:         url.Values{"filter[age][gte]": {"21"}},
+			expectedField: "age",
+			expectedValue: "21",
+			expectedOp:    "gte",
+		},
+		{
+			name:          "filter with lt operator",
+			query:         url.Values{"filter[age][lt]": {"65"}},
+			expectedField: "age",
+			expectedValue: "65",
+			expectedOp:    "lt",
+		},
+		{
+			name:          "filter with lte operator",
+			query:         url.Values{"filter[age][lte]": {"100"}},
+			expectedField: "age",
+			expectedValue: "100",
+			expectedOp:    "lte",
+		},
+		{
+			name:          "filter with like operator",
+			query:         url.Values{"filter[name][like]": {"%john%"}},
+			expectedField: "name",
+			expectedValue: "%john%",
+			expectedOp:    "like",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := ParseQueryOptions(tt.query)
+
+			if len(opts.Filters) != 1 {
+				t.Fatalf("Expected 1 filter, got %d", len(opts.Filters))
+			}
+
+			filter, ok := opts.Filters[tt.expectedField]
+			if !ok {
+				t.Fatalf("Expected filter for field %q", tt.expectedField)
+			}
+			if filter.Value != tt.expectedValue {
+				t.Errorf("Expected value %q, got %q", tt.expectedValue, filter.Value)
+			}
+			if filter.Operator != tt.expectedOp {
+				t.Errorf("Expected operator %q, got %q", tt.expectedOp, filter.Operator)
+			}
+		})
+	}
+}
+
+func TestParseQueryOptions_Sort(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    url.Values
+		expected []SortField
+	}{
+		{
+			name:  "single ascending",
+			query: url.Values{"sort": {"name"}},
+			expected: []SortField{
+				{Field: "name", Desc: false},
+			},
+		},
+		{
+			name:  "single descending",
+			query: url.Values{"sort": {"-created_at"}},
+			expected: []SortField{
+				{Field: "created_at", Desc: true},
+			},
+		},
+		{
+			name:  "multiple fields",
+			query: url.Values{"sort": {"name,-created_at,status"}},
+			expected: []SortField{
+				{Field: "name", Desc: false},
+				{Field: "created_at", Desc: true},
+				{Field: "status", Desc: false},
+			},
+		},
+		{
+			name:  "with spaces",
+			query: url.Values{"sort": {"name, -created_at"}},
+			expected: []SortField{
+				{Field: "name", Desc: false},
+				{Field: "created_at", Desc: true},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := ParseQueryOptions(tt.query)
+
+			if len(opts.Sort) != len(tt.expected) {
+				t.Fatalf("Expected %d sort fields, got %d", len(tt.expected), len(opts.Sort))
+			}
+
+			for i, exp := range tt.expected {
+				if opts.Sort[i].Field != exp.Field {
+					t.Errorf("Sort[%d].Field: expected %q, got %q", i, exp.Field, opts.Sort[i].Field)
+				}
+				if opts.Sort[i].Desc != exp.Desc {
+					t.Errorf("Sort[%d].Desc: expected %v, got %v", i, exp.Desc, opts.Sort[i].Desc)
+				}
+			}
+		})
+	}
+}
+
+func TestParseQueryOptions_Pagination(t *testing.T) {
+	tests := []struct {
+		name           string
+		query          url.Values
+		expectedLimit  int
+		expectedOffset int
+	}{
+		{
+			name:           "limit only",
+			query:          url.Values{"limit": {"10"}},
+			expectedLimit:  10,
+			expectedOffset: 0,
+		},
+		{
+			name:           "offset only",
+			query:          url.Values{"offset": {"20"}},
+			expectedLimit:  0,
+			expectedOffset: 20,
+		},
+		{
+			name:           "limit and offset",
+			query:          url.Values{"limit": {"25"}, "offset": {"50"}},
+			expectedLimit:  25,
+			expectedOffset: 50,
+		},
+		{
+			name:           "invalid limit ignored",
+			query:          url.Values{"limit": {"abc"}},
+			expectedLimit:  0,
+			expectedOffset: 0,
+		},
+		{
+			name:           "negative limit ignored",
+			query:          url.Values{"limit": {"-5"}},
+			expectedLimit:  0,
+			expectedOffset: 0,
+		},
+		{
+			name:           "zero offset allowed",
+			query:          url.Values{"offset": {"0"}},
+			expectedLimit:  0,
+			expectedOffset: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := ParseQueryOptions(tt.query)
+
+			if opts.Limit != tt.expectedLimit {
+				t.Errorf("Limit: expected %d, got %d", tt.expectedLimit, opts.Limit)
+			}
+			if opts.Offset != tt.expectedOffset {
+				t.Errorf("Offset: expected %d, got %d", tt.expectedOffset, opts.Offset)
+			}
+		})
+	}
+}
+
+func TestParseQueryOptions_Count(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    url.Values
+		expected bool
+	}{
+		{
+			name:     "count=true",
+			query:    url.Values{"count": {"true"}},
+			expected: true,
+		},
+		{
+			name:     "count=1",
+			query:    url.Values{"count": {"1"}},
+			expected: true,
+		},
+		{
+			name:     "count=false",
+			query:    url.Values{"count": {"false"}},
+			expected: false,
+		},
+		{
+			name:     "count=0",
+			query:    url.Values{"count": {"0"}},
+			expected: false,
+		},
+		{
+			name:     "count absent",
+			query:    url.Values{},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := ParseQueryOptions(tt.query)
+
+			if opts.CountTotal != tt.expected {
+				t.Errorf("CountTotal: expected %v, got %v", tt.expected, opts.CountTotal)
+			}
+		})
+	}
+}
+
+func TestParseQueryOptions_Include(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    url.Values
+		expected []string
+	}{
+		{
+			name:     "single include",
+			query:    url.Values{"include": {"Posts"}},
+			expected: []string{"Posts"},
+		},
+		{
+			name:     "multiple includes",
+			query:    url.Values{"include": {"Posts,Comments,Author"}},
+			expected: []string{"Posts", "Comments", "Author"},
+		},
+		{
+			name:     "with spaces",
+			query:    url.Values{"include": {"Posts, Comments"}},
+			expected: []string{"Posts", "Comments"},
+		},
+		{
+			name:     "empty include ignored",
+			query:    url.Values{"include": {"Posts,,Comments"}},
+			expected: []string{"Posts", "Comments"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := ParseQueryOptions(tt.query)
+
+			if len(opts.Include) != len(tt.expected) {
+				t.Fatalf("Include: expected %d, got %d", len(tt.expected), len(opts.Include))
+			}
+
+			for i, exp := range tt.expected {
+				if opts.Include[i] != exp {
+					t.Errorf("Include[%d]: expected %q, got %q", i, exp, opts.Include[i])
+				}
+			}
+		})
+	}
+}
+
+func TestParseQueryOptions_EmptyValues(t *testing.T) {
+	// Test that empty values in query params are handled gracefully
+	query := url.Values{"filter[name]": {}}
+	opts := ParseQueryOptions(query)
+
+	// Should have no filters since value array is empty
+	if len(opts.Filters) != 0 {
+		t.Errorf("Expected 0 filters for empty value array, got %d", len(opts.Filters))
 	}
 }

@@ -1302,7 +1302,7 @@ func TestBuilder_CustomHandlers(t *testing.T) {
 			customGetCalled = true
 			return svc.Get(ctx, id)
 		}),
-		router.WithCustomGetAll(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions) ([]*MultiRegItem, int, error) {
+		router.WithCustomGetAll(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*MultiRegItem, int, error) {
 			customGetAllCalled = true
 			return svc.GetAll(ctx)
 		}),

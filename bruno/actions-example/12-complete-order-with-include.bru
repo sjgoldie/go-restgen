@@ -1,0 +1,39 @@
+meta {
+  name: Complete Order with Include Items
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderWithItemsId}}/complete?include=Items
+  body: json
+  auth: none
+}
+
+body:json {
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{orderWithItemsId}}
+  res.body.status: eq completed
+  res.body.items: isArray
+}
+
+tests {
+  test("Action returns order with included items", function() {
+    expect(res.body.items.length).to.equal(2);
+  });
+
+  test("First item is Widget A", function() {
+    const widgetA = res.body.items.find(i => i.product_name === "Widget A");
+    expect(widgetA).to.not.be.undefined;
+    expect(widgetA.quantity).to.equal(2);
+  });
+
+  test("Second item is Widget B", function() {
+    const widgetB = res.body.items.find(i => i.product_name === "Widget B");
+    expect(widgetB).to.not.be.undefined;
+    expect(widgetB.quantity).to.equal(1);
+  });
+}

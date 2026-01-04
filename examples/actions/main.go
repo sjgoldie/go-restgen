@@ -24,14 +24,26 @@ import (
 // Order model representing an order that can be cancelled or completed
 type Order struct {
 	bun.BaseModel `bun:"table:orders"`
-	ID            int       `bun:"id,pk,autoincrement" json:"id"`
-	CustomerName  string    `bun:"customer_name,notnull" json:"customer_name"`
-	Total         float64   `bun:"total,notnull" json:"total"`
-	Status        string    `bun:"status,notnull" json:"status"` // pending, completed, cancelled
-	CancelReason  string    `bun:"cancel_reason" json:"cancel_reason,omitempty"`
-	CompletedAt   time.Time `bun:"completed_at" json:"completed_at,omitempty"`
-	CreatedAt     time.Time `bun:"created_at,notnull,skipupdate" json:"created_at"`
-	UpdatedAt     time.Time `bun:"updated_at,notnull" json:"updated_at"`
+	ID            int          `bun:"id,pk,autoincrement" json:"id"`
+	CustomerName  string       `bun:"customer_name,notnull" json:"customer_name"`
+	Total         float64      `bun:"total,notnull" json:"total"`
+	Status        string       `bun:"status,notnull" json:"status"` // pending, completed, cancelled
+	CancelReason  string       `bun:"cancel_reason" json:"cancel_reason,omitempty"`
+	CompletedAt   time.Time    `bun:"completed_at" json:"completed_at,omitempty"`
+	CreatedAt     time.Time    `bun:"created_at,notnull,skipupdate" json:"created_at"`
+	UpdatedAt     time.Time    `bun:"updated_at,notnull" json:"updated_at"`
+	Items         []*OrderItem `bun:"rel:has-many,join:id=order_id" json:"items,omitempty"`
+}
+
+// OrderItem model representing items in an order
+type OrderItem struct {
+	bun.BaseModel `bun:"table:order_items"`
+	ID            int     `bun:"id,pk,autoincrement" json:"id"`
+	OrderID       int     `bun:"order_id,notnull" json:"order_id"`
+	Order         *Order  `bun:"rel:belongs-to,join:order_id=id" json:"-"`
+	ProductName   string  `bun:"product_name,notnull" json:"product_name"`
+	Quantity      int     `bun:"quantity,notnull" json:"quantity"`
+	Price         float64 `bun:"price,notnull" json:"price"`
 }
 
 // BeforeAppendModel hook for timestamps
@@ -127,6 +139,9 @@ func main() {
 	if _, err := db.GetDB().NewCreateTable().Model((*Order)(nil)).IfNotExists().Exec(context.Background()); err != nil {
 		log.Fatal("Failed to create schema:", err)
 	}
+	if _, err := db.GetDB().NewCreateTable().Model((*OrderItem)(nil)).IfNotExists().Exec(context.Background()); err != nil {
+		log.Fatal("Failed to create schema:", err)
+	}
 
 	// Setup router
 	r := chi.NewRouter()
@@ -152,6 +167,13 @@ func main() {
 		router.WithAction("complete", completeOrder, router.AuthConfig{
 			Scopes: []string{router.ScopePublic},
 		}),
+		// Nested OrderItems with relation name for ?include=Items support
+		func(b *router.Builder) {
+			router.RegisterRoutes[OrderItem](b, "/items",
+				router.AllPublic(),
+				router.WithRelationName("Items"),
+			)
+		},
 	)
 
 	// Start server

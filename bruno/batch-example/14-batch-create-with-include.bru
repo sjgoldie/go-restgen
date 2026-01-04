@@ -1,0 +1,44 @@
+meta {
+  name: Batch Create Additional Products
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/products/batch
+  body: json
+  auth: none
+}
+
+body:json {
+  [
+    {
+      "name": "Hoodie",
+      "sku": "HD001",
+      "price": 49.99,
+      "stock": 50
+    },
+    {
+      "name": "Cap",
+      "sku": "CP001",
+      "price": 19.99,
+      "stock": 200
+    }
+  ]
+}
+
+assert {
+  res.status: eq 201
+  res.body: isArray
+}
+
+tests {
+  test("Batch create returns 2 products", function() {
+    expect(res.body.length).to.equal(2);
+  });
+
+  test("Products have correct names", function() {
+    expect(res.body[0].name).to.equal("Hoodie");
+    expect(res.body[1].name).to.equal("Cap");
+  });
+}

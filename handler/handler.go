@@ -17,7 +17,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"reflect"
 	"strconv"
@@ -56,12 +55,12 @@ type CustomGetFunc[T any] func(
 
 // CustomGetAllFunc is the signature for custom GetAll handlers.
 // The custom function receives all parsed/validated inputs and returns items with count.
+// Query options are available via metadata.QueryOptionsFromContext(ctx) if needed.
 type CustomGetAllFunc[T any] func(
 	ctx context.Context,
 	svc *service.Common[T],
 	meta *metadata.TypeMetadata,
 	auth *metadata.AuthInfo,
-	opts *metadata.QueryOptions,
 ) ([]*T, int, error)
 
 // CustomCreateFunc is the signature for custom Create handlers.
@@ -185,7 +184,7 @@ func handleMutationError(w http.ResponseWriter, err error, operation string) {
 
 // StandardGetAll is the default GetAll implementation that calls svc.GetAll.
 // Use this when no custom logic is needed.
-func StandardGetAll[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions) ([]*T, int, error) {
+func StandardGetAll[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*T, int, error) {
 	return svc.GetAll(ctx)
 }
 
@@ -216,17 +215,14 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 			return
 		}
 
-		// Parse query parameters into QueryOptions
-		opts := parseQueryOptions(r.URL.Query())
-
-		// Add QueryOptions to context
-		ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
-
 		// Get auth from context (may be nil if not authenticated)
 		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
 
+		// Get query options from context (parsed by middleware) for pagination headers
+		opts := metadata.QueryOptionsFromContext(ctx)
+
 		// Call the provided function
-		items, totalCount, err := getAllFunc(ctx, svc, meta, auth, opts)
+		items, totalCount, err := getAllFunc(ctx, svc, meta, auth)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return // Client disconnected, no response needed
@@ -262,84 +258,6 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 			slog.Warn("failed to encode response", "error", err)
 		}
 	}
-}
-
-// parseQueryOptions extracts filtering, sorting, and pagination options from query parameters
-func parseQueryOptions(query url.Values) *metadata.QueryOptions {
-	opts := &metadata.QueryOptions{
-		Filters: make(map[string]metadata.FilterValue),
-	}
-
-	// Parse filters: filter[field]=value or filter[field][op]=value
-	for key, values := range query {
-		if len(values) == 0 {
-			continue
-		}
-		value := values[0]
-
-		// Check for filter[field] or filter[field][op] pattern
-		if strings.HasPrefix(key, "filter[") && strings.HasSuffix(key, "]") {
-			// Remove "filter[" prefix and "]" suffix
-			inner := key[7 : len(key)-1]
-
-			// Check for nested operator: field][op
-			if idx := strings.Index(inner, "]["); idx != -1 {
-				field := inner[:idx]
-				op := inner[idx+2:]
-				opts.Filters[field] = metadata.FilterValue{Value: value, Operator: op}
-			} else {
-				// Simple filter: filter[field]=value (default eq operator)
-				opts.Filters[inner] = metadata.FilterValue{Value: value, Operator: "eq"}
-			}
-		}
-	}
-
-	// Parse sort: sort=field1,-field2
-	if sortStr := query.Get("sort"); sortStr != "" {
-		fields := strings.Split(sortStr, ",")
-		for _, field := range fields {
-			field = strings.TrimSpace(field)
-			if field == "" {
-				continue
-			}
-			desc := false
-			if strings.HasPrefix(field, "-") {
-				desc = true
-				field = field[1:]
-			}
-			opts.Sort = append(opts.Sort, metadata.SortField{Field: field, Desc: desc})
-		}
-	}
-
-	// Parse pagination
-	if limitStr := query.Get("limit"); limitStr != "" {
-		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
-			opts.Limit = limit
-		}
-	}
-
-	if offsetStr := query.Get("offset"); offsetStr != "" {
-		if offset, err := strconv.Atoi(offsetStr); err == nil && offset >= 0 {
-			opts.Offset = offset
-		}
-	}
-
-	// Parse count flag
-	if countStr := query.Get("count"); countStr == "true" || countStr == "1" {
-		opts.CountTotal = true
-	}
-
-	// Parse include: include=Relation1,Relation2
-	if includeStr := query.Get("include"); includeStr != "" {
-		for _, rel := range strings.Split(includeStr, ",") {
-			rel = strings.TrimSpace(rel)
-			if rel != "" {
-				opts.Include = append(opts.Include, rel)
-			}
-		}
-	}
-
-	return opts
 }
 
 // StandardGet is the default Get implementation that calls svc.Get.
@@ -386,12 +304,6 @@ func Get[T any](getFunc CustomGetFunc[T]) http.HandlerFunc {
 				return
 			}
 		}
-
-		// Parse query parameters into QueryOptions (for ?include= support)
-		opts := parseQueryOptions(r.URL.Query())
-
-		// Add QueryOptions to context
-		ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
 		// Get auth from context (may be nil if not authenticated)
 		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)

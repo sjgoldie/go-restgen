@@ -2,7 +2,9 @@ package metadata
 
 import (
 	"context"
+	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 
 	apperrors "github.com/sjgoldie/go-restgen/errors"
@@ -256,4 +258,83 @@ func FromContext(ctx context.Context) (*TypeMetadata, error) {
 // Returns a UUID with hyphens replaced by underscores to be compatible with chi URL parameters
 func GenerateTypeID() string {
 	return strings.ReplaceAll(uuid.New().String(), "-", "_")
+}
+
+// ParseQueryOptions extracts filtering, sorting, and pagination options from query parameters.
+// This is called by middleware so all handlers have access to parsed query options via context.
+func ParseQueryOptions(query url.Values) *QueryOptions {
+	opts := &QueryOptions{
+		Filters: make(map[string]FilterValue),
+	}
+
+	// Parse filters: filter[field]=value or filter[field][op]=value
+	for key, values := range query {
+		if len(values) == 0 {
+			continue
+		}
+		value := values[0]
+
+		// Check for filter[field] or filter[field][op] pattern
+		if strings.HasPrefix(key, "filter[") && strings.HasSuffix(key, "]") {
+			// Remove "filter[" prefix and "]" suffix
+			inner := key[7 : len(key)-1]
+
+			// Check for nested operator: field][op
+			if idx := strings.Index(inner, "]["); idx != -1 {
+				field := inner[:idx]
+				op := inner[idx+2:]
+				opts.Filters[field] = FilterValue{Value: value, Operator: op}
+			} else {
+				// Simple filter: filter[field]=value (default eq operator)
+				opts.Filters[inner] = FilterValue{Value: value, Operator: "eq"}
+			}
+		}
+	}
+
+	// Parse sort: sort=field1,-field2
+	if sortStr := query.Get("sort"); sortStr != "" {
+		fields := strings.Split(sortStr, ",")
+		for _, field := range fields {
+			field = strings.TrimSpace(field)
+			if field == "" {
+				continue
+			}
+			desc := false
+			if strings.HasPrefix(field, "-") {
+				desc = true
+				field = field[1:]
+			}
+			opts.Sort = append(opts.Sort, SortField{Field: field, Desc: desc})
+		}
+	}
+
+	// Parse pagination
+	if limitStr := query.Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
+			opts.Limit = limit
+		}
+	}
+
+	if offsetStr := query.Get("offset"); offsetStr != "" {
+		if offset, err := strconv.Atoi(offsetStr); err == nil && offset >= 0 {
+			opts.Offset = offset
+		}
+	}
+
+	// Parse count flag
+	if countStr := query.Get("count"); countStr == "true" || countStr == "1" {
+		opts.CountTotal = true
+	}
+
+	// Parse include: include=Relation1,Relation2
+	if includeStr := query.Get("include"); includeStr != "" {
+		for _, rel := range strings.Split(includeStr, ",") {
+			rel = strings.TrimSpace(rel)
+			if rel != "" {
+				opts.Include = append(opts.Include, rel)
+			}
+		}
+	}
+
+	return opts
 }

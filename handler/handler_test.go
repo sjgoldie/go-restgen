@@ -70,14 +70,26 @@ var userMeta = &metadata.TypeMetadata{
 	ForeignKeyCol: "",
 }
 
-// withMeta creates middleware that injects metadata into context
+// withMeta creates middleware that injects metadata and query options into context
+// This mirrors what createMetadataMiddleware does in router/builder.go
 func withMeta(meta *metadata.TypeMetadata) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), metadata.MetadataKey, meta)
+			opts := metadata.ParseQueryOptions(r.URL.Query())
+			ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// ctxWithMeta creates a context with metadata and empty query options for direct handler tests
+func ctxWithMeta(ctx context.Context, meta *metadata.TypeMetadata) context.Context {
+	ctx = context.WithValue(ctx, metadata.MetadataKey, meta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, &metadata.QueryOptions{
+		Filters: make(map[string]metadata.FilterValue),
+	})
+	return ctx
 }
 
 func TestMain(m *testing.M) {
@@ -704,7 +716,7 @@ func TestHandler_GetAllWithRelations(t *testing.T) {
 
 	// Create request with empty relations array - just testing that context extraction works
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
-	ctx := context.WithValue(req.Context(), metadata.MetadataKey, userMeta)
+	ctx := ctxWithMeta(req.Context(), userMeta)
 	ctx = context.WithValue(ctx, "relations", []string{})
 	req = req.WithContext(ctx)
 
@@ -1959,7 +1971,7 @@ func TestCustomGetAll(t *testing.T) {
 	}()
 
 	// Custom function that filters to only return users with ID > 201
-	customGetAll := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions) ([]*TestUser, int, error) {
+	customGetAll := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, error) {
 		// Get all, then filter
 		all, _, err := svc.GetAll(ctx)
 		if err != nil {
@@ -1975,7 +1987,7 @@ func TestCustomGetAll(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
-	ctx := context.WithValue(req.Context(), metadata.MetadataKey, userMeta)
+	ctx := ctxWithMeta(req.Context(), userMeta)
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()

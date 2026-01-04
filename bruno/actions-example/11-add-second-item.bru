@@ -1,0 +1,26 @@
+meta {
+  name: Add Second Item to Order
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderWithItemsId}}/items
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "product_name": "Widget B",
+    "quantity": 1,
+    "price": 50.00
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.order_id: eq {{orderWithItemsId}}
+  res.body.product_name: eq Widget B
+}

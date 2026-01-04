@@ -20,13 +20,25 @@ import (
 // Product model
 type Product struct {
 	bun.BaseModel `bun:"table:products"`
-	ID            int       `bun:"id,pk,autoincrement" json:"id"`
-	Name          string    `bun:"name,notnull" json:"name"`
-	SKU           string    `bun:"sku,notnull" json:"sku"`
-	Price         float64   `bun:"price,notnull" json:"price"`
-	Stock         int       `bun:"stock,notnull" json:"stock"`
-	CreatedAt     time.Time `bun:"created_at,notnull,skipupdate" json:"created_at"`
-	UpdatedAt     time.Time `bun:"updated_at,notnull" json:"updated_at"`
+	ID            int               `bun:"id,pk,autoincrement" json:"id"`
+	Name          string            `bun:"name,notnull" json:"name"`
+	SKU           string            `bun:"sku,notnull" json:"sku"`
+	Price         float64           `bun:"price,notnull" json:"price"`
+	Stock         int               `bun:"stock,notnull" json:"stock"`
+	CreatedAt     time.Time         `bun:"created_at,notnull,skipupdate" json:"created_at"`
+	UpdatedAt     time.Time         `bun:"updated_at,notnull" json:"updated_at"`
+	Variants      []*ProductVariant `bun:"rel:has-many,join:id=product_id" json:"variants,omitempty"`
+}
+
+// ProductVariant model representing product variants (e.g., size, color)
+type ProductVariant struct {
+	bun.BaseModel `bun:"table:product_variants"`
+	ID            int      `bun:"id,pk,autoincrement" json:"id"`
+	ProductID     int      `bun:"product_id,notnull" json:"product_id"`
+	Product       *Product `bun:"rel:belongs-to,join:product_id=id" json:"-"`
+	Name          string   `bun:"name,notnull" json:"name"`
+	SKUSuffix     string   `bun:"sku_suffix,notnull" json:"sku_suffix"`
+	PriceAdjust   float64  `bun:"price_adjust" json:"price_adjust"`
 }
 
 // BeforeAppendModel hook for timestamps
@@ -64,6 +76,9 @@ func main() {
 	if _, err := db.GetDB().NewCreateTable().Model((*Product)(nil)).IfNotExists().Exec(context.Background()); err != nil {
 		log.Fatal("Failed to create schema:", err)
 	}
+	if _, err := db.GetDB().NewCreateTable().Model((*ProductVariant)(nil)).IfNotExists().Exec(context.Background()); err != nil {
+		log.Fatal("Failed to create schema:", err)
+	}
 
 	// Setup router
 	r := chi.NewRouter()
@@ -84,6 +99,13 @@ func main() {
 		router.WithBatchLimit(100),  // Optional: limit batch size to 100 items
 		router.WithFilters("Name", "SKU"),
 		router.WithSorts("Name", "Price", "CreatedAt"),
+		// Nested ProductVariants with relation name for ?include=Variants support
+		func(b *router.Builder) {
+			router.RegisterRoutes[ProductVariant](b, "/variants",
+				router.AllPublic(),
+				router.WithRelationName("Variants"),
+			)
+		},
 	)
 
 	// Start server

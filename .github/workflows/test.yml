@@ -82,7 +82,7 @@ jobs:
 
       - name: Run Tests
         working-directory: bruno
-        run: bru run simple-example --env local --format json
+        run: bru run simple-example --env local --format json --sandbox=developer
 
   nested-example-test:
     name: Nested Routes Example Test
@@ -124,7 +124,7 @@ jobs:
 
       - name: Run Tests
         working-directory: bruno
-        run: bru run nested-example --env local --format json
+        run: bru run nested-example --env local --format json --sandbox=developer
 
   auth-example-test:
     name: Auth Example Test
@@ -166,7 +166,7 @@ jobs:
 
       - name: Run Tests
         working-directory: bruno
-        run: bru run auth-example --env local --format json
+        run: bru run auth-example --env local --format json --sandbox=developer
 
   validator-example-test:
     name: Validator Example Test
@@ -208,7 +208,7 @@ jobs:
 
       - name: Run Tests
         working-directory: bruno
-        run: bru run validator-example --env local --format json
+        run: bru run validator-example --env local --format json --sandbox=developer
 
   audit-example-test:
     name: Audit Example Test
@@ -250,7 +250,7 @@ jobs:
 
       - name: Run Tests
         working-directory: bruno
-        run: bru run audit-example --env local --format json
+        run: bru run audit-example --env local --format json --sandbox=developer
 
   relations-example-test:
     name: Relations Example Test
@@ -292,7 +292,7 @@ jobs:
 
       - name: Run Tests
         working-directory: bruno
-        run: bru run relations-example --env local --format json
+        run: bru run relations-example --env local --format json --sandbox=developer
 
   files-proxy-example-test:
     name: Files Proxy Example Test
@@ -334,7 +334,7 @@ jobs:
 
       - name: Run Tests
         working-directory: bruno
-        run: bru run files-proxy-example --env local --format json
+        run: bru run files-proxy-example --env local --format json --sandbox=developer
 
   files-signed-example-test:
     name: Files Signed Example Test
@@ -376,7 +376,7 @@ jobs:
 
       - name: Run Tests
         working-directory: bruno
-        run: bru run files-signed-example --env local --format json
+        run: bru run files-signed-example --env local --format json --sandbox=developer
 
   batch-example-test:
     name: Batch Example Test
@@ -418,7 +418,7 @@ jobs:
 
       - name: Run Tests
         working-directory: bruno
-        run: bru run batch-example --env local --format json
+        run: bru run batch-example --env local --format json --sandbox=developer
 
   actions-example-test:
     name: Actions Example Test
@@ -460,7 +460,7 @@ jobs:
 
       - name: Run Tests
         working-directory: bruno
-        run: bru run actions-example --env local --format json
+        run: bru run actions-example --env local --format json --sandbox=developer
 
   uuid-example-test:
     name: UUID Example Test
@@ -502,7 +502,7 @@ jobs:
 
       - name: Run Tests
         working-directory: bruno
-        run: bru run uuid-example --env local --format json
+        run: bru run uuid-example --env local --format json --sandbox=developer
 
   custom-example-test:
     name: Custom Handlers Example Test
@@ -544,4 +544,4 @@ jobs:
 
       - name: Run Tests
         working-directory: bruno
-        run: bru run custom-example --env local --format json
+        run: bru run custom-example --env local --format json --sandbox=developer

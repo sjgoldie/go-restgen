@@ -120,7 +120,7 @@ run_tests() {
     start_server "$example_dir" "$port"
 
     cd "$PROJECT_ROOT/bruno"
-    if run_bruno run "$bruno_dir" --env local --format json; then
+    if run_bruno run "$bruno_dir" --env local --format json --sandbox=developer; then
         print_success "$name tests passed"
         RESULT=0
     else

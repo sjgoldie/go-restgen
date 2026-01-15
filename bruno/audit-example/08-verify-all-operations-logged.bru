@@ -14,22 +14,14 @@ assert {
   res.status: eq 200
 }
 
-script:post-response {
-  // Verify we have all 3 audit entries for the job (create, update, delete)
-  const logs = res.body.filter(log => log.job_id === parseInt(bru.getVar("jobId")));
-  const operations = logs.map(log => log.operation);
+tests {
+  test("Should have all 3 audit entries for the job", function() {
+    const logs = res.body.filter(log => log.job_id === parseInt(bru.getVar("jobId")));
+    const operations = logs.map(log => log.operation);
 
-  if (logs.length !== 3) {
-    throw new Error(`Expected 3 audit logs for job ${bru.getVar("jobId")}, got ${logs.length}`);
-  }
-
-  if (!operations.includes("create")) {
-    throw new Error("Missing 'create' operation in audit logs");
-  }
-  if (!operations.includes("update")) {
-    throw new Error("Missing 'update' operation in audit logs");
-  }
-  if (!operations.includes("delete")) {
-    throw new Error("Missing 'delete' operation in audit logs");
-  }
+    expect(logs.length).to.equal(3);
+    expect(operations).to.include("create");
+    expect(operations).to.include("update");
+    expect(operations).to.include("delete");
+  });
 }

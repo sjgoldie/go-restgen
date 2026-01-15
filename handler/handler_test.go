@@ -19,13 +19,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+
 	"github.com/sjgoldie/go-restgen/datastore"
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/filestore"
 	"github.com/sjgoldie/go-restgen/handler"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/service"
-	"github.com/uptrace/bun"
 )
 
 // Test route paths as constants to avoid duplication

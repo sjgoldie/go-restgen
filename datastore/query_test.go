@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/sjgoldie/go-restgen/metadata"
-	"github.com/uptrace/bun"
 )
 
 // Test product names as constants to avoid duplication

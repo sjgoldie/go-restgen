@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+
 	"github.com/sjgoldie/go-restgen/datastore"
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/metadata"
-	"github.com/uptrace/bun"
 )
 
 // TestUser is a test model

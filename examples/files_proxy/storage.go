@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
+
 	"github.com/sjgoldie/go-restgen/filestore"
 )
 

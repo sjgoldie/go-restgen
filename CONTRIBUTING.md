@@ -6,7 +6,7 @@ Thank you for your interest in contributing to go-restgen! This document provide
 
 ### Prerequisites
 
-- Go 1.21 or higher
+- Go 1.24 or higher
 - Git
 - Node.js 18+ (for Bruno CLI)
 
@@ -52,14 +52,27 @@ This installs:
 
 ```
 go-restgen/
+├── metadata/          # Type metadata and context helpers
 ├── datastore/         # Database operations layer
 ├── service/           # Business logic layer
 ├── handler/           # HTTP handlers
 ├── router/            # Route registration helpers
-├── testutil/          # Testing utilities
-└── examples/          # Example applications
-    ├── simple/        # Basic CRUD example
-    └── nested/        # Nested resources example
+├── filestore/         # File storage abstraction
+├── errors/            # Domain error types
+├── examples/          # 12 example applications
+│   ├── simple/        # Basic CRUD
+│   ├── nested_routes/ # Nested resources
+│   ├── auth/          # Authentication patterns
+│   ├── validator/     # Custom validation
+│   ├── audit/         # Audit logging
+│   ├── relations/     # Relation includes
+│   ├── files_proxy/   # File upload (proxy mode)
+│   ├── files_signed/  # File upload (signed URLs)
+│   ├── actions/       # Custom actions
+│   ├── batch/         # Batch operations
+│   ├── custom/        # Custom handlers
+│   └── uuid_pk/       # UUID primary keys
+└── bruno/             # API integration tests
 ```
 
 ## Development Workflow
@@ -68,14 +81,14 @@ go-restgen/
 
 ```bash
 # Run core framework tests (excluding examples)
-go test ./metadata ./datastore ./router ./service ./handler ./errors
+go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 
-# Run with coverage (75.3%)
-go test ./metadata ./datastore ./router ./service ./handler ./errors -coverprofile=/tmp/coverage.out
+# Run with coverage (83%)
+go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore -coverprofile=/tmp/coverage.out
 go tool cover -func=/tmp/coverage.out
 
 # Run with verbose output
-go test -v ./metadata ./datastore ./router ./service ./handler ./errors
+go test -v ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 ```
 
 All unit tests use SQLite in-memory databases - no external database required!
@@ -85,17 +98,17 @@ All unit tests use SQLite in-memory databases - no external database required!
 All examples use SQLite in-memory databases - no setup required!
 
 ```bash
-# Simple example
-cd examples/simple
-go run main.go
+# Run any example
+cd examples/simple && go run main.go
+cd examples/auth && go run main.go
+cd examples/batch && go run main.go
+# etc.
+```
 
-# Nested routes example
-cd examples/nested_routes
-go run main.go
-
-# Auth example
-cd examples/auth
-go run main.go
+Or use the Bruno test script which starts/stops servers automatically:
+```bash
+./scripts/run-bruno-tests.sh simple
+./scripts/run-bruno-tests.sh all
 ```
 
 ### Running API Tests (Bruno)
@@ -132,7 +145,7 @@ We enforce code quality through automated checks:
 
 ### Before Submitting
 
-1. ✅ Run tests: `go test ./metadata ./datastore ./router ./service ./handler ./errors`
+1. ✅ Run tests: `go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore`
 2. ✅ Run linting: `golangci-lint run`
 3. ✅ Check coverage: Ensure ≥70% overall
 4. ✅ Add Bruno tests for new examples

@@ -13,12 +13,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/uptrace/bun"
+
 	"github.com/sjgoldie/go-restgen/datastore"
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/router"
 	"github.com/sjgoldie/go-restgen/service"
-	"github.com/uptrace/bun"
 )
 
 // Order model representing an order that can be cancelled or completed

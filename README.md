@@ -33,6 +33,23 @@ go get github.com/sjgoldie/go-restgen
 
 See the [simple example](./examples/simple) for a simple working example to get started.
 
+## Using with AI Coding Agents
+
+The [AGENT.md](./AGENT.md) file provides a concise reference optimized for AI coding assistants (Claude, Copilot, etc.). Point your AI agent to this file for quick, accurate go-restgen implementations.
+
+**Sample prompt:**
+```
+Read AGENT.md, then create a REST API with these resources:
+- Products (name, price, category, in_stock boolean)
+- Reviews (belongs to Product, rating 1-5, comment, author_name)
+
+Requirements:
+- Products: public read, admin-only write
+- Reviews: public read, authenticated users can create
+- Support filtering by category and in_stock
+- Support sorting by price and name
+```
+
 ## Database Setup
 
 ### PostgreSQL
@@ -905,26 +922,27 @@ type CustomGetFunc[T any] func(
     meta *metadata.TypeMetadata,
     auth *metadata.AuthInfo,  // nil if not authenticated
     id string,
-    relations []string,
 ) (*T, error)
 
 // CustomGetAllFunc - for GET /resource
+// Query options are available via metadata.QueryOptionsFromContext(ctx) if needed.
 type CustomGetAllFunc[T any] func(
     ctx context.Context,
     svc *service.Common[T],
     meta *metadata.TypeMetadata,
     auth *metadata.AuthInfo,
-    opts *metadata.QueryOptions,
-    relations []string,
 ) ([]*T, int, error)
 
 // CustomCreateFunc - for POST /resource
+// Includes file parameters for file resource support (nil for regular JSON requests).
 type CustomCreateFunc[T any] func(
     ctx context.Context,
     svc *service.Common[T],
     meta *metadata.TypeMetadata,
     auth *metadata.AuthInfo,
     item T,
+    file io.Reader,
+    fileMeta filestore.FileMetadata,
 ) (*T, error)
 
 // CustomUpdateFunc - for PUT /resource/{id}
@@ -953,7 +971,7 @@ Get the current user from auth token instead of URL parameter:
 
 ```go
 // Custom Get that uses auth.UserID instead of URL id
-func customGetMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*User, error) {
+func customGetMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) (*User, error) {
     if auth == nil {
         return nil, fmt.Errorf("not authenticated")
     }
@@ -964,6 +982,7 @@ func customGetMe(ctx context.Context, svc *service.Common[User], meta *metadata.
 }
 
 router.RegisterRoutes[User](b, "/me",
+    router.AsSingleRouteWithPut(""),  // Empty string = no parent FK, ID from custom logic
     router.IsAuthenticated(),
     router.WithCustomGet(customGetMe),
 )
@@ -972,7 +991,7 @@ router.RegisterRoutes[User](b, "/me",
 ### Example: Auto-Set Owner on Create
 
 ```go
-func customCreateTask(ctx context.Context, svc *service.Common[Task], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item Task) (*Task, error) {
+func customCreateTask(ctx context.Context, svc *service.Common[Task], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item Task, _ io.Reader, _ filestore.FileMetadata) (*Task, error) {
     if auth == nil {
         return nil, fmt.Errorf("not authenticated")
     }
@@ -990,7 +1009,7 @@ router.RegisterRoutes[Task](b, "/tasks",
 ### Example: Filter GetAll by Owner
 
 ```go
-func customGetMyTasks(ctx context.Context, svc *service.Common[Task], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, opts *metadata.QueryOptions, relations []string) ([]*Task, int, error) {
+func customGetMyTasks(ctx context.Context, svc *service.Common[Task], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*Task, int, error) {
     if auth == nil {
         return nil, 0, fmt.Errorf("not authenticated")
     }
@@ -1622,6 +1641,7 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[File Upload (Signed URL)](./examples/files_signed)** - File upload/download with signed URL mode (direct to storage)
 - **[Action Endpoints](./examples/actions)** - Custom actions on resources (cancel, complete)
 - **[Batch Operations](./examples/batch)** - Bulk create, update, and delete operations
+- **[Custom Handlers](./examples/custom)** - Override default CRUD behavior with custom handler functions
 
 All examples include comprehensive Bruno API tests. See [`bruno/README.md`](./bruno/README.md) for details.
 

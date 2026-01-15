@@ -4,19 +4,17 @@ go-restgen uses a combination of unit tests, integration tests, and end-to-end A
 
 ## Test Coverage Summary
 
-**Core Framework Coverage: 75.3%** (excluding examples)
+**Core Framework Coverage: 83.0%** (excluding examples)
 
-- **metadata**: 100.0% - Complete registry and ownership configuration tests
-- **router**: 90.1% - Route registration, middleware, and auth tests
-- **service**: 88.9% - Comprehensive CRUD operation tests
-- **datastore**: 71.6% - Database operations (uses SQLite in-memory)
-- **handler**: 62.7% - HTTP handler tests including context error handling
+- **metadata**: 98.4% - Registry and ownership configuration tests
+- **router**: 90.2% - Route registration, middleware, and auth tests
+- **filestore**: 88.9% - File storage abstraction tests
+- **service**: 82.7% - Comprehensive CRUD operation tests
+- **handler**: 80.7% - HTTP handler tests
+- **datastore**: 78.6% - Database operations (uses SQLite in-memory)
+- **errors**: 100.0% - Domain error types
 
-**Integration Test Coverage: 58 end-to-end API tests** (Bruno)
-
-- Simple example: 17 tests (includes filtering, sorting, pagination)
-- Nested routes example: 16 tests
-- Auth example: 25 tests (includes ownership + filtering + sorting combined)
+**Integration Test Coverage: ~197 end-to-end API tests** (Bruno) across 12 examples
 
 All unit tests use SQLite in-memory databases - no external database required!
 
@@ -27,7 +25,7 @@ All unit tests use SQLite in-memory databases - no external database required!
 Run tests excluding example applications:
 
 ```bash
-go test ./metadata ./datastore ./router ./service ./handler ./errors -coverprofile=/tmp/coverage.out
+go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore -coverprofile=/tmp/coverage.out
 go tool cover -func=/tmp/coverage.out
 ```
 
@@ -44,7 +42,7 @@ All tests use SQLite in-memory databases, so no external database setup is requi
 ### With Coverage HTML Report
 
 ```bash
-go test ./metadata ./datastore ./router ./service ./handler ./errors -coverprofile=/tmp/coverage.out
+go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore -coverprofile=/tmp/coverage.out
 go tool cover -html=/tmp/coverage.out
 ```
 
@@ -90,7 +88,7 @@ Tests verify:
 
 ### End-to-End API Tests (Bruno)
 
-Located in `bruno/` directory with 58 tests across 3 example applications.
+Located in `bruno/` directory with ~197 tests across 12 example applications.
 
 **Running All Tests:**
 ```bash
@@ -101,31 +99,22 @@ Located in `bruno/` directory with 58 tests across 3 example applications.
 ./scripts/run-bruno-tests.sh simple
 ./scripts/run-bruno-tests.sh nested
 ./scripts/run-bruno-tests.sh auth
+./scripts/run-bruno-tests.sh custom
 ```
 
-**Simple Example (17 tests)**
-- Full CRUD lifecycle
-- Basic HTTP operations
-- Filtering (equality, comparison operators, LIKE patterns)
-- Sorting (ascending, descending, multiple fields)
-- Pagination (limit, offset, count)
-
-**Nested Routes Example (16 tests)**
-- 3-level nested resources (Users → Posts → Comments)
-- Parent validation (404 when accessing under wrong parent)
-- Parent chain validation
-- CRUD operations on nested resources
-
-**Auth Example (25 tests)**
-- Public vs authenticated endpoints
-- Scope-based authorization
-- Ownership filtering (users see only their resources)
-- Admin bypass (admins see all resources)
-- Multi-ownership (author OR editor)
-- Mixed auth patterns
-- Ownership + filtering combined (filter by status within owned resources)
-- Ownership + sorting combined
-- MethodList vs MethodGet differentiation
+**Examples and Test Counts:**
+- **simple** (17 tests) - CRUD, filtering, sorting, pagination
+- **nested** (16 tests) - 3-level nested resources, parent validation
+- **auth** (35 tests) - Scopes, ownership, admin bypass
+- **uuid** (14 tests) - UUID primary keys
+- **validator** (16 tests) - Custom validation
+- **audit** (8 tests) - Audit logging
+- **relations** (23 tests) - Relation includes (?include=)
+- **files-proxy** (13 tests) - File upload with proxy mode
+- **files-signed** (13 tests) - File upload with signed URLs
+- **actions** (12 tests) - Custom action endpoints
+- **batch** (14 tests) - Batch create/update/delete
+- **custom** (16 tests) - Custom handler functions
 
 See `bruno/README.md` for running instructions.
 
@@ -176,11 +165,13 @@ For CI/CD pipelines:
 
 ## Coverage Goals
 
-- **metadata**: 100% (achieved: 100.0%) ✅
-- **router**: > 85% (achieved: 90.1%) ✅
-- **service**: > 85% (achieved: 88.9%) ✅
-- **datastore**: > 65% (achieved: 71.6%) ✅
-- **handler**: > 60% (achieved: 62.7%) ✅
+- **errors**: 100% (achieved: 100.0%) ✅
+- **metadata**: > 95% (achieved: 98.4%) ✅
+- **router**: > 85% (achieved: 90.2%) ✅
+- **filestore**: > 85% (achieved: 88.9%) ✅
+- **service**: > 80% (achieved: 82.7%) ✅
+- **handler**: > 75% (achieved: 80.7%) ✅
+- **datastore**: > 75% (achieved: 78.6%) ✅
 
 Main coverage gaps are in error path testing that requires mocking (service unavailability, rare edge cases).
 

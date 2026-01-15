@@ -13,10 +13,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/uptrace/bun"
+
 	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/router"
-	"github.com/uptrace/bun"
 )
 
 // Job model - the main resource we're tracking
@@ -127,7 +128,8 @@ func main() {
 		var logs []JobAuditLog
 		err := db.GetDB().NewSelect().Model(&logs).Order("id DESC").Limit(50).Scan(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			slog.Warn("failed to fetch audit logs", "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

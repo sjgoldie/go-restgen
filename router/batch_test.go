@@ -12,11 +12,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/uptrace/bun"
+
 	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/router"
 	"github.com/sjgoldie/go-restgen/service"
-	"github.com/uptrace/bun"
 )
 
 // BatchTestItem is a test model for batch operations

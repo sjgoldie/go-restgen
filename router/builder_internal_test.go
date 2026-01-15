@@ -6,9 +6,10 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/uptrace/bun"
+
 	"github.com/sjgoldie/go-restgen/filestore"
 	"github.com/sjgoldie/go-restgen/metadata"
-	"github.com/uptrace/bun"
 )
 
 const testFieldName = "Name"

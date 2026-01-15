@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/sjgoldie/go-restgen/metadata"
-	"github.com/uptrace/bun"
 )
 
 // itoa converts int to string for ID parameters

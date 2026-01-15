@@ -24,14 +24,14 @@ repos:
 
       - id: go-imports
         name: go imports
-        entry: bash -c 'go install golang.org/x/tools/cmd/goimports@latest && $(go env GOPATH)/bin/goimports -w -local github.com/sjgoldie/go-restgen'
+        entry: bash -c '$(go env GOPATH)/bin/goimports -w -local github.com/sjgoldie/go-restgen "$@"' --
         language: system
         files: \.go$
         pass_filenames: true
 
       - id: go-vet
         name: go vet
-        entry: go vet
+        entry: go vet ./...
         language: system
         files: \.go$
         pass_filenames: false
@@ -45,7 +45,7 @@ repos:
 
       - id: go-test
         name: go test (core packages)
-        entry: bash -c 'go test ./metadata ./datastore ./router ./service ./handler ./errors'
+        entry: bash -c 'go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore'
         language: system
         files: \.go$
         pass_filenames: false

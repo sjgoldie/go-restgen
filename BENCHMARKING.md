@@ -233,6 +233,18 @@ Based on typical REST API requirements:
 
 **Note:** Targets assume in-memory SQLite. Production PostgreSQL will be slower due to network overhead.
 
+## Regression Thresholds
+
+Watch for regressions in these key metrics:
+
+| Benchmark | Expected | Investigate If |
+|-----------|----------|----------------|
+| `BenchmarkNestedDepth/Depth1_Blog` | ~12-15μs | >30μs |
+| `BenchmarkOperations/GetAll_100Items` | ~200μs | >400μs |
+| `BenchmarkOperations/GetAll_1000Items` | ~1.5-2ms | >4ms |
+
+**Rule of thumb:** A 2x slowdown or 2x memory increase warrants investigation.
+
 ## Continuous Benchmarking
 
 ### In CI/CD

@@ -9,10 +9,11 @@ import (
 	"slices"
 	"strings"
 
-	apperrors "github.com/sjgoldie/go-restgen/errors"
-	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/driver/pgdriver"
+
+	apperrors "github.com/sjgoldie/go-restgen/errors"
+	"github.com/sjgoldie/go-restgen/metadata"
 )
 
 // Wrapper is a generic struct that wraps a Store interface to provide CRUD operations

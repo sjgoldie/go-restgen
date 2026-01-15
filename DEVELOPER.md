@@ -21,10 +21,10 @@ This installs:
 
 ```bash
 # Run tests (fast - core packages only)
-go test ./metadata ./datastore ./router ./service ./handler ./errors
+go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 
 # Run tests with coverage
-go test ./metadata ./datastore ./router ./service ./handler ./errors -coverprofile=/tmp/coverage.out
+go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore -coverprofile=/tmp/coverage.out
 go tool cover -func=/tmp/coverage.out
 
 # Run linting
@@ -87,6 +87,7 @@ Before creating a PR:
 - Runs on: push, PRs, weekly schedule
 - gosec security scanning
 - govulncheck vulnerability detection
+- gitleaks secret scanning
 
 **4. Release** (`.github/workflows/release.yml`)
 - Runs on: version tags (v*)
@@ -134,11 +135,11 @@ Automated dependency updates:
 
 ## Testing Strategy
 
-### Unit Tests (75.3% coverage)
+### Unit Tests (83% coverage)
 
 ```bash
 # Core packages only (excludes examples)
-go test ./metadata ./datastore ./router ./service ./handler ./errors -coverprofile=/tmp/coverage.out
+go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore -coverprofile=/tmp/coverage.out
 
 # View coverage by function
 go tool cover -func=/tmp/coverage.out
@@ -147,7 +148,7 @@ go tool cover -func=/tmp/coverage.out
 go tool cover -html=/tmp/coverage.out
 ```
 
-### Integration Tests (35 Bruno tests)
+### Integration Tests (~197 Bruno tests across 12 examples)
 
 ```bash
 # Install Bruno CLI
@@ -164,12 +165,14 @@ bru run bruno --env local --reporter json
 ### Coverage Requirements
 
 - **Minimum**: 70% overall
-- **Target**: 75%+
-- **metadata**: 100%
+- **Target**: 80%+
+- **errors**: 100%
+- **metadata**: >95%
 - **router**: >85%
-- **service**: >85%
-- **datastore**: >65%
-- **handler**: >60%
+- **filestore**: >85%
+- **service**: >80%
+- **handler**: >75%
+- **datastore**: >75%
 
 ## Release Process
 
@@ -193,7 +196,7 @@ bru run bruno --env local --reporter json
 
 ```bash
 # Run exact CI command locally
-go test ./metadata ./datastore ./router ./service ./handler ./errors -race -coverprofile=coverage.out
+go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore -race -coverprofile=coverage.out
 
 # Check specific package
 go test -v ./handler

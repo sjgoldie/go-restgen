@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/filestore"
 	"github.com/sjgoldie/go-restgen/metadata"
@@ -413,7 +414,7 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 			// Parse multipart form
 			if err := r.ParseMultipartForm(32 << 20); err != nil {
 				slog.Warn("failed to parse multipart form", "error", err)
-				http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+				http.Error(w, "bad request: failed to parse multipart form", http.StatusBadRequest)
 				return
 			}
 

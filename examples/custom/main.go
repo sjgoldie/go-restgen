@@ -13,12 +13,13 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/uptrace/bun"
+
 	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/sjgoldie/go-restgen/filestore"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/router"
 	"github.com/sjgoldie/go-restgen/service"
-	"github.com/uptrace/bun"
 )
 
 // Global db reference for custom handlers
@@ -317,8 +318,10 @@ func main() {
 
 	b := router.NewBuilder(r)
 
-	// /me endpoint - custom Get and Update that use auth token instead of URL ID
+	// /me endpoint - single route with custom Get and Update using auth token
+	// AsSingleRouteWithPut("") creates GET /me and PUT /me (no {id} parameter)
 	router.RegisterRoutes[User](b, "/me",
+		router.AsSingleRouteWithPut(""), // Empty string = no parent FK, ID from custom logic
 		router.IsAuthenticated(),
 		router.WithCustomGet(customGetMe),
 		router.WithCustomUpdate(customUpdateMe),
@@ -361,9 +364,9 @@ func main() {
 	fmt.Println("Use fake bearer tokens: user:<userID>:<scope1>,<scope2>,...")
 	fmt.Println("Example: Bearer user:alice:user")
 	fmt.Println("\n=== Custom Handler Examples ===")
-	fmt.Println("\n1. /me - Custom Get/Update using auth token")
-	fmt.Println("   GET  /me/{id}  -> Returns current user (ignores ID)")
-	fmt.Println("   PUT  /me/{id}  -> Updates current user (ignores ID)")
+	fmt.Println("\n1. /me - Single route with custom Get/Update using auth token")
+	fmt.Println("   GET  /me  -> Returns current user from auth token")
+	fmt.Println("   PUT  /me  -> Updates current user from auth token")
 	fmt.Println("\n2. /my-tasks - Custom GetAll/Create with auto-owner")
 	fmt.Println("   GET  /my-tasks     -> Returns only current user's tasks")
 	fmt.Println("   POST /my-tasks     -> Creates task with owner auto-set")

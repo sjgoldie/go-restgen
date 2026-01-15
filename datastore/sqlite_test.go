@@ -4,8 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/uptrace/bun"
+
+	"github.com/sjgoldie/go-restgen/datastore"
 )
 
 // TestModel for SQLite tests

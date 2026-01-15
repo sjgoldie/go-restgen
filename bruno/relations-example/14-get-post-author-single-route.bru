@@ -1,0 +1,27 @@
+meta {
+  name: Get Post Author - Single Route
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/posts/{{alicePostId}}/author
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{aliceUserId}}
+  res.body.name: eq Alice
+  res.body.email: isDefined
+}
+
+docs {
+  GET /posts/{id}/author returns the post's author via AsSingleRoute().
+  The author ID is resolved from the parent post's AuthorID field.
+}

@@ -1,0 +1,16 @@
+meta {
+  name: List Posts under Blog
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{blogId}}/posts
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.length: eq 1
+}

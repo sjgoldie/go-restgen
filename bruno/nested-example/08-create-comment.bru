@@ -1,0 +1,30 @@
+meta {
+  name: Create Comment on Alice's Post
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/users/{{aliceId}}/posts/{{alicePostId}}/comments
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "text": "Great post, Alice!",
+    "author": "Bob"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.post_id: eq {{alicePostId}}
+  res.body.text: eq Great post, Alice!
+  res.body.author: eq Bob
+}
+
+script:post-response {
+  bru.setVar("comment1Id", res.body.id);
+}

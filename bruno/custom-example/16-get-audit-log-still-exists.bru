@@ -1,0 +1,20 @@
+meta {
+  name: Get Audit Log Still Exists
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/audit-logs/{{auditLogId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.action: eq login
+}

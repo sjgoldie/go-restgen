@@ -1,0 +1,25 @@
+meta {
+  name: Get All Posts for Alice
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/users/{{aliceId}}/posts
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+script:post-response {
+  if (res.body.length !== 1) {
+    throw new Error(`Expected Alice to have 1 post, got ${res.body.length}`);
+  }
+  if (res.body[0].user_id !== parseInt(bru.getVar("aliceId"))) {
+    throw new Error(`Expected user_id to be ${bru.getVar("aliceId")}`);
+  }
+}

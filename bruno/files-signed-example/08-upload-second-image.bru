@@ -1,0 +1,26 @@
+meta {
+  name: Upload Second Image
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/posts/{{postId}}/images
+  body: multipartForm
+  auth: none
+}
+
+body:multipart-form {
+  file: @file(files-signed-example/testdata/test-image-2.txt)
+  metadata: {"alt_text":"Second test image"}
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.filename: eq test-image-2.txt
+}
+
+script:post-response {
+  bru.setVar("image2Id", res.body.id);
+}

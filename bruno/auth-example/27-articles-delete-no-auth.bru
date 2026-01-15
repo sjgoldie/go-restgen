@@ -1,0 +1,22 @@
+meta {
+  name: DELETE /articles without auth (should fail)
+  type: http
+  seq: 27
+}
+
+delete {
+  url: {{baseUrl}}/articles/{{articleId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  # DELETE Article Without Auth
+
+  Articles require 'publisher' scope for writes.
+  DELETE without auth should return 401.
+}

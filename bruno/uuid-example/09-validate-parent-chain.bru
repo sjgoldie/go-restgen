@@ -1,0 +1,20 @@
+meta {
+  name: Validate Parent Chain - Wrong Blog
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{blog2Id}}/posts/{{postId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  This test validates that the parent chain is enforced.
+  The post belongs to blog1, so trying to access it under blog2 should fail.
+}

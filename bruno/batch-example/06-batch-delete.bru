@@ -1,0 +1,22 @@
+meta {
+  name: Batch Delete Products
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/products/batch
+  body: json
+  auth: none
+}
+
+body:json {
+  [
+    {"id": {{productId1}}},
+    {"id": {{productId2}}}
+  ]
+}
+
+assert {
+  res.status: eq 204
+}

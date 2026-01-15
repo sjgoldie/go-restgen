@@ -1,0 +1,30 @@
+meta {
+  name: Upload Image
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/posts/{{postId}}/images
+  body: multipartForm
+  auth: none
+}
+
+body:multipart-form {
+  file: @file(files-signed-example/testdata/test-image.txt)
+  metadata: {"alt_text":"Test image for Bruno"}
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.post_id: eq {{postId}}
+  res.body.filename: eq test-image.txt
+  res.body.content_type: isDefined
+  res.body.size: isNumber
+  res.body.alt_text: eq Test image for Bruno
+}
+
+script:post-response {
+  bru.setVar("imageId", res.body.id);
+}

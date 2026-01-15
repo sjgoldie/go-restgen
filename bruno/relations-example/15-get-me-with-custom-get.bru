@@ -1,0 +1,33 @@
+meta {
+  name: Get /me with custom get function
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{aliceUserId}}
+  res.body.name: eq Alice
+}
+
+docs {
+  # Get Current User via /me Endpoint
+
+  This test verifies that single route with no parent FK works
+  when a custom get function is provided.
+
+  The custom `getMe` function uses svc.Get with a hardcoded ID.
+  In a real app, you'd look up the user ID from auth context.
+
+  This pattern is useful for `/api/me` or `/api/profile` endpoints.
+}

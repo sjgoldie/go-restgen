@@ -1,0 +1,26 @@
+meta {
+  name: GET /moderator-actions without moderator scope (should fail)
+  type: http
+  seq: 32
+}
+
+get {
+  url: {{baseUrl}}/moderator-actions
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 403
+}
+
+docs {
+  # GET Moderator Actions Without Moderator Scope
+
+  Moderator actions require 'moderator' scope.
+  Alice only has 'user' scope, so GET should return 403 Forbidden.
+}

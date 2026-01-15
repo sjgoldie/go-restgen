@@ -1,0 +1,32 @@
+meta {
+  name: Reports - Create With Auth
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/reports
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "title": "Quarterly Report",
+    "content": "Q4 2024 results..."
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.title: eq Quarterly Report
+}
+
+script:post-response {
+  bru.setVar("reportId", res.body.id);
+}

@@ -1,0 +1,21 @@
+meta {
+  name: Parent Chain Validation - Wrong User ID (Should Fail)
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/users/{{bobId}}/posts/{{alicePostId}}/comments/{{comment1Id}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+}
+
+tests {
+  test("Comment should not be accessible under wrong user ID", function() {
+    expect(res.status).to.equal(404);
+  });
+}

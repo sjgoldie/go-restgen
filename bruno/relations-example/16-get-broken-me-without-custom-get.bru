@@ -1,0 +1,37 @@
+meta {
+  name: Get /broken-me without custom get (should fail)
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/broken-me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 500
+}
+
+docs {
+  # Broken /me Endpoint Without Custom Handler
+
+  This test verifies that single route with no parent FK fails
+  when no custom get function is provided.
+
+  Without a custom handler, the standard `StandardGetByParentRelation`
+  function is used, which requires:
+  1. Parent metadata (missing - no parent)
+  2. ParentFKField to be set (empty string passed)
+
+  This results in a 500 error because the framework cannot determine
+  how to resolve the object ID without explicit configuration.
+
+  This demonstrates why routes like /api/me MUST provide a custom
+  get function when using AsSingleRoute("") with empty ParentFKField.
+}

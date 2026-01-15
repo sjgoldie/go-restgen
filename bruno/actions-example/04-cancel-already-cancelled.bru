@@ -1,0 +1,21 @@
+meta {
+  name: Cancel Already Cancelled Order - Fails
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/cancel
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "reason": "Try again"
+  }
+}
+
+assert {
+  res.status: eq 400
+}

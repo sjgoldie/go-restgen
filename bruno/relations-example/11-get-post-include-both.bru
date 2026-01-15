@@ -1,0 +1,29 @@
+meta {
+  name: Get Post - Include Author and Comments
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/posts/{{alicePostId}}?include=Author,Comments
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.title: eq Alice's First Post
+  res.body.author: isDefined
+  res.body.author.name: eq Alice
+  res.body.comments: isDefined
+  res.body.comments.length: eq 1
+}
+
+docs {
+  Test including multiple relations at once - both belongs-to and has-many
+}

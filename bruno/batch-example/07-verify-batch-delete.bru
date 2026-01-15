@@ -1,0 +1,16 @@
+meta {
+  name: Verify Batch Delete
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/products
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.length: eq 1
+}

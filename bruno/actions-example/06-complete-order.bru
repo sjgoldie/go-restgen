@@ -1,0 +1,18 @@
+meta {
+  name: Complete Order Action
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId2}}/complete
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{orderId2}}
+  res.body.status: eq completed
+  res.body.completed_at: isDefined
+}

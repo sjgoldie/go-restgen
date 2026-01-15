@@ -1,0 +1,27 @@
+meta {
+  name: Blogs - Get All (Admin sees all)
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/blogs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Admin should see all blogs (bypasses ownership)", function() {
+    expect(res.body).to.be.an('array');
+    expect(res.body.length).to.be.at.least(2);
+  });
+}

@@ -1,0 +1,15 @@
+meta {
+  name: Delete Comment
+  type: http
+  seq: 14
+}
+
+delete {
+  url: {{baseUrl}}/users/{{aliceId}}/posts/{{alicePostId}}/comments/{{comment1Id}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 204
+}

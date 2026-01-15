@@ -1,0 +1,28 @@
+meta {
+  name: Create Second Comment
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/users/{{aliceId}}/posts/{{alicePostId}}/comments
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "text": "Thanks Bob!",
+    "author": "Alice"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.post_id: eq {{alicePostId}}
+}
+
+script:post-response {
+  bru.setVar("comment2Id", res.body.id);
+}

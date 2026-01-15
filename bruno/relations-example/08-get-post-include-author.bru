@@ -1,0 +1,28 @@
+meta {
+  name: Get Post - Include Author (belongs-to)
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/posts/{{alicePostId}}?include=Author
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.title: eq Alice's First Post
+  res.body.author: isDefined
+  res.body.author.name: eq Alice
+  res.body.author.id: eq {{aliceUserId}}
+}
+
+docs {
+  Test ?include=Author loads the belongs-to User relation
+}

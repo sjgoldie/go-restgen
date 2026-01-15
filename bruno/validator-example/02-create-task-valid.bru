@@ -1,0 +1,31 @@
+meta {
+  name: Create Task - Valid (pending status)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/tasks
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "Test Task",
+    "description": "A task for testing",
+    "priority": 3
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.title: eq Test Task
+  res.body.status: eq pending
+  res.body.priority: eq 3
+}
+
+script:post-response {
+  bru.setVar("taskId", res.body.id);
+}

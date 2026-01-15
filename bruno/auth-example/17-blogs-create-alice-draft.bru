@@ -1,0 +1,34 @@
+meta {
+  name: Blogs - Create Draft Blog (Alice)
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/blogs
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "name": "Alice's Draft Blog",
+    "description": "Draft blog owned by Alice",
+    "status": "draft"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.author_id: eq alice
+  res.body.status: eq draft
+}
+
+script:post-response {
+  bru.setVar("aliceDraftBlogId", res.body.id);
+}

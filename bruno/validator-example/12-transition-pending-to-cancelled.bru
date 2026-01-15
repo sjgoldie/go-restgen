@@ -1,0 +1,25 @@
+meta {
+  name: Transition - Pending to Cancelled (valid)
+  type: http
+  seq: 12
+}
+
+put {
+  url: {{baseUrl}}/tasks/{{cancelTaskId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "Task to Cancel",
+    "description": "This task will be cancelled",
+    "status": "cancelled",
+    "priority": 2
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq cancelled
+}

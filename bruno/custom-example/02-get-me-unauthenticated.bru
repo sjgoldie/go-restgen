@@ -1,0 +1,15 @@
+meta {
+  name: Get Me Unauthenticated
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/me
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}

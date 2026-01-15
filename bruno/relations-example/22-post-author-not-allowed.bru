@@ -1,0 +1,34 @@
+meta {
+  name: POST /posts/{id}/author not allowed
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{baseUrl}}/posts/{{alicePostId}}/author
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "name": "New Author",
+    "email": "newauthor@example.com",
+    "external_id": "newauthor"
+  }
+}
+
+assert {
+  res.status: eq 405
+}
+
+docs {
+  # POST Not Allowed on Single Route Relation
+
+  Single routes only support GET (and optionally PUT).
+  POST should return 405 Method Not Allowed.
+}

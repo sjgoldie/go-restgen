@@ -1,0 +1,547 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run unit tests with coverage
+        run: |
+          go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore -race -coverprofile=coverage.out -covermode=atomic
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Coverage: $COVERAGE%"
+          if (( $(echo "$COVERAGE < 70.0" | bc -l) )); then
+            echo "Coverage is below 70%"
+            exit 1
+          fi
+
+  simple-example-test:
+    name: Simple Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Server
+        working-directory: examples/simple
+        run: go build -o /tmp/simple-server .
+
+      - name: Start Server
+        run: /tmp/simple-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run simple-example --env local --format json --sandbox=developer
+
+  nested-example-test:
+    name: Nested Routes Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Server
+        working-directory: examples/nested_routes
+        run: go build -o /tmp/nested-server .
+
+      - name: Start Server
+        run: /tmp/nested-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run nested-example --env local --format json --sandbox=developer
+
+  auth-example-test:
+    name: Auth Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Server
+        working-directory: examples/auth
+        run: go build -o /tmp/auth-server .
+
+      - name: Start Server
+        run: /tmp/auth-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run auth-example --env local --format json --sandbox=developer
+
+  validator-example-test:
+    name: Validator Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Server
+        working-directory: examples/validator
+        run: go build -o /tmp/validator-server .
+
+      - name: Start Server
+        run: /tmp/validator-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run validator-example --env local --format json --sandbox=developer
+
+  audit-example-test:
+    name: Audit Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Server
+        working-directory: examples/audit
+        run: go build -o /tmp/audit-server .
+
+      - name: Start Server
+        run: /tmp/audit-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run audit-example --env local --format json --sandbox=developer
+
+  relations-example-test:
+    name: Relations Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Server
+        working-directory: examples/relations
+        run: go build -o /tmp/relations-server .
+
+      - name: Start Server
+        run: /tmp/relations-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run relations-example --env local --format json --sandbox=developer
+
+  files-proxy-example-test:
+    name: Files Proxy Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Server
+        working-directory: examples/files_proxy
+        run: go build -o /tmp/files-proxy-server .
+
+      - name: Start Server
+        run: /tmp/files-proxy-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run files-proxy-example --env local --format json --sandbox=developer
+
+  files-signed-example-test:
+    name: Files Signed Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Server
+        working-directory: examples/files_signed
+        run: go build -o /tmp/files-signed-server .
+
+      - name: Start Server
+        run: /tmp/files-signed-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run files-signed-example --env local --format json --sandbox=developer
+
+  batch-example-test:
+    name: Batch Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Server
+        working-directory: examples/batch
+        run: go build -o /tmp/batch-server .
+
+      - name: Start Server
+        run: /tmp/batch-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run batch-example --env local --format json --sandbox=developer
+
+  actions-example-test:
+    name: Actions Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Server
+        working-directory: examples/actions
+        run: go build -o /tmp/actions-server .
+
+      - name: Start Server
+        run: /tmp/actions-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run actions-example --env local --format json --sandbox=developer
+
+  uuid-example-test:
+    name: UUID Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Server
+        working-directory: examples/uuid_pk
+        run: go build -o /tmp/uuid-server .
+
+      - name: Start Server
+        run: /tmp/uuid-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run uuid-example --env local --format json --sandbox=developer
+
+  custom-example-test:
+    name: Custom Handlers Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Server
+        working-directory: examples/custom
+        run: go build -o /tmp/custom-server .
+
+      - name: Start Server
+        run: /tmp/custom-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run custom-example --env local --format json --sandbox=developer

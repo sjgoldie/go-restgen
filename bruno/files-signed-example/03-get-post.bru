@@ -1,0 +1,17 @@
+meta {
+  name: Get Post
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/posts/{{postId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{postId}}
+  res.body.title: eq My First Post
+}

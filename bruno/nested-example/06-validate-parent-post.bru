@@ -1,0 +1,21 @@
+meta {
+  name: Parent Validation - Alice's Post Under Bob (Should Fail)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/users/{{bobId}}/posts/{{alicePostId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+}
+
+tests {
+  test("Alice's post should not be accessible under Bob's user ID", function() {
+    expect(res.status).to.equal(404);
+  });
+}

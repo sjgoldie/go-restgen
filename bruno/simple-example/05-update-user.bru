@@ -1,0 +1,25 @@
+meta {
+  name: Update User
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/users/{{userId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Alice Updated",
+    "email": "alice.updated@example.com"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{userId}}
+  res.body.name: eq Alice Updated
+  res.body.email: eq alice.updated@example.com
+}

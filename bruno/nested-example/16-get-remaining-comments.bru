@@ -1,0 +1,25 @@
+meta {
+  name: Get Remaining Comments (Should Be 1)
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/users/{{aliceId}}/posts/{{alicePostId}}/comments
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+script:post-response {
+  if (res.body.length !== 1) {
+    throw new Error(`Expected 1 comment after deletion, got ${res.body.length}`);
+  }
+  if (res.body[0].id !== parseInt(bru.getVar("comment2Id"))) {
+    throw new Error(`Expected remaining comment to be comment2`);
+  }
+}

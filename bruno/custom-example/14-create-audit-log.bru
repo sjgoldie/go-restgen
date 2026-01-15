@@ -1,0 +1,35 @@
+meta {
+  name: Create Audit Log
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/audit-logs
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer user:alice:user
+}
+
+body:json {
+  {
+    "action": "login",
+    "resource": "user",
+    "resource_id": 1,
+    "user_id": "alice",
+    "details": "User logged in"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.action: eq login
+}
+
+script:post-response {
+  bru.setVar("auditLogId", res.body.id);
+}

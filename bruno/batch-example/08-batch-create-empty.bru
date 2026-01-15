@@ -1,0 +1,19 @@
+meta {
+  name: Batch Create Empty Array - Fails
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/products/batch
+  body: json
+  auth: none
+}
+
+body:json {
+  []
+}
+
+assert {
+  res.status: eq 400
+}

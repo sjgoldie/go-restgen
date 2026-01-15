@@ -1,0 +1,34 @@
+meta {
+  name: Blogs - Create Published Blog (Bob)
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/blogs
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user,admin
+}
+
+body:json {
+  {
+    "name": "Bob's Published Blog",
+    "description": "Published blog owned by Bob",
+    "status": "published"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.author_id: eq bob
+  res.body.status: eq published
+}
+
+script:post-response {
+  bru.setVar("bobPublishedBlogId", res.body.id);
+}

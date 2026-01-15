@@ -1,0 +1,33 @@
+meta {
+  name: Blogs - Alice Sort by Name (ownership + sort)
+  type: http
+  seq: 23
+}
+
+get {
+  url: {{baseUrl}}/blogs?sort=Name
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Alice's blogs sorted by name ascending (ownership + sort)", function() {
+    expect(res.body).to.be.an('array');
+    // All results should be Alice's
+    expect(res.body.every(blog => blog.author_id === "alice")).to.be.true;
+    // Should have 2 blogs
+    expect(res.body.length).to.equal(2);
+    // Verify sort order (Alice's Blog < Alice's Draft Blog alphabetically)
+    expect(res.body[0].name).to.equal("Alice's Blog");
+    expect(res.body[1].name).to.equal("Alice's Draft Blog");
+  });
+}

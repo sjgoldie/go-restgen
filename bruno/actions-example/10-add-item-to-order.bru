@@ -1,0 +1,30 @@
+meta {
+  name: Add Item to Order
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderWithItemsId}}/items
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "product_name": "Widget A",
+    "quantity": 2,
+    "price": 50.00
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.order_id: eq {{orderWithItemsId}}
+  res.body.product_name: eq Widget A
+}
+
+script:post-response {
+  bru.setVar("itemId", res.body.id);
+}

@@ -1,0 +1,29 @@
+meta {
+  name: Create Blog
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/blogs
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Tech Blog",
+    "description": "A blog about technology"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.name: eq Tech Blog
+  res.body.description: eq A blog about technology
+}
+
+script:post-response {
+  bru.setVar("blogId", res.body.id);
+}

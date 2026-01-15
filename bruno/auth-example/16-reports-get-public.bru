@@ -1,0 +1,23 @@
+meta {
+  name: Reports - Get Single Without Auth (Public)
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/reports/{{reportId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.title: eq Quarterly Report
+}
+
+tests {
+  test("Getting single report without auth should succeed (shareable link)", function() {
+    expect(res.status).to.equal(200);
+  });
+}

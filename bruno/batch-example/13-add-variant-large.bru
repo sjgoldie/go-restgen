@@ -1,0 +1,26 @@
+meta {
+  name: Add Large Variant
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/products/{{productWithVariantsId}}/variants
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Large",
+    "sku_suffix": "-L",
+    "price_adjust": 5.00
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.product_id: eq {{productWithVariantsId}}
+  res.body.name: eq Large
+}

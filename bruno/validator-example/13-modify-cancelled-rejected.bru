@@ -1,0 +1,24 @@
+meta {
+  name: Modify Cancelled Task - Rejected
+  type: http
+  seq: 13
+}
+
+put {
+  url: {{baseUrl}}/tasks/{{cancelTaskId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "Updated Title",
+    "status": "cancelled",
+    "priority": 5
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body: contains cancelled
+}

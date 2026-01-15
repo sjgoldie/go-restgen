@@ -8,6 +8,36 @@
 *.so
 *.dylib
 
+# Example binaries (built with go build/run)
+examples/simple/simple
+examples/nested_routes/nested_routes
+examples/auth/auth
+examples/validator/validator
+examples/audit/audit
+examples/uuid_pk/uuid_pk
+examples/custom/custom
+examples/relations/relations
+examples/files_proxy/files_proxy
+examples/files_signed/files_signed
+examples/batch/batch
+examples/actions/actions
+/simple
+/nested_routes
+/auth
+/validator
+/audit
+/uuid_pk
+/custom
+/relations
+/files_proxy
+/files_signed
+/batch
+/actions
+
+# File upload directories
+examples/files_proxy/uploads/
+examples/files_signed/uploads/
+
 # Test binary, built with `go test -c`
 *.test
 
@@ -16,6 +46,10 @@
 coverage.*
 *.coverprofile
 profile.cov
+
+# Benchmark artifacts
+bench-results/
+*.prof
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
@@ -27,6 +61,14 @@ go.work.sum
 # env file
 .env
 
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# macOS
+.DS_Store
+
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/

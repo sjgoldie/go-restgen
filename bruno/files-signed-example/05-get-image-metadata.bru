@@ -1,0 +1,19 @@
+meta {
+  name: Get Image Metadata
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/posts/{{postId}}/images/{{imageId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{imageId}}
+  res.body.post_id: eq {{postId}}
+  res.body.filename: eq test-image.txt
+  res.body.alt_text: eq Test image for Bruno
+}

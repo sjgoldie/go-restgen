@@ -1,0 +1,27 @@
+meta {
+  name: Get Post - Without Include
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/posts/{{alicePostId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.title: eq Alice's First Post
+  res.body.author: isUndefined
+  res.body.comments: isUndefined
+}
+
+docs {
+  Without ?include=, the author and comments fields should not be present
+}

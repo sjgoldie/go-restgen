@@ -1,0 +1,40 @@
+meta {
+  name: PUT /me with custom update function
+  type: http
+  seq: 17
+}
+
+put {
+  url: {{baseUrl}}/me
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "name": "Alice Updated",
+    "email": "alice-updated@example.com",
+    "external_id": "alice"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{aliceUserId}}
+  res.body.name: eq Alice Updated
+  res.body.email: eq alice-updated@example.com
+}
+
+docs {
+  # Update Current User via PUT /me Endpoint
+
+  This test verifies that single route PUT with no parent FK works
+  when a custom update function is provided.
+
+  The custom `updateMe` function uses svc.Update with a hardcoded ID.
+  In a real app, you'd look up the user ID from auth context.
+}

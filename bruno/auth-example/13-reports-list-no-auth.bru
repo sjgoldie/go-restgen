@@ -1,0 +1,21 @@
+meta {
+  name: Reports - List Without Auth (Should Fail)
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/reports
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}
+
+tests {
+  test("Listing reports without auth should be unauthorized", function() {
+    expect(res.status).to.equal(401);
+  });
+}

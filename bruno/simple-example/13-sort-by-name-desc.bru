@@ -1,0 +1,19 @@
+meta {
+  name: Sort Users by Name Descending
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/users?sort=-Name
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 2
+  res.body[0].name: eq Charlie Brown
+  res.body[1].name: eq Bob Smith
+}

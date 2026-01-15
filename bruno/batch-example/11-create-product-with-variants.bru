@@ -1,0 +1,30 @@
+meta {
+  name: Create Product with Variants
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/products
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "T-Shirt",
+    "sku": "TS001",
+    "price": 29.99,
+    "stock": 100
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.name: eq T-Shirt
+}
+
+script:post-response {
+  bru.setVar("productWithVariantsId", res.body.id);
+}

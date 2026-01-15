@@ -1,0 +1,17 @@
+meta {
+  name: Count Total with Pagination
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/users?limit=1&count=true&sort=Name
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 1
+}

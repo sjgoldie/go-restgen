@@ -1,0 +1,19 @@
+meta {
+  name: Delete Audit Log Blocked (Custom Delete)
+  type: http
+  seq: 15
+}
+
+delete {
+  url: {{baseUrl}}/audit-logs/{{auditLogId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer user:alice:user
+}
+
+assert {
+  res.status: eq 500
+}

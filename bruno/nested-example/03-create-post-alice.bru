@@ -1,0 +1,29 @@
+meta {
+  name: Create Post - Alice's First Post
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/users/{{aliceId}}/posts
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "title": "Alice's First Post",
+    "content": "Hello from Alice!"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.user_id: eq {{aliceId}}
+  res.body.title: eq Alice's First Post
+}
+
+script:post-response {
+  bru.setVar("alicePostId", res.body.id);
+}

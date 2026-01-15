@@ -1,0 +1,15 @@
+meta {
+  name: Verify Blog Deleted
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{blogId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+}

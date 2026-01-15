@@ -1,0 +1,37 @@
+meta {
+  name: PUT /broken-me without custom update (should fail)
+  type: http
+  seq: 19
+}
+
+put {
+  url: {{baseUrl}}/broken-me
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "name": "Should Fail",
+    "email": "fail@example.com",
+    "external_id": "alice"
+  }
+}
+
+assert {
+  res.status: eq 500
+}
+
+docs {
+  # Broken /me PUT Without Custom Handler
+
+  This test verifies that single route PUT with no parent FK fails
+  when no custom update function is provided.
+
+  Without a custom handler, StandardUpdateByParentRelation is used,
+  which requires parent metadata. This results in a 500 error.
+}

@@ -15,10 +15,11 @@ assert {
   res.body: isArray
 }
 
-tests {
-  test("Post should now have 1 comment (after deletion)", function() {
-    expect(res.body).to.be.an('array');
-    expect(res.body.length).to.equal(1);
-    expect(res.body[0].id).to.equal(parseInt(bru.getVar("comment2Id")));
-  });
+script:post-response {
+  if (res.body.length !== 1) {
+    throw new Error(`Expected 1 comment after deletion, got ${res.body.length}`);
+  }
+  if (res.body[0].id !== parseInt(bru.getVar("comment2Id"))) {
+    throw new Error(`Expected remaining comment to be comment2`);
+  }
 }

@@ -15,10 +15,11 @@ assert {
   res.body: isArray
 }
 
-tests {
-  test("Alice should have 1 post", function() {
-    expect(res.body).to.be.an('array');
-    expect(res.body.length).to.equal(1);
-    expect(res.body[0].user_id).to.equal(parseInt(bru.getVar("aliceId")));
-  });
+script:post-response {
+  if (res.body.length !== 1) {
+    throw new Error(`Expected Alice to have 1 post, got ${res.body.length}`);
+  }
+  if (res.body[0].user_id !== parseInt(bru.getVar("aliceId"))) {
+    throw new Error(`Expected user_id to be ${bru.getVar("aliceId")}`);
+  }
 }

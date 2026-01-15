@@ -16,10 +16,3 @@ assert {
   res.body.user_id: eq {{aliceId}}
   res.body.title: eq Alice's First Post
 }
-
-tests {
-  test("Post should be accessible under correct user ID", function() {
-    expect(res.status).to.equal(200);
-    expect(res.body.user_id).to.equal(parseInt(bru.getVar("aliceId")));
-  });
-}

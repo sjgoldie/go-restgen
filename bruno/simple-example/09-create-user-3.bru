@@ -25,5 +25,5 @@ assert {
 }
 
 script:post-response {
-  bru.setEnvVar("userId3", res.body.id);
+  bru.setVar("userId3", res.body.id);
 }

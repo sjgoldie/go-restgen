@@ -85,6 +85,7 @@ func main() {
 		router.AllPublic(),
 		router.WithFilters("Name", "Category", "Price", "Stock", "Active"),
 		router.WithSorts("Name", "Category", "Price", "Stock", "CreatedAt"),
+		router.WithSums("Price", "Stock", "Name", "Active"), // Name and Active are non-numeric (return 0)
 		router.WithPagination(20, 100),
 		router.WithDefaultSort("Name"),
 	)
@@ -111,5 +112,8 @@ func main() {
 	fmt.Println("  nin  - Not in list:         filter[Category][nin]=Electronics,Books")
 	fmt.Println("  bt   - Between:             filter[Price][bt]=50,150")
 	fmt.Println("  nbt  - Not between:         filter[Price][nbt]=50,150")
+	fmt.Println("\nAggregation:")
+	fmt.Println("  sum  - Sum numeric fields:  sum=Price,Stock")
+	fmt.Println("         Returns X-Sum-Price and X-Sum-Stock headers")
 	log.Fatal(http.ListenAndServe(":8080", r))
 }

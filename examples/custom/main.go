@@ -218,18 +218,18 @@ func customUpdateMe(ctx context.Context, svc *service.Common[User], _ *metadata.
 }
 
 // Custom handler: GetAll tasks filtered by current user
-func customGetMyTasks(ctx context.Context, svc *service.Common[Task], _ *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*Task, int, error) {
+func customGetMyTasks(ctx context.Context, svc *service.Common[Task], _ *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*Task, int, map[string]float64, error) {
 	if auth == nil {
-		return nil, 0, fmt.Errorf("not authenticated")
+		return nil, 0, nil, fmt.Errorf("not authenticated")
 	}
 	// Get all tasks for current user
 	tasks := []*Task{} // Initialize as empty slice, not nil
 	err := db.GetDB().NewSelect().Model(&tasks).Where("owner_id = ?", auth.UserID).Order("priority DESC", "created_at DESC").Scan(ctx)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	_ = svc
-	return tasks, len(tasks), nil
+	return tasks, len(tasks), nil, nil
 }
 
 // Custom handler: Create task with auto-set owner

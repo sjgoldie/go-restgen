@@ -4,6 +4,7 @@ package router
 type QueryConfig struct {
 	FilterableFields []string // Field names allowed for filtering
 	SortableFields   []string // Field names allowed for sorting
+	SummableFields   []string // Field names allowed for sum aggregation
 	DefaultSort      string   // Default sort field (prefix with - for descending)
 	DefaultLimit     int      // Default page size (0 = no limit)
 	MaxLimit         int      // Maximum allowed limit (0 = no max)
@@ -41,5 +42,13 @@ func WithPagination(defaultLimit, maxLimit int) QueryConfig {
 func WithDefaultSort(field string) QueryConfig {
 	return QueryConfig{
 		DefaultSort: field,
+	}
+}
+
+// WithSums returns a QueryConfig that enables sum aggregation on the specified fields
+// Only numeric fields (int, float, uint) can be summed; non-numeric fields return 0
+func WithSums(fields ...string) QueryConfig {
+	return QueryConfig{
+		SummableFields: fields,
 	}
 }

@@ -1,0 +1,23 @@
+meta {
+  name: Sum Field Not in Allowlist - Returns 0
+  type: http
+  seq: 46
+}
+
+get {
+  url: {{baseUrl}}/products?sum=CreatedAt
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("X-Sum-CreatedAt header returns 0 for non-allowed field", function() {
+    // Field not in SummableFields should return 0 (security - don't reveal field existence)
+    expect(res.headers['x-sum-createdat']).to.equal('0');
+  });
+}

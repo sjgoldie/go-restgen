@@ -213,7 +213,7 @@ func TestWrapper_Nested_GetAll(t *testing.T) {
 	ctx1 = context.WithValue(ctx1, metadata.ParentIDsKey, map[string]string{
 		"authorId": itoa(author1.ID),
 	})
-	articles1, _, err := articleWrapper.GetAll(ctx1)
+	articles1, _, _, err := articleWrapper.GetAll(ctx1)
 	if err != nil {
 		t.Fatal("Failed to get articles for author1:", err)
 	}
@@ -226,7 +226,7 @@ func TestWrapper_Nested_GetAll(t *testing.T) {
 	ctx2 = context.WithValue(ctx2, metadata.ParentIDsKey, map[string]string{
 		"authorId": itoa(author2.ID),
 	})
-	articles2, _, err := articleWrapper.GetAll(ctx2)
+	articles2, _, _, err := articleWrapper.GetAll(ctx2)
 	if err != nil {
 		t.Fatal("Failed to get articles for author2:", err)
 	}

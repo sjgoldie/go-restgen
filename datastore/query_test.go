@@ -118,7 +118,7 @@ func TestQuery_Filter_Eq(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -150,7 +150,7 @@ func TestQuery_Filter_Gt(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -182,7 +182,7 @@ func TestQuery_Filter_Like(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -208,7 +208,7 @@ func TestQuery_Filter_NotAllowed(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -244,7 +244,7 @@ func TestQuery_Sort_Direction(t *testing.T) {
 			}
 			ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-			results, _, err := wrapper.GetAll(ctx)
+			results, _, _, err := wrapper.GetAll(ctx)
 			if err != nil {
 				t.Fatal("GetAll failed:", err)
 			}
@@ -283,7 +283,7 @@ func TestQuery_Pagination_Limit(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -310,7 +310,7 @@ func TestQuery_Pagination_Offset(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -344,7 +344,7 @@ func TestQuery_Pagination_LimitAndOffset(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -377,7 +377,7 @@ func TestQuery_Count(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, count, err := wrapper.GetAll(ctx)
+	results, count, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -409,7 +409,7 @@ func TestQuery_CountWithFilter(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, count, err := wrapper.GetAll(ctx)
+	results, count, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -438,7 +438,7 @@ func TestQuery_MaxLimitEnforced(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -471,7 +471,7 @@ func TestQuery_DefaultLimit(t *testing.T) {
 	}
 
 	// No explicit limit - should use DefaultLimit (10)
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -503,7 +503,7 @@ func TestQuery_CombinedFilterSortPagination(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, count, err := wrapper.GetAll(ctx)
+	results, count, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -540,7 +540,7 @@ func TestQuery_Sort_InvalidField(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -595,7 +595,7 @@ func TestQuery_DefaultSort_Direction(t *testing.T) {
 			seedQueryProducts(t, wrapper, ctx)
 
 			// No explicit sort - should use DefaultSort
-			results, _, err := wrapper.GetAll(ctx)
+			results, _, _, err := wrapper.GetAll(ctx)
 			if err != nil {
 				t.Fatal("GetAll failed:", err)
 			}
@@ -631,7 +631,7 @@ func TestQuery_MultipleSort(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -662,7 +662,7 @@ func TestQuery_Filter_Neq(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -694,7 +694,7 @@ func TestQuery_Filter_Gte(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -726,7 +726,7 @@ func TestQuery_Filter_Lt(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -758,7 +758,7 @@ func TestQuery_Filter_Lte(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -790,7 +790,7 @@ func TestQuery_Filter_In(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -822,7 +822,7 @@ func TestQuery_Filter_Nin(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -854,7 +854,7 @@ func TestQuery_Filter_Bt(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -887,7 +887,7 @@ func TestQuery_Filter_Nbt(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -920,7 +920,7 @@ func TestQuery_Filter_Bool_True(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -953,7 +953,7 @@ func TestQuery_Filter_Bool_False(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1004,7 +1004,7 @@ func TestQuery_Filter_Int_StringValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1037,7 +1037,7 @@ func TestQuery_Filter_String_NumericLookingValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1067,7 +1067,7 @@ func TestQuery_Filter_String_TrueLookingValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1097,7 +1097,7 @@ func TestQuery_Filter_String_FalseLookingValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1127,7 +1127,7 @@ func TestQuery_Filter_Bool_OneValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1160,7 +1160,7 @@ func TestQuery_Filter_Int_InvalidValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1189,7 +1189,7 @@ func TestQuery_Filter_Bt_SingleValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1259,7 +1259,7 @@ func TestQuery_Filter_Float_Gt(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1286,7 +1286,7 @@ func TestQuery_Filter_Float_InvalidValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1313,7 +1313,7 @@ func TestQuery_Filter_Uint_Gte(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1340,7 +1340,7 @@ func TestQuery_Filter_Uint_InvalidValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1367,7 +1367,7 @@ func TestQuery_Filter_Float_Between(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1408,7 +1408,7 @@ func TestQuery_Filter_Bt_UnknownField(t *testing.T) {
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
 	// This will fail to find the column name, but tests the code path
-	results, _, err := wrapper.GetAll(ctx)
+	results, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		// Expected - field doesn't exist
 		return
@@ -1417,5 +1417,297 @@ func TestQuery_Filter_Bt_UnknownField(t *testing.T) {
 	// If no error, we should get all products since filter couldn't be applied
 	if len(results) != 5 {
 		t.Errorf("Expected 5 products (filter skipped), got %d", len(results))
+	}
+}
+
+// testQueryProductMetaWithSums is metadata with SummableFields configured
+var testQueryProductMetaWithSums = &metadata.TypeMetadata{
+	TypeID:           "query_product_sum_id",
+	TypeName:         "TestQueryProduct",
+	TableName:        "query_products",
+	URLParamUUID:     "productId",
+	ModelType:        reflect.TypeOf(TestQueryProduct{}),
+	FilterableFields: []string{"Name", "Category", "Price", "InStock"},
+	SortableFields:   []string{"Name", "Price", "CreatedAt"},
+	SummableFields:   []string{"Price", "Name", "InStock"}, // Price is numeric, Name is string, InStock is bool
+	DefaultLimit:     10,
+	MaxLimit:         100,
+}
+
+func TestQuery_Sum_SingleField(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Request sum of Price field
+	opts := &metadata.QueryOptions{
+		Sums: []string{"Price"},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	_, _, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Total price: Apple=100 + Banana=50 + Carrot=30 + Donut=150 + Eggplant=80 = 410
+	expectedSum := 410.0
+	if sums["Price"] != expectedSum {
+		t.Errorf("Expected sum of Price to be %v, got %v", expectedSum, sums["Price"])
+	}
+}
+
+func TestQuery_Sum_MultipleFields(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Request sum of Price (numeric) and Name (string - should return 0)
+	opts := &metadata.QueryOptions{
+		Sums: []string{"Price", "Name"},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	_, _, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Price sum should be 410
+	expectedPriceSum := 410.0
+	if sums["Price"] != expectedPriceSum {
+		t.Errorf("Expected sum of Price to be %v, got %v", expectedPriceSum, sums["Price"])
+	}
+
+	// Name (string) sum should be 0 (non-numeric)
+	if sums["Name"] != 0 {
+		t.Errorf("Expected sum of Name (string) to be 0, got %v", sums["Name"])
+	}
+}
+
+func TestQuery_Sum_WithFilter(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Request sum of Price with filter Category=Fruit
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Category": {Value: categoryFruit, Operator: metadata.OpEq},
+		},
+		Sums: []string{"Price"},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	_, _, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Only Fruit products: Apple=100 + Banana=50 = 150
+	expectedSum := 150.0
+	if sums["Price"] != expectedSum {
+		t.Errorf("Expected sum of Price (filtered) to be %v, got %v", expectedSum, sums["Price"])
+	}
+}
+
+func TestQuery_Sum_WithCount(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Request both count and sum - should be combined into one query
+	opts := &metadata.QueryOptions{
+		CountTotal: true,
+		Sums:       []string{"Price"},
+		Limit:      2, // Pagination shouldn't affect sum/count
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	results, count, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Results should be limited to 2
+	if len(results) != 2 {
+		t.Errorf("Expected 2 results, got %d", len(results))
+	}
+
+	// Count should be total (5)
+	if count != 5 {
+		t.Errorf("Expected count of 5, got %d", count)
+	}
+
+	// Sum should be for all items (410), not just the paginated ones
+	expectedSum := 410.0
+	if sums["Price"] != expectedSum {
+		t.Errorf("Expected sum of Price to be %v, got %v", expectedSum, sums["Price"])
+	}
+}
+
+func TestQuery_Sum_NonNumericField(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Request sum of Name (string field in allowlist)
+	opts := &metadata.QueryOptions{
+		Sums: []string{"Name"},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	_, _, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// String field should return 0 (with slog warning)
+	if sums["Name"] != 0 {
+		t.Errorf("Expected sum of Name (string) to be 0, got %v", sums["Name"])
+	}
+}
+
+func TestQuery_Sum_BoolField(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Request sum of InStock (bool field in allowlist)
+	opts := &metadata.QueryOptions{
+		Sums: []string{"InStock"},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	_, _, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Bool field should return 0 (with slog warning)
+	if sums["InStock"] != 0 {
+		t.Errorf("Expected sum of InStock (bool) to be 0, got %v", sums["InStock"])
+	}
+}
+
+func TestQuery_Sum_FieldNotInAllowlist(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Request sum of CreatedAt (not in SummableFields)
+	opts := &metadata.QueryOptions{
+		Sums: []string{"CreatedAt"},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	_, _, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Field not in allowlist should return 0 (with slog warning)
+	if sums["CreatedAt"] != 0 {
+		t.Errorf("Expected sum of CreatedAt (not allowed) to be 0, got %v", sums["CreatedAt"])
+	}
+}
+
+func TestQuery_Sum_NonExistentField(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Request sum of a field that doesn't exist
+	opts := &metadata.QueryOptions{
+		Sums: []string{"NonExistentField"},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	_, _, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Non-existent field should return 0 (with slog warning)
+	if sums["NonExistentField"] != 0 {
+		t.Errorf("Expected sum of NonExistentField to be 0, got %v", sums["NonExistentField"])
+	}
+}
+
+func TestQuery_Sum_MixedValidAndInvalid(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Request sum of Price (valid numeric) and Name (invalid string in allowlist)
+	opts := &metadata.QueryOptions{
+		Sums: []string{"Price", "Name"},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	_, _, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Price should have valid sum
+	expectedPriceSum := 410.0
+	if sums["Price"] != expectedPriceSum {
+		t.Errorf("Expected sum of Price to be %v, got %v", expectedPriceSum, sums["Price"])
+	}
+
+	// Name should be 0 but still present in response
+	if sums["Name"] != 0 {
+		t.Errorf("Expected sum of Name to be 0, got %v", sums["Name"])
+	}
+}
+
+func TestQuery_Sum_NoSumsRequested(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// No sums requested - should return nil map
+	opts := &metadata.QueryOptions{}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	_, _, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Should return nil or empty map when no sums requested
+	if len(sums) > 0 {
+		t.Errorf("Expected nil or empty sums map when no sums requested, got %v", sums)
 	}
 }

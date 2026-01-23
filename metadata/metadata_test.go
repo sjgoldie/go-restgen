@@ -9,6 +9,9 @@ import (
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 )
 
+// Test constants
+const testModifiedValue = "Modified"
+
 // Test types
 type TestUser struct {
 	ID   int
@@ -387,8 +390,8 @@ func TestTypeMetadata_Clone(t *testing.T) {
 		}
 
 		// Modify cloned slice and verify original is unchanged
-		cloned.OwnershipFields[0] = "Modified"
-		if original.OwnershipFields[0] == "Modified" {
+		cloned.OwnershipFields[0] = testModifiedValue
+		if original.OwnershipFields[0] == testModifiedValue {
 			t.Error("modifying cloned OwnershipFields affected original - not a deep copy")
 		}
 
@@ -827,5 +830,94 @@ func TestParseQueryOptions_EmptyValues(t *testing.T) {
 	// Should have no filters since value array is empty
 	if len(opts.Filters) != 0 {
 		t.Errorf("Expected 0 filters for empty value array, got %d", len(opts.Filters))
+	}
+}
+
+func TestParseQueryOptions_Sum(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    url.Values
+		expected []string
+	}{
+		{
+			name:     "single sum field",
+			query:    url.Values{"sum": {"Price"}},
+			expected: []string{"Price"},
+		},
+		{
+			name:     "multiple sum fields",
+			query:    url.Values{"sum": {"Price,Stock,Quantity"}},
+			expected: []string{"Price", "Stock", "Quantity"},
+		},
+		{
+			name:     "with spaces",
+			query:    url.Values{"sum": {"Price, Stock"}},
+			expected: []string{"Price", "Stock"},
+		},
+		{
+			name:     "empty sum ignored",
+			query:    url.Values{"sum": {"Price,,Stock"}},
+			expected: []string{"Price", "Stock"},
+		},
+		{
+			name:     "no sum param",
+			query:    url.Values{},
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := ParseQueryOptions(tt.query)
+
+			if len(opts.Sums) != len(tt.expected) {
+				t.Fatalf("Sums: expected %d, got %d", len(tt.expected), len(opts.Sums))
+			}
+
+			for i, exp := range tt.expected {
+				if opts.Sums[i] != exp {
+					t.Errorf("Sums[%d]: expected %q, got %q", i, exp, opts.Sums[i])
+				}
+			}
+		})
+	}
+}
+
+func TestTypeMetadata_Clone_SummableFields(t *testing.T) {
+	original := &TypeMetadata{
+		TypeID:         "test_id",
+		TypeName:       "TestType",
+		SummableFields: []string{"Price", "Stock"},
+	}
+
+	cloned := original.Clone()
+
+	// Verify SummableFields are copied
+	if len(cloned.SummableFields) != len(original.SummableFields) {
+		t.Fatalf("SummableFields length: expected %d, got %d", len(original.SummableFields), len(cloned.SummableFields))
+	}
+	for i, v := range original.SummableFields {
+		if cloned.SummableFields[i] != v {
+			t.Errorf("SummableFields[%d]: expected %q, got %q", i, v, cloned.SummableFields[i])
+		}
+	}
+
+	// Verify it's a deep copy
+	cloned.SummableFields[0] = testModifiedValue
+	if original.SummableFields[0] == testModifiedValue {
+		t.Error("modifying cloned SummableFields affected original - not a deep copy")
+	}
+}
+
+func TestTypeMetadata_Clone_NilSummableFields(t *testing.T) {
+	original := &TypeMetadata{
+		TypeID:   "test_id",
+		TypeName: "TestType",
+	}
+
+	cloned := original.Clone()
+
+	if cloned.SummableFields != nil {
+		t.Error("nil SummableFields should remain nil after clone")
 	}
 }

@@ -121,6 +121,7 @@ type TypeMetadata struct {
 	// Query options for GetAll
 	FilterableFields []string // Field names allowed for filtering (empty = no filtering)
 	SortableFields   []string // Field names allowed for sorting (empty = no sorting)
+	SummableFields   []string // Field names allowed for sum aggregation (empty = no sums)
 	DefaultSort      string   // Default sort field (prefix with - for descending)
 	DefaultLimit     int      // Default page size (0 = no limit)
 	MaxLimit         int      // Maximum allowed limit (0 = no max)
@@ -179,6 +180,10 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 		result.SortableFields = make([]string, len(m.SortableFields))
 		copy(result.SortableFields, m.SortableFields)
 	}
+	if len(m.SummableFields) > 0 {
+		result.SummableFields = make([]string, len(m.SummableFields))
+		copy(result.SummableFields, m.SummableFields)
+	}
 
 	// Deep copy map
 	if m.ChildMeta != nil {
@@ -199,6 +204,7 @@ type QueryOptions struct {
 	Offset     int                    // 0 means start from beginning
 	CountTotal bool                   // whether to return total count
 	Include    []string               // relation names to include via ?include=
+	Sums       []string               // field names to compute sum aggregates via ?sum=
 }
 
 // AllowedIncludes maps relation names to whether ownership filtering should be applied.
@@ -354,6 +360,16 @@ func ParseQueryOptions(query url.Values) *QueryOptions {
 			rel = strings.TrimSpace(rel)
 			if rel != "" {
 				opts.Include = append(opts.Include, rel)
+			}
+		}
+	}
+
+	// Parse sum: sum=Field1,Field2
+	if sumStr := query.Get("sum"); sumStr != "" {
+		for _, field := range strings.Split(sumStr, ",") {
+			field = strings.TrimSpace(field)
+			if field != "" {
+				opts.Sums = append(opts.Sums, field)
 			}
 		}
 	}

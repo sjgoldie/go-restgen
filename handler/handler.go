@@ -55,14 +55,14 @@ type CustomGetFunc[T any] func(
 ) (*T, error)
 
 // CustomGetAllFunc is the signature for custom GetAll handlers.
-// The custom function receives all parsed/validated inputs and returns items with count.
+// The custom function receives all parsed/validated inputs and returns items with count and sums.
 // Query options are available via metadata.QueryOptionsFromContext(ctx) if needed.
 type CustomGetAllFunc[T any] func(
 	ctx context.Context,
 	svc *service.Common[T],
 	meta *metadata.TypeMetadata,
 	auth *metadata.AuthInfo,
-) ([]*T, int, error)
+) ([]*T, int, map[string]float64, error)
 
 // CustomCreateFunc is the signature for custom Create handlers.
 // The custom function receives the decoded item and optional file data.
@@ -185,7 +185,7 @@ func handleMutationError(w http.ResponseWriter, err error, operation string) {
 
 // StandardGetAll is the default GetAll implementation that calls svc.GetAll.
 // Use this when no custom logic is needed.
-func StandardGetAll[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*T, int, error) {
+func StandardGetAll[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*T, int, map[string]float64, error) {
 	return svc.GetAll(ctx)
 }
 
@@ -223,7 +223,7 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 		opts := metadata.QueryOptionsFromContext(ctx)
 
 		// Call the provided function
-		items, totalCount, err := getAllFunc(ctx, svc, meta, auth)
+		items, totalCount, sums, err := getAllFunc(ctx, svc, meta, auth)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return // Client disconnected, no response needed
@@ -251,6 +251,16 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 		}
 		if opts.Offset > 0 {
 			w.Header().Set("X-Offset", strconv.Itoa(opts.Offset))
+		}
+
+		// Set sum headers
+		for field, value := range sums {
+			headerName := "X-Sum-" + field
+			if value == float64(int64(value)) {
+				w.Header().Set(headerName, strconv.FormatInt(int64(value), 10))
+			} else {
+				w.Header().Set(headerName, strconv.FormatFloat(value, 'f', -1, 64))
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")

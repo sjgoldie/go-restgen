@@ -1,0 +1,28 @@
+meta {
+  name: Sum with Filter - Fruit category only
+  type: http
+  seq: 42
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Category]=Fruit&sum=Price
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 2
+}
+
+tests {
+  test("X-Sum-Price header contains sum of filtered prices only", function() {
+    // Only Fruit products: Apple=100 + Banana=50 = 150
+    expect(res.headers['x-sum-price']).to.equal('150');
+  });
+
+  test("All returned products are Fruit", function() {
+    expect(res.body.every(p => p.category === 'Fruit')).to.be.true;
+  });
+}

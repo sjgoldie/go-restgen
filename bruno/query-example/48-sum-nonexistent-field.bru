@@ -1,0 +1,23 @@
+meta {
+  name: Sum Non-Existent Field - Returns 0
+  type: http
+  seq: 48
+}
+
+get {
+  url: {{baseUrl}}/products?sum=FakeField
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("X-Sum-FakeField header returns 0 for non-existent field", function() {
+    // Non-existent field should return 0 (security - don't reveal field existence)
+    expect(res.headers['x-sum-fakefield']).to.equal('0');
+  });
+}

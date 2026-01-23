@@ -164,7 +164,7 @@ func TestService_GetAll(t *testing.T) {
 				t.Fatal("Failed to create service:", err)
 			}
 
-			items, _, err := svc.GetAll(ctxWithMeta(testModelMeta))
+			items, _, _, err := svc.GetAll(ctxWithMeta(testModelMeta))
 			if err != nil {
 				t.Fatal("GetAll failed:", err)
 			}
@@ -1054,7 +1054,7 @@ func TestService_BatchDelete(t *testing.T) {
 	}
 
 	// Verify they're gone
-	all, _, err := svc.GetAll(ctx)
+	all, _, _, err := svc.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}

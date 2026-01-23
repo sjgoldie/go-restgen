@@ -25,8 +25,8 @@ type DownloadResult struct {
 }
 
 // GetAll retrieves all items of type T
-// Returns items, total count (0 if not requested), and error
-func (s *Common[T]) GetAll(ctx context.Context) ([]*T, int, error) {
+// Returns items, total count (0 if not requested), sums (nil if not requested), and error
+func (s *Common[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64, error) {
 	return s.store.GetAll(ctx)
 }
 

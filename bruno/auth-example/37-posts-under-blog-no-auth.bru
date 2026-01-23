@@ -1,0 +1,30 @@
+meta {
+  name: Posts - Access Under Blog Without Auth
+  type: http
+  seq: 37
+}
+
+get {
+  url: {{baseUrl}}/blogs/1/posts
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  # Issue #28 Test: Parent Ownership Check
+
+  Posts are nested under Blogs.
+  Blogs have ownership configured (AuthorID field).
+  Even though Posts also have ownership, the parent Blog's ownership
+  should be checked first.
+
+  Accessing posts without auth should return 401 because
+  the parent Blog requires ownership validation.
+
+  Before fix: May return 500 or allow access
+  After fix: Returns 401 "unauthorized"
+}

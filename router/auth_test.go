@@ -915,3 +915,318 @@ func TestAuth_ChildAuthNoAuth(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// Issue #24 Tests: Empty UserID with ownership configured should return 401
+// =============================================================================
+
+// Test model for nested ownership tests
+type OwnershipTestProject struct {
+	bun.BaseModel `bun:"table:ownership_test_projects"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	OwnerID       string `bun:"owner_id,notnull"`
+	Name          string `bun:"name"`
+}
+
+type OwnershipTestTask struct {
+	bun.BaseModel `bun:"table:ownership_test_tasks"`
+	ID            int                   `bun:"id,pk,autoincrement"`
+	ProjectID     int                   `bun:"project_id,notnull"`
+	Project       *OwnershipTestProject `bun:"rel:belongs-to,join:project_id=id"`
+	Title         string                `bun:"title"`
+}
+
+// addAuthMiddlewareEmptyUserID simulates a middleware that sets AuthInfo with empty UserID
+// This is the pattern used by dhe and causes issue #24
+func addAuthMiddlewareEmptyUserID(r *chi.Mux) *chi.Mux {
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			// Simulate middleware that sets AuthInfo but with empty UserID
+			authInfo := &router.AuthInfo{
+				UserID: "",
+				Scopes: []string{router.ScopePublic},
+			}
+			ctx := context.WithValue(req.Context(), router.AuthInfoKey, authInfo)
+			next.ServeHTTP(w, req.WithContext(ctx))
+		})
+	})
+	return r
+}
+
+// TestAuth_Issue24_OwnershipWithEmptyUserID tests that ownership + empty UserID returns 401, not 500
+func TestAuth_Issue24_OwnershipWithEmptyUserID(t *testing.T) {
+	ds, err := datastore.Get()
+	if err != nil {
+		t.Fatalf("failed to get datastore: %v", err)
+	}
+
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	// Create table
+	if _, err := db.NewCreateTable().Model((*AuthTestPost)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create posts table: %v", err)
+	}
+	_, _ = db.NewDelete().Model((*AuthTestPost)(nil)).Where("1=1").Exec(ctx)
+
+	// Create router with middleware that sets empty UserID (simulating dhe pattern)
+	r := addAuthMiddlewareEmptyUserID(chi.NewRouter())
+	b := router.NewBuilder(r)
+
+	// Register route with ownership but no explicit scopes (the problematic pattern)
+	router.RegisterRoutes[AuthTestPost](b, "/posts", router.AuthConfig{
+		Methods: []string{router.MethodAll},
+		Ownership: &router.OwnershipConfig{
+			Fields: []string{"UserID"},
+		},
+	})
+
+	// GET /posts with empty UserID should return 401, not 500
+	req := httptest.NewRequest("GET", "/posts", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == http.StatusInternalServerError {
+		t.Errorf("Issue #24: got 500 instead of 401 - ownership check failed in datastore instead of auth middleware")
+	}
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401 for ownership with empty UserID, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAuth_Issue24_ScopeAuthOnlyWithEmptyUserID tests that ScopeAuthOnly + empty UserID returns 401
+func TestAuth_Issue24_ScopeAuthOnlyWithEmptyUserID(t *testing.T) {
+	ds, err := datastore.Get()
+	if err != nil {
+		t.Fatalf("failed to get datastore: %v", err)
+	}
+
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	// Create table
+	if _, err := db.NewCreateTable().Model((*AuthTestUser)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create users table: %v", err)
+	}
+
+	// Create router with middleware that sets empty UserID
+	r := addAuthMiddlewareEmptyUserID(chi.NewRouter())
+	b := router.NewBuilder(r)
+
+	// Register route with ScopeAuthOnly
+	router.RegisterRoutes[AuthTestUser](b, "/users", router.AuthConfig{
+		Methods: []string{router.MethodAll},
+		Scopes:  []string{router.ScopeAuthOnly},
+	})
+
+	// GET /users with empty UserID should return 401
+	req := httptest.NewRequest("GET", "/users", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401 for ScopeAuthOnly with empty UserID, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// =============================================================================
+// Issue #28 Tests: Parent ownership should be checked for nested routes
+// =============================================================================
+
+// setupNestedOwnershipTest creates tables for nested ownership tests
+func setupNestedOwnershipTest(t *testing.T) {
+	ds, err := datastore.Get()
+	if err != nil {
+		t.Fatalf("failed to get datastore: %v", err)
+	}
+
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	// Create tables
+	if _, err := db.NewCreateTable().Model((*OwnershipTestProject)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create projects table: %v", err)
+	}
+	if _, err := db.NewCreateTable().Model((*OwnershipTestTask)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create tasks table: %v", err)
+	}
+
+	// Clean tables
+	_, _ = db.NewDelete().Model((*OwnershipTestTask)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.NewDelete().Model((*OwnershipTestProject)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.Exec("DELETE FROM sqlite_sequence WHERE name IN ('ownership_test_projects', 'ownership_test_tasks')")
+}
+
+// TestAuth_Issue28_ParentOwnershipNoAuth tests that child routes under owned parent require auth
+func TestAuth_Issue28_ParentOwnershipNoAuth(t *testing.T) {
+	setupNestedOwnershipTest(t)
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	// Create a project owned by alice
+	project := &OwnershipTestProject{OwnerID: "alice", Name: "Alice's Project"}
+	_, err := db.NewInsert().Model(project).Returning("*").Exec(ctx)
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	// Create a task under the project
+	task := &OwnershipTestTask{ProjectID: project.ID, Title: "Task 1"}
+	_, err = db.NewInsert().Model(task).Returning("*").Exec(ctx)
+	if err != nil {
+		t.Fatalf("failed to create task: %v", err)
+	}
+
+	// Create router WITHOUT auth (simulating public child under owned parent)
+	r := chi.NewRouter()
+	b := router.NewBuilder(r)
+
+	router.RegisterRoutes[OwnershipTestProject](b, "/projects",
+		router.AuthConfig{
+			Methods: []string{router.MethodAll},
+			Ownership: &router.OwnershipConfig{
+				Fields: []string{"OwnerID"},
+			},
+		},
+		func(b *router.Builder) {
+			// Child route is "public" - no auth configured
+			router.RegisterRoutes[OwnershipTestTask](b, "/tasks",
+				router.AllPublic(),
+			)
+		},
+	)
+
+	// GET /projects/1/tasks without auth should return 401
+	// because parent (project) has ownership configured
+	req := httptest.NewRequest("GET", "/projects/1/tasks", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == http.StatusOK {
+		t.Errorf("Issue #28: child route accessible without auth even though parent has ownership")
+	}
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401 for public child under owned parent without auth, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAuth_Issue28_ParentOwnershipFiltering tests that child routes filter by parent ownership
+func TestAuth_Issue28_ParentOwnershipFiltering(t *testing.T) {
+	tests := []struct {
+		name          string
+		authUser      string
+		expectedTasks int
+	}{
+		{"wrong user sees nothing", "bob", 0},
+		{"owner sees tasks", "alice", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupNestedOwnershipTest(t)
+
+			ds, _ := datastore.Get()
+			db := ds.GetDB()
+			ctx := context.Background()
+
+			project := &OwnershipTestProject{OwnerID: "alice", Name: "Alice's Project"}
+			_, err := db.NewInsert().Model(project).Returning("*").Exec(ctx)
+			if err != nil {
+				t.Fatalf("failed to create project: %v", err)
+			}
+
+			task := &OwnershipTestTask{ProjectID: project.ID, Title: "Task 1"}
+			_, err = db.NewInsert().Model(task).Returning("*").Exec(ctx)
+			if err != nil {
+				t.Fatalf("failed to create task: %v", err)
+			}
+
+			r := addAuthMiddleware(chi.NewRouter(), tt.authUser, []string{"user"})
+			b := router.NewBuilder(r)
+
+			router.RegisterRoutes[OwnershipTestProject](b, "/projects",
+				router.AuthConfig{
+					Methods: []string{router.MethodAll},
+					Ownership: &router.OwnershipConfig{
+						Fields: []string{"OwnerID"},
+					},
+				},
+				func(b *router.Builder) {
+					router.RegisterRoutes[OwnershipTestTask](b, "/tasks",
+						router.IsAuthenticated(),
+					)
+				},
+			)
+
+			req := httptest.NewRequest("GET", "/projects/1/tasks", nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var tasks []OwnershipTestTask
+			if err := json.Unmarshal(w.Body.Bytes(), &tasks); err != nil {
+				t.Fatalf("failed to parse response: %v", err)
+			}
+
+			if len(tasks) != tt.expectedTasks {
+				t.Errorf("expected %d tasks, got %d", tt.expectedTasks, len(tasks))
+			}
+		})
+	}
+}
+
+// TestAuth_Issue28_ParentOwnershipBypass tests that bypass scope works for parent ownership
+func TestAuth_Issue28_ParentOwnershipBypass(t *testing.T) {
+	setupNestedOwnershipTest(t)
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	// Create a project owned by alice
+	project := &OwnershipTestProject{OwnerID: "alice", Name: "Alice's Project"}
+	_, err := db.NewInsert().Model(project).Returning("*").Exec(ctx)
+	if err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	// Create a task under the project
+	task := &OwnershipTestTask{ProjectID: project.ID, Title: "Task 1"}
+	_, err = db.NewInsert().Model(task).Returning("*").Exec(ctx)
+	if err != nil {
+		t.Fatalf("failed to create task: %v", err)
+	}
+
+	// Create router with Admin (has bypass scope)
+	r := addAuthMiddleware(chi.NewRouter(), "admin", []string{"user", "admin"})
+	b := router.NewBuilder(r)
+
+	router.RegisterRoutes[OwnershipTestProject](b, "/projects",
+		router.AuthConfig{
+			Methods: []string{router.MethodAll},
+			Ownership: &router.OwnershipConfig{
+				Fields:       []string{"OwnerID"},
+				BypassScopes: []string{"admin"},
+			},
+		},
+		func(b *router.Builder) {
+			router.RegisterRoutes[OwnershipTestTask](b, "/tasks",
+				router.IsAuthenticated(),
+			)
+		},
+	)
+
+	// GET /projects/1/tasks as Admin should succeed (bypass)
+	req := httptest.NewRequest("GET", "/projects/1/tasks", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200 for admin with bypass scope, got %d: %s", w.Code, w.Body.String())
+	}
+}

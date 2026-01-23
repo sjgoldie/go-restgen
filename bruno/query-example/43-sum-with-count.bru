@@ -1,0 +1,28 @@
+meta {
+  name: Sum with Count - Combined query
+  type: http
+  seq: 43
+}
+
+get {
+  url: {{baseUrl}}/products?sum=Price&count=true&limit=2
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 2
+}
+
+tests {
+  test("X-Sum-Price header contains sum of ALL prices (not just paginated)", function() {
+    // Sum should be for all 7 products, not just the 2 returned
+    expect(res.headers['x-sum-price']).to.equal('2297');
+  });
+
+  test("X-Total-Count header shows total count", function() {
+    expect(res.headers['x-total-count']).to.equal('7');
+  });
+}

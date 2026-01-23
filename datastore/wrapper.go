@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/uptrace/bun"
@@ -14,6 +16,15 @@ import (
 
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/metadata"
+)
+
+var (
+	singleValueOps = map[string]bool{
+		metadata.OpEq: true, "": true,
+		metadata.OpNeq: true, metadata.OpGt: true, metadata.OpGte: true,
+		metadata.OpLt: true, metadata.OpLte: true, metadata.OpLike: true,
+	}
+	rangeOps = map[string]bool{metadata.OpBt: true, metadata.OpNbt: true}
 )
 
 // Wrapper is a generic struct that wraps a Store interface to provide CRUD operations
@@ -30,8 +41,8 @@ type preFetchResult[T any] struct {
 // GetAll retrieves all items of type T from the datastore
 // Filters from context are applied automatically
 // Relations can be loaded via ?include= query parameter (parsed into QueryOptions.Include)
-// Returns items, total count (0 if not requested), and error
-func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, error) {
+// Returns items, total count (0 if not requested), sums (nil if not requested), and error
+func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -41,19 +52,19 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, error) {
 	// Get metadata from context
 	meta, err := metadata.FromContext(ctx)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 
 	// Apply parent filters and JOINs from metadata
 	query, err = w.applyParentFiltersWithMeta(ctx, query, meta)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 
 	// Apply ownership filter for type T
 	query, err = w.applyOwnershipFilterWithMeta(ctx, query, meta)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 
 	// Get query options from context (optional)
@@ -62,20 +73,20 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, error) {
 	// Apply filters from query options
 	query = w.applyQueryFilters(query, opts, meta)
 
-	// Get total count BEFORE sorting/pagination (if requested)
-	// Use the same query with filters already applied
+	// Compute aggregates (count and/or sums) BEFORE sorting/pagination
 	var totalCount int
-	if opts != nil && opts.CountTotal {
-		totalCount, err = query.Count(ctx)
+	var sums map[string]float64
+	if opts != nil && (opts.CountTotal || len(opts.Sums) > 0) {
+		totalCount, sums, err = w.computeAggregates(ctx, query, opts, meta)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 	}
 
 	// Apply sorting from query options (or default sort)
 	query = w.applyQuerySorting(query, opts, meta)
 
-	// Apply pagination AFTER count
+	// Apply pagination AFTER aggregates
 	query = w.applyQueryPagination(query, opts, meta)
 
 	// Apply relation includes from query options
@@ -84,16 +95,16 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, error) {
 	if err := query.Scan(ctx); err != nil {
 		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		// Check for connection issues
 		if errors.Is(err, sql.ErrConnDone) {
-			return nil, 0, apperrors.ErrUnavailable
+			return nil, 0, nil, apperrors.ErrUnavailable
 		}
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 
-	return items, totalCount, nil
+	return items, totalCount, sums, nil
 }
 
 // Get retrieves a single item of type T by ID from the datastore
@@ -497,6 +508,7 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 		childFKCol    string
 		parentTable   string
 		parentURLUUID string
+		parentMeta    *metadata.TypeMetadata
 	}
 
 	var joins []joinInfo
@@ -511,11 +523,22 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 			childFKCol:    childMeta.ForeignKeyCol,
 			parentTable:   parentMeta.TableName,
 			parentURLUUID: parentMeta.URLParamUUID,
+			parentMeta:    parentMeta,
 		})
 
 		// Move up the chain
 		childMeta = parentMeta
 		parentMeta = parentMeta.ParentMeta
+	}
+
+	// Get parents needing ownership filtering (set by auth middleware)
+	parentsNeedingOwnership, _ := ctx.Value(metadata.ParentOwnershipKey).([]*metadata.TypeMetadata)
+
+	// Get UserID from AuthInfo for parent ownership filtering
+	// (OwnershipUserIDKey may not be set if current route doesn't have ownership)
+	var ownershipUserID string
+	if authInfo, ok := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo); ok && authInfo != nil {
+		ownershipUserID = authInfo.UserID
 	}
 
 	// Now build the JOINs and WHERE clauses
@@ -566,9 +589,44 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 		// WHERE parent_table.id = ?
 		query = query.Where("?.? = ?",
 			bun.Ident(join.parentTable), bun.Ident("id"), parentID)
+
+		// Issue #28 fix: Apply ownership filter for this parent if needed
+		if slices.Contains(parentsNeedingOwnership, join.parentMeta) && ownershipUserID != "" {
+			query = applyParentOwnershipFilter(query, join.parentMeta, ownershipUserID)
+		}
 	}
 
 	return query, nil
+}
+
+// applyParentOwnershipFilter adds ownership WHERE clause for a parent table
+func applyParentOwnershipFilter(query *bun.SelectQuery, parentMeta *metadata.TypeMetadata, userID string) *bun.SelectQuery {
+	if len(parentMeta.OwnershipFields) == 0 {
+		return query
+	}
+
+	// Get the parent type for column name lookup
+	parentType := parentMeta.ModelType
+	if parentType.Kind() == reflect.Ptr {
+		parentType = parentType.Elem()
+	}
+
+	// Build WHERE clause for ownership: parent_table.ownership_field = userID
+	// For multiple fields, use OR logic (same as applyOwnershipFilterWithMeta)
+	for i, fieldName := range parentMeta.OwnershipFields {
+		colName, err := fieldToColumnName(parentType, fieldName)
+		if err != nil {
+			continue
+		}
+
+		if i == 0 {
+			query = query.Where("?.? = ?", bun.Ident(parentMeta.TableName), bun.Ident(colName), userID)
+		} else {
+			query = query.WhereOr("?.? = ?", bun.Ident(parentMeta.TableName), bun.Ident(colName), userID)
+		}
+	}
+
+	return query
 }
 
 // applyOwnershipFilterWithMeta applies ownership filtering to a query if enforced in context
@@ -702,8 +760,222 @@ func fieldToColumnName(tType reflect.Type, fieldName string) (string, error) {
 	return parts[0], nil
 }
 
+// convertFilterValues converts a string filter value to the appropriate Go type(s)
+// based on the model field's type. For non-string types, comma-separated values
+// are split and each value is converted. For string types, the value is kept intact
+// since commas could be part of the string value itself.
+// Returns a slice of converted values.
+func convertFilterValues(modelType reflect.Type, fieldName string, val string) []any {
+	field, found := modelType.FieldByName(fieldName)
+	if !found {
+		return []any{val}
+	}
+
+	// String fields: don't split - comma could be part of the value
+	if field.Type.Kind() == reflect.String {
+		return []any{val}
+	}
+
+	// Non-string fields: split by comma and convert each
+	parts := strings.Split(val, ",")
+	result := make([]any, len(parts))
+	for i, part := range parts {
+		result[i] = convertSingleValue(field.Type.Kind(), fieldName, strings.TrimSpace(part))
+	}
+	return result
+}
+
+// convertSingleValue converts a single string value to the appropriate Go type
+func convertSingleValue(kind reflect.Kind, fieldName string, val string) any {
+	switch kind {
+	case reflect.Bool:
+		return val == "true" || val == "1"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		i, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			slog.Warn("failed to parse filter value as int", "field", fieldName, "value", val, "error", err)
+			return val
+		}
+		return i
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		u, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			slog.Warn("failed to parse filter value as uint", "field", fieldName, "value", val, "error", err)
+			return val
+		}
+		return u
+	case reflect.Float32, reflect.Float64:
+		f, err := strconv.ParseFloat(val, 64)
+		if err != nil {
+			slog.Warn("failed to parse filter value as float", "field", fieldName, "value", val, "error", err)
+			return val
+		}
+		return f
+	}
+	return val
+}
+
+// getZeroValue returns the zero value for a field type
+func getZeroValue(modelType reflect.Type, fieldName string) any {
+	field, found := modelType.FieldByName(fieldName)
+	if !found {
+		return ""
+	}
+	return reflect.Zero(field.Type).Interface()
+}
+
+// splitStringValues splits a single comma-separated string value into multiple trimmed values
+func splitStringValues(vals []any) []any {
+	if len(vals) != 1 {
+		return vals
+	}
+	strVal, ok := vals[0].(string)
+	if !ok || !strings.Contains(strVal, ",") {
+		return vals
+	}
+	parts := strings.Split(strVal, ",")
+	result := make([]any, len(parts))
+	for i, p := range parts {
+		result[i] = strings.TrimSpace(p)
+	}
+	return result
+}
+
+// isNumericField checks if a field on the model type is a numeric type (int, uint, float)
+func isNumericField(modelType reflect.Type, fieldName string) bool {
+	field, found := modelType.FieldByName(fieldName)
+	if !found {
+		return false
+	}
+	switch field.Type.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
+}
+
+// computeAggregates computes count and/or sum aggregates for the query.
+// When both count and sums are requested, they're combined into a single query.
+// Invalid sum fields (not in allowlist, non-numeric, or non-existent) return 0 with slog warning.
+func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) (int, map[string]float64, error) {
+	var totalCount int
+	var sums map[string]float64
+
+	// Build aggregation query - clone the base query to preserve WHERE conditions
+	aggQuery := w.Store.GetDB().NewSelect().
+		TableExpr("(?) AS subq", query.Clone())
+
+	// Track which fields to actually sum (valid ones)
+	validSumFields := make(map[string]string) // fieldName -> colName
+
+	// Initialize sums map if any sums requested
+	if len(opts.Sums) > 0 {
+		sums = make(map[string]float64)
+
+		for _, field := range opts.Sums {
+			// Initialize all requested fields to 0 (security: don't reveal which fields are valid)
+			sums[field] = 0
+
+			// Check if field is in allowlist
+			if !slices.Contains(meta.SummableFields, field) {
+				slog.Warn("sum requested for field not in SummableFields", "field", field, "type", meta.TypeName)
+				continue
+			}
+
+			// Check if field exists and is numeric
+			if !isNumericField(meta.ModelType, field) {
+				slog.Warn("sum requested for non-numeric field", "field", field, "type", meta.TypeName)
+				continue
+			}
+
+			// Get column name
+			colName, err := fieldToColumnName(meta.ModelType, field)
+			if err != nil {
+				slog.Warn("sum requested for field with invalid column mapping", "field", field, "type", meta.TypeName, "error", err)
+				continue
+			}
+
+			validSumFields[field] = colName
+		}
+	}
+
+	// Build the SELECT clause with aggregates
+	hasCount := opts.CountTotal
+	hasSums := len(validSumFields) > 0
+
+	switch {
+	case hasCount && hasSums:
+		// Both count and sums - combine into one query
+		selectParts := []string{"COUNT(*) AS count"}
+		for field, colName := range validSumFields {
+			selectParts = append(selectParts, fmt.Sprintf("COALESCE(SUM(%s), 0) AS sum_%s", colName, field))
+		}
+		aggQuery = aggQuery.ColumnExpr(strings.Join(selectParts, ", "))
+	case hasCount:
+		// Count only
+		aggQuery = aggQuery.ColumnExpr("COUNT(*) AS count")
+	case hasSums:
+		// Sums only
+		selectParts := []string{}
+		for field, colName := range validSumFields {
+			selectParts = append(selectParts, fmt.Sprintf("COALESCE(SUM(%s), 0) AS sum_%s", colName, field))
+		}
+		aggQuery = aggQuery.ColumnExpr(strings.Join(selectParts, ", "))
+	default:
+		// No valid aggregates - return early
+		return 0, sums, nil
+	}
+
+	// Execute the aggregate query
+	rows, err := aggQuery.Rows(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	if rows.Next() {
+		// Build scan destinations based on what we're selecting
+		cols, _ := rows.Columns()
+		scanDests := make([]any, len(cols))
+		results := make(map[string]float64)
+
+		for i, col := range cols {
+			var val float64
+			scanDests[i] = &val
+			results[col] = 0
+		}
+
+		if err := rows.Scan(scanDests...); err != nil {
+			return 0, nil, err
+		}
+
+		// Extract results
+		for i, col := range cols {
+			results[col] = *scanDests[i].(*float64)
+		}
+
+		if opts.CountTotal {
+			totalCount = int(results["count"])
+		}
+
+		for field := range validSumFields {
+			if val, ok := results["sum_"+field]; ok {
+				sums[field] = val
+			}
+		}
+	}
+
+	return totalCount, sums, nil
+}
+
 // applyQueryFilters applies filters from QueryOptions to the query
 // Only fields in metadata.FilterableFields are allowed (others silently ignored)
+//
+// Single-value operators (eq, neq, gt, gte, lt, lte, like): use first value if multiple provided
+// Multi-value operators (in, nin): use all values
+// Range operators (bt, nbt): require exactly 2 values; if fewer provided, zero value is used for missing
 func (w *Wrapper[T]) applyQueryFilters(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
 	if opts == nil || len(opts.Filters) == 0 {
 		return query
@@ -720,22 +992,51 @@ func (w *Wrapper[T]) applyQueryFilters(query *bun.SelectQuery, opts *metadata.Qu
 			continue // skip if can't resolve column
 		}
 
+		vals := convertFilterValues(meta.ModelType, field, filter.Value)
+
+		// Warn if single-value operator received multiple values
+		if len(vals) > 1 && singleValueOps[filter.Operator] {
+			slog.Warn("filter operator expects single value, using first", "operator", filter.Operator, "field", field, "values", len(vals))
+		}
+
+		// Warn and pad if range operator doesn't have exactly 2 values
+		if rangeOps[filter.Operator] && len(vals) != 2 {
+			slog.Warn("filter operator expects exactly 2 values, padding with zero value", "operator", filter.Operator, "field", field, "values", len(vals))
+			for len(vals) < 2 {
+				vals = append(vals, getZeroValue(meta.ModelType, field))
+			}
+		}
+
 		// Apply operator
 		switch filter.Operator {
-		case "eq", "":
-			query = query.Where("?TableAlias.? = ?", bun.Ident(colName), filter.Value)
-		case "neq":
-			query = query.Where("?TableAlias.? != ?", bun.Ident(colName), filter.Value)
-		case "gt":
-			query = query.Where("?TableAlias.? > ?", bun.Ident(colName), filter.Value)
-		case "gte":
-			query = query.Where("?TableAlias.? >= ?", bun.Ident(colName), filter.Value)
-		case "lt":
-			query = query.Where("?TableAlias.? < ?", bun.Ident(colName), filter.Value)
-		case "lte":
-			query = query.Where("?TableAlias.? <= ?", bun.Ident(colName), filter.Value)
-		case "like":
-			query = query.Where("?TableAlias.? LIKE ?", bun.Ident(colName), filter.Value)
+		case metadata.OpEq, "":
+			query = query.Where("?TableAlias.? = ?", bun.Ident(colName), vals[0])
+		case metadata.OpNeq:
+			query = query.Where("?TableAlias.? != ?", bun.Ident(colName), vals[0])
+		case metadata.OpGt:
+			query = query.Where("?TableAlias.? > ?", bun.Ident(colName), vals[0])
+		case metadata.OpGte:
+			query = query.Where("?TableAlias.? >= ?", bun.Ident(colName), vals[0])
+		case metadata.OpLt:
+			query = query.Where("?TableAlias.? < ?", bun.Ident(colName), vals[0])
+		case metadata.OpLte:
+			query = query.Where("?TableAlias.? <= ?", bun.Ident(colName), vals[0])
+		case metadata.OpLike:
+			query = query.Where("?TableAlias.? LIKE ?", bun.Ident(colName), vals[0])
+		case metadata.OpIn:
+			// For string fields, convertFilterValues doesn't split (comma could be in value),
+			// but for in/nin operators, users explicitly want multiple values, so split here
+			vals = splitStringValues(vals)
+			query = query.Where("?TableAlias.? IN (?)", bun.Ident(colName), bun.In(vals))
+		case metadata.OpNin:
+			// For string fields, convertFilterValues doesn't split (comma could be in value),
+			// but for in/nin operators, users explicitly want multiple values, so split here
+			vals = splitStringValues(vals)
+			query = query.Where("?TableAlias.? NOT IN (?)", bun.Ident(colName), bun.In(vals))
+		case metadata.OpBt:
+			query = query.Where("?TableAlias.? BETWEEN ? AND ?", bun.Ident(colName), vals[0], vals[1])
+		case metadata.OpNbt:
+			query = query.Where("?TableAlias.? NOT BETWEEN ? AND ?", bun.Ident(colName), vals[0], vals[1])
 		}
 	}
 	return query

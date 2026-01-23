@@ -1,0 +1,32 @@
+meta {
+  name: Create Product - Eggplant (Vegetable, $80, Stock 75)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/products
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Eggplant",
+    "category": "Vegetable",
+    "price": 80,
+    "stock": 75,
+    "active": true
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.name: eq Eggplant
+  res.body.category: eq Vegetable
+  res.body.price: eq 80
+}
+
+script:post-response {
+  bru.setVar("eggplantId", res.body.id);
+}

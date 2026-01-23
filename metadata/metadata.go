@@ -90,6 +90,13 @@ type ownershipFieldsKeyType string
 // OwnershipFieldsKey is the context key for the ownership fields
 const OwnershipFieldsKey ownershipFieldsKeyType = "restgen_ownership_fields"
 
+// parentOwnershipKeyType is the context key type for parent ownership metadata
+type parentOwnershipKeyType string
+
+// ParentOwnershipKey is the context key for storing parent metadata that need ownership filtering
+// Value is []*TypeMetadata - list of parent types in the chain that require ownership checks
+const ParentOwnershipKey parentOwnershipKeyType = "restgen_parent_ownership"
+
 // TypeMetadata contains all metadata for a registered type
 type TypeMetadata struct {
 	TypeID          string        // Unique UUID for this type
@@ -114,6 +121,7 @@ type TypeMetadata struct {
 	// Query options for GetAll
 	FilterableFields []string // Field names allowed for filtering (empty = no filtering)
 	SortableFields   []string // Field names allowed for sorting (empty = no sorting)
+	SummableFields   []string // Field names allowed for sum aggregation (empty = no sums)
 	DefaultSort      string   // Default sort field (prefix with - for descending)
 	DefaultLimit     int      // Default page size (0 = no limit)
 	MaxLimit         int      // Maximum allowed limit (0 = no max)
@@ -172,6 +180,10 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 		result.SortableFields = make([]string, len(m.SortableFields))
 		copy(result.SortableFields, m.SortableFields)
 	}
+	if len(m.SummableFields) > 0 {
+		result.SummableFields = make([]string, len(m.SummableFields))
+		copy(result.SummableFields, m.SummableFields)
+	}
 
 	// Deep copy map
 	if m.ChildMeta != nil {
@@ -192,6 +204,7 @@ type QueryOptions struct {
 	Offset     int                    // 0 means start from beginning
 	CountTotal bool                   // whether to return total count
 	Include    []string               // relation names to include via ?include=
+	Sums       []string               // field names to compute sum aggregates via ?sum=
 }
 
 // AllowedIncludes maps relation names to whether ownership filtering should be applied.
@@ -214,10 +227,25 @@ func AllowedIncludesFromContext(ctx context.Context) AllowedIncludes {
 	return includes
 }
 
+// Filter operators
+const (
+	OpEq   = "eq"   // Equals (default)
+	OpNeq  = "neq"  // Not equals
+	OpGt   = "gt"   // Greater than
+	OpGte  = "gte"  // Greater than or equal
+	OpLt   = "lt"   // Less than
+	OpLte  = "lte"  // Less than or equal
+	OpLike = "like" // SQL LIKE pattern
+	OpIn   = "in"   // In list
+	OpNin  = "nin"  // Not in list
+	OpBt   = "bt"   // Between (inclusive)
+	OpNbt  = "nbt"  // Not between
+)
+
 // FilterValue represents a filter with value and operator
 type FilterValue struct {
 	Value    string
-	Operator string // eq, gt, gte, lt, lte, like, neq (eq is default)
+	Operator string // One of Op* constants (OpEq is default)
 }
 
 // SortField represents a single sort field with direction
@@ -286,7 +314,7 @@ func ParseQueryOptions(query url.Values) *QueryOptions {
 				opts.Filters[field] = FilterValue{Value: value, Operator: op}
 			} else {
 				// Simple filter: filter[field]=value (default eq operator)
-				opts.Filters[inner] = FilterValue{Value: value, Operator: "eq"}
+				opts.Filters[inner] = FilterValue{Value: value, Operator: OpEq}
 			}
 		}
 	}
@@ -332,6 +360,16 @@ func ParseQueryOptions(query url.Values) *QueryOptions {
 			rel = strings.TrimSpace(rel)
 			if rel != "" {
 				opts.Include = append(opts.Include, rel)
+			}
+		}
+	}
+
+	// Parse sum: sum=Field1,Field2
+	if sumStr := query.Get("sum"); sumStr != "" {
+		for _, field := range strings.Split(sumStr, ",") {
+			field = strings.TrimSpace(field)
+			if field != "" {
+				opts.Sums = append(opts.Sums, field)
 			}
 		}
 	}

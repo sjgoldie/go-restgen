@@ -1,0 +1,27 @@
+meta {
+  name: Create Product - False Category (Category=false)
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/products
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "FalseItem",
+    "category": "false",
+    "price": 888,
+    "stock": 5,
+    "active": false
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.name: eq "FalseItem"
+  res.body.category: eq "false"
+}

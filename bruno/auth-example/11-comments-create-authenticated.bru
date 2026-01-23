@@ -1,5 +1,5 @@
 meta {
-  name: Comments - Create With Auth
+  name: Comments - Create With Auth (Blog Owner)
   type: http
   seq: 11
 }
@@ -11,12 +11,12 @@ post {
 }
 
 auth:bearer {
-  token: user:charlie:user
+  token: user:alice:user
 }
 
 body:json {
   {
-    "author_name": "Charlie",
+    "author_name": "Alice",
     "text": "Great post!"
   }
 }
@@ -24,9 +24,20 @@ body:json {
 assert {
   res.status: eq 201
   res.body.id: isDefined
-  res.body.author_name: eq Charlie
+  res.body.author_name: eq Alice
 }
 
 script:post-response {
   bru.setVar("commentId", res.body.id);
+}
+
+docs {
+  # Create Comment as Blog Owner
+
+  Alice creates a comment on her own blog's post.
+  This works because Alice owns the parent blog.
+
+  Note: After Issue #28 fix, users can only access nested resources
+  if they pass parent ownership checks. Charlie (non-owner) can no
+  longer create comments under Alice's blog.
 }

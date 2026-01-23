@@ -1,0 +1,33 @@
+meta {
+  name: Create Product - Donut (Bakery, $150, Stock 25, Inactive)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/products
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Donut",
+    "category": "Bakery",
+    "price": 150,
+    "stock": 25,
+    "active": false
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.name: eq Donut
+  res.body.category: eq Bakery
+  res.body.price: eq 150
+  res.body.active: eq false
+}
+
+script:post-response {
+  bru.setVar("donutId", res.body.id);
+}

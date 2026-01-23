@@ -147,7 +147,7 @@ func TestWrapper_GetAll(t *testing.T) {
 	}
 
 	// Get all users
-	retrieved, _, err := wrapper.GetAll(ctx)
+	retrieved, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
@@ -278,13 +278,27 @@ func TestWrapper_GetAll_Empty(t *testing.T) {
 	wrapper := &datastore.Wrapper[TestUser]{Store: server}
 	ctx := ctxWithMeta(testUserMeta)
 
-	retrieved, _, err := wrapper.GetAll(ctx)
+	retrieved, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
 
 	if len(retrieved) != 0 {
 		t.Errorf("Expected 0 users, got %d", len(retrieved))
+	}
+}
+
+func TestWrapper_GetAll_NoMetadata(t *testing.T) {
+	server, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestUser]{Store: server}
+	// Use a context without metadata
+	ctx := context.Background()
+
+	_, _, _, err := wrapper.GetAll(ctx)
+	if err == nil {
+		t.Error("Expected error when metadata is missing from context")
 	}
 }
 
@@ -336,7 +350,7 @@ func TestWrapper_GetAll_WithRelations(t *testing.T) {
 
 	// Get all with relations (even though we don't have any relations in this test model)
 	// This tests that the relations parameter is properly handled
-	retrieved, _, err := wrapper.GetAll(ctx)
+	retrieved, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("Failed to get all users with relations:", err)
 	}
@@ -387,7 +401,7 @@ func TestWrapper_Create_UpdateDelete_Lifecycle(t *testing.T) {
 	}
 
 	// GetAll
-	all, _, err := wrapper.GetAll(ctx)
+	all, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
@@ -542,7 +556,7 @@ func TestOwnership_SingleField_GetAll(t *testing.T) {
 	ctxWithOwnership := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
 	ctxWithOwnership = context.WithValue(ctxWithOwnership, metadata.OwnershipUserIDKey, "alice")
 
-	retrieved, _, err := wrapper.GetAll(ctxWithOwnership)
+	retrieved, _, _, err := wrapper.GetAll(ctxWithOwnership)
 	if err != nil {
 		t.Fatal("Failed to get blogs:", err)
 	}
@@ -636,7 +650,7 @@ func TestOwnership_MultipleFields_GetAll(t *testing.T) {
 	ctxAlice := context.WithValue(ctxPost, metadata.OwnershipEnforcedKey, true)
 	ctxAlice = context.WithValue(ctxAlice, metadata.OwnershipUserIDKey, "alice")
 
-	retrieved, _, err := postWrapper.GetAll(ctxAlice)
+	retrieved, _, _, err := postWrapper.GetAll(ctxAlice)
 	if err != nil {
 		t.Fatal("Failed to get posts:", err)
 	}
@@ -684,7 +698,7 @@ func TestOwnership_BypassScope_Admin(t *testing.T) {
 	}
 	ctxCharlie = context.WithValue(ctxCharlie, metadata.AuthInfoKey, authInfo)
 
-	retrieved, _, err := wrapper.GetAll(ctxCharlie)
+	retrieved, _, _, err := wrapper.GetAll(ctxCharlie)
 	if err != nil {
 		t.Fatal("Failed to get articles:", err)
 	}
@@ -726,7 +740,7 @@ func TestOwnership_BypassScope_Moderator(t *testing.T) {
 	}
 	ctxDiana = context.WithValue(ctxDiana, metadata.AuthInfoKey, authInfoDiana)
 
-	retrieved, _, err := wrapper.GetAll(ctxDiana)
+	retrieved, _, _, err := wrapper.GetAll(ctxDiana)
 	if err != nil {
 		t.Fatal("Failed to get articles:", err)
 	}
@@ -785,7 +799,7 @@ func TestOwnership_NoOwnershipContext_GetAll(t *testing.T) {
 	}
 
 	// GetAll without ownership enforcement - should get all
-	retrieved, _, err := wrapper.GetAll(ctx)
+	retrieved, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("Failed to get all blogs:", err)
 	}
@@ -820,7 +834,7 @@ func TestOwnership_TypeWithoutOwnershipConfig(t *testing.T) {
 	ctxAlice := context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
 	ctxAlice = context.WithValue(ctxAlice, metadata.OwnershipUserIDKey, "alice")
 
-	retrieved, _, err := wrapper.GetAll(ctxAlice)
+	retrieved, _, _, err := wrapper.GetAll(ctxAlice)
 	if err != nil {
 		t.Fatal("Failed to get all users:", err)
 	}
@@ -1737,7 +1751,7 @@ func TestWrapper_UUID_GetAll(t *testing.T) {
 	}
 
 	// Get all blogs
-	blogs, count, err := wrapper.GetAll(ctx)
+	blogs, count, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("Failed to get all blogs:", err)
 	}
@@ -2187,7 +2201,7 @@ func TestInclude_GetAllWithRelation(t *testing.T) {
 	getCtx = context.WithValue(getCtx, metadata.OwnershipEnforcedKey, true)
 	getCtx = context.WithValue(getCtx, metadata.OwnershipUserIDKey, "alice")
 
-	retrieved, _, err := authorWrapper.GetAll(getCtx)
+	retrieved, _, _, err := authorWrapper.GetAll(getCtx)
 	if err != nil {
 		t.Fatal("Failed to get all authors with include:", err)
 	}
@@ -2584,7 +2598,7 @@ func TestWrapper_BatchCreate_Success(t *testing.T) {
 	}
 
 	// Verify items are in the database
-	all, _, err := wrapper.GetAll(ctx)
+	all, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -2720,7 +2734,7 @@ func TestWrapper_BatchDelete_Success(t *testing.T) {
 	}
 
 	// Verify only one remains
-	all, _, err := wrapper.GetAll(ctx)
+	all, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -2808,7 +2822,7 @@ func TestWrapper_BatchCreate_Transactional(t *testing.T) {
 	}
 
 	// Verify transaction was rolled back - no items should be in database
-	all, _, err := wrapper.GetAll(ctx)
+	all, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -2938,11 +2952,344 @@ func TestWrapper_BatchDelete_Transactional(t *testing.T) {
 	}
 
 	// Verify both users still exist (transaction rolled back)
-	all, _, err := wrapper.GetAll(ctx)
+	all, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
 	if len(all) != 2 {
 		t.Errorf("Expected 2 users (transaction rolled back), got %d", len(all))
+	}
+}
+
+// =============================================================================
+// Issue #28: Parent Ownership Filtering Tests
+// =============================================================================
+
+// TestParentOwnerProject is a test model for parent ownership tests
+type TestParentOwnerProject struct {
+	bun.BaseModel `bun:"table:parent_owner_projects"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	OwnerID       string `bun:"owner_id,notnull"`
+	Name          string `bun:"name"`
+}
+
+// TestParentOwnerTask is a test model for parent ownership tests
+type TestParentOwnerTask struct {
+	bun.BaseModel `bun:"table:parent_owner_tasks"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	ProjectID     int    `bun:"project_id,notnull"`
+	Title         string `bun:"title"`
+}
+
+func setupParentOwnershipTestDB(t *testing.T) (*datastore.SQLite, func()) {
+	t.Helper()
+
+	db, err := datastore.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal("Failed to create test database:", err)
+	}
+
+	ctx := context.Background()
+
+	_, err = db.GetDB().NewCreateTable().Model((*TestParentOwnerProject)(nil)).IfNotExists().Exec(ctx)
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create projects table:", err)
+	}
+
+	_, err = db.GetDB().NewCreateTable().Model((*TestParentOwnerTask)(nil)).IfNotExists().Exec(ctx)
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create tasks table:", err)
+	}
+
+	cleanup := func() {
+		db.GetDB().NewDropTable().Model((*TestParentOwnerTask)(nil)).IfExists().Exec(ctx)
+		db.GetDB().NewDropTable().Model((*TestParentOwnerProject)(nil)).IfExists().Exec(ctx)
+		db.Cleanup()
+	}
+
+	return db, cleanup
+}
+
+func createParentOwnershipTestMeta() (*metadata.TypeMetadata, *metadata.TypeMetadata) {
+	projectMeta := &metadata.TypeMetadata{
+		TypeID:          "parent_owner_project",
+		TypeName:        "TestParentOwnerProject",
+		TableName:       "parent_owner_projects",
+		URLParamUUID:    "projectId",
+		PKField:         "ID",
+		ModelType:       reflect.TypeOf(TestParentOwnerProject{}),
+		OwnershipFields: []string{"OwnerID"},
+		BypassScopes:    []string{"admin"},
+		ChildMeta:       make(map[string]*metadata.TypeMetadata),
+	}
+
+	taskMeta := &metadata.TypeMetadata{
+		TypeID:        "parent_owner_task",
+		TypeName:      "TestParentOwnerTask",
+		TableName:     "parent_owner_tasks",
+		URLParamUUID:  "taskId",
+		PKField:       "ID",
+		ModelType:     reflect.TypeOf(TestParentOwnerTask{}),
+		ParentType:    reflect.TypeOf(TestParentOwnerProject{}),
+		ParentMeta:    projectMeta,
+		ForeignKeyCol: "project_id",
+		ChildMeta:     make(map[string]*metadata.TypeMetadata),
+	}
+
+	projectMeta.ChildMeta["Tasks"] = taskMeta
+
+	return projectMeta, taskMeta
+}
+
+func TestParentOwnership_FiltersByParentOwner(t *testing.T) {
+	db, cleanup := setupParentOwnershipTestDB(t)
+	defer cleanup()
+
+	projectMeta, taskMeta := createParentOwnershipTestMeta()
+
+	ctx := context.Background()
+
+	// Create Alice's project
+	aliceProject := &TestParentOwnerProject{OwnerID: "alice", Name: "Alice's Project"}
+	_, err := db.GetDB().NewInsert().Model(aliceProject).Returning("*").Exec(ctx)
+	if err != nil {
+		t.Fatal("Failed to create Alice's project:", err)
+	}
+
+	// Create Bob's project
+	bobProject := &TestParentOwnerProject{OwnerID: "bob", Name: "Bob's Project"}
+	_, err = db.GetDB().NewInsert().Model(bobProject).Returning("*").Exec(ctx)
+	if err != nil {
+		t.Fatal("Failed to create Bob's project:", err)
+	}
+
+	// Create tasks under Alice's project
+	task1 := &TestParentOwnerTask{ProjectID: aliceProject.ID, Title: "Task 1"}
+	task2 := &TestParentOwnerTask{ProjectID: aliceProject.ID, Title: "Task 2"}
+	_, _ = db.GetDB().NewInsert().Model(task1).Returning("*").Exec(ctx)
+	_, _ = db.GetDB().NewInsert().Model(task2).Returning("*").Exec(ctx)
+
+	// Setup task wrapper with parent ownership filtering
+	taskWrapper := &datastore.Wrapper[TestParentOwnerTask]{Store: db}
+
+	// Build context: Bob trying to access Alice's project's tasks
+	taskCtx := context.WithValue(ctx, metadata.MetadataKey, taskMeta)
+	taskCtx = context.WithValue(taskCtx, metadata.ParentIDsKey, map[string]string{
+		"projectId": strconv.Itoa(aliceProject.ID),
+	})
+	taskCtx = context.WithValue(taskCtx, metadata.AuthInfoKey, &metadata.AuthInfo{
+		UserID: "bob",
+		Scopes: []string{"user"},
+	})
+	// Set parent ownership context (normally set by auth middleware)
+	taskCtx = context.WithValue(taskCtx, metadata.ParentOwnershipKey, []*metadata.TypeMetadata{projectMeta})
+
+	// Bob should see empty results (parent ownership filtered)
+	tasks, _, _, err := taskWrapper.GetAll(taskCtx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(tasks) != 0 {
+		t.Errorf("Expected 0 tasks (parent ownership filtered), got %d", len(tasks))
+	}
+
+	// Now test as Alice (owner)
+	aliceCtx := context.WithValue(ctx, metadata.MetadataKey, taskMeta)
+	aliceCtx = context.WithValue(aliceCtx, metadata.ParentIDsKey, map[string]string{
+		"projectId": strconv.Itoa(aliceProject.ID),
+	})
+	aliceCtx = context.WithValue(aliceCtx, metadata.AuthInfoKey, &metadata.AuthInfo{
+		UserID: "alice",
+		Scopes: []string{"user"},
+	})
+	aliceCtx = context.WithValue(aliceCtx, metadata.ParentOwnershipKey, []*metadata.TypeMetadata{projectMeta})
+
+	// Alice should see her tasks
+	tasks, _, _, err = taskWrapper.GetAll(aliceCtx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(tasks) != 2 {
+		t.Errorf("Expected 2 tasks for Alice, got %d", len(tasks))
+	}
+}
+
+func TestParentOwnership_AdminBypass(t *testing.T) {
+	db, cleanup := setupParentOwnershipTestDB(t)
+	defer cleanup()
+
+	_, taskMeta := createParentOwnershipTestMeta()
+
+	ctx := context.Background()
+
+	// Create Alice's project
+	aliceProject := &TestParentOwnerProject{OwnerID: "alice", Name: "Alice's Project"}
+	_, err := db.GetDB().NewInsert().Model(aliceProject).Returning("*").Exec(ctx)
+	if err != nil {
+		t.Fatal("Failed to create Alice's project:", err)
+	}
+
+	// Create tasks under Alice's project
+	task1 := &TestParentOwnerTask{ProjectID: aliceProject.ID, Title: "Task 1"}
+	_, _ = db.GetDB().NewInsert().Model(task1).Returning("*").Exec(ctx)
+
+	taskWrapper := &datastore.Wrapper[TestParentOwnerTask]{Store: db}
+
+	// Admin has bypass scope, so no parent ownership filtering
+	// ParentOwnershipKey is empty (auth middleware doesn't add it for users with bypass)
+	adminCtx := context.WithValue(ctx, metadata.MetadataKey, taskMeta)
+	adminCtx = context.WithValue(adminCtx, metadata.ParentIDsKey, map[string]string{
+		"projectId": strconv.Itoa(aliceProject.ID),
+	})
+	adminCtx = context.WithValue(adminCtx, metadata.AuthInfoKey, &metadata.AuthInfo{
+		UserID: "admin",
+		Scopes: []string{"user", "admin"},
+	})
+	// No ParentOwnershipKey set - admin bypasses ownership checks
+
+	// Admin should see all tasks
+	tasks, _, _, err := taskWrapper.GetAll(adminCtx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(tasks) != 1 {
+		t.Errorf("Expected 1 task for admin, got %d", len(tasks))
+	}
+}
+
+func TestParentOwnership_NoOwnershipFields(t *testing.T) {
+	db, cleanup := setupParentOwnershipTestDB(t)
+	defer cleanup()
+
+	// Create metadata where parent has NO ownership fields
+	projectMeta := &metadata.TypeMetadata{
+		TypeID:          "parent_owner_project",
+		TypeName:        "TestParentOwnerProject",
+		TableName:       "parent_owner_projects",
+		URLParamUUID:    "projectId",
+		PKField:         "ID",
+		ModelType:       reflect.TypeOf(TestParentOwnerProject{}),
+		OwnershipFields: []string{}, // No ownership fields
+		ChildMeta:       make(map[string]*metadata.TypeMetadata),
+	}
+
+	taskMeta := &metadata.TypeMetadata{
+		TypeID:        "parent_owner_task",
+		TypeName:      "TestParentOwnerTask",
+		TableName:     "parent_owner_tasks",
+		URLParamUUID:  "taskId",
+		PKField:       "ID",
+		ModelType:     reflect.TypeOf(TestParentOwnerTask{}),
+		ParentType:    reflect.TypeOf(TestParentOwnerProject{}),
+		ParentMeta:    projectMeta,
+		ForeignKeyCol: "project_id",
+		ChildMeta:     make(map[string]*metadata.TypeMetadata),
+	}
+
+	ctx := context.Background()
+
+	// Create project
+	project := &TestParentOwnerProject{OwnerID: "alice", Name: "Project"}
+	_, err := db.GetDB().NewInsert().Model(project).Returning("*").Exec(ctx)
+	if err != nil {
+		t.Fatal("Failed to create project:", err)
+	}
+
+	// Create task
+	task := &TestParentOwnerTask{ProjectID: project.ID, Title: "Task 1"}
+	_, _ = db.GetDB().NewInsert().Model(task).Returning("*").Exec(ctx)
+
+	taskWrapper := &datastore.Wrapper[TestParentOwnerTask]{Store: db}
+
+	// Even with ParentOwnershipKey set, if parent has no ownership fields, filtering is skipped
+	taskCtx := context.WithValue(ctx, metadata.MetadataKey, taskMeta)
+	taskCtx = context.WithValue(taskCtx, metadata.ParentIDsKey, map[string]string{
+		"projectId": strconv.Itoa(project.ID),
+	})
+	taskCtx = context.WithValue(taskCtx, metadata.AuthInfoKey, &metadata.AuthInfo{
+		UserID: "bob",
+		Scopes: []string{"user"},
+	})
+	taskCtx = context.WithValue(taskCtx, metadata.ParentOwnershipKey, []*metadata.TypeMetadata{projectMeta})
+
+	// Should see task because parent has no ownership fields to filter on
+	tasks, _, _, err := taskWrapper.GetAll(taskCtx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(tasks) != 1 {
+		t.Errorf("Expected 1 task (no ownership filtering), got %d", len(tasks))
+	}
+}
+
+func TestParentOwnership_MultipleOwnershipFields(t *testing.T) {
+	db, cleanup := setupParentOwnershipTestDB(t)
+	defer cleanup()
+
+	// Create metadata with multiple ownership fields on parent
+	projectMeta := &metadata.TypeMetadata{
+		TypeID:          "parent_owner_project",
+		TypeName:        "TestParentOwnerProject",
+		TableName:       "parent_owner_projects",
+		URLParamUUID:    "projectId",
+		PKField:         "ID",
+		ModelType:       reflect.TypeOf(TestParentOwnerProject{}),
+		OwnershipFields: []string{"OwnerID", "Name"}, // Unusual but tests OR logic
+		BypassScopes:    []string{"admin"},
+		ChildMeta:       make(map[string]*metadata.TypeMetadata),
+	}
+
+	taskMeta := &metadata.TypeMetadata{
+		TypeID:        "parent_owner_task",
+		TypeName:      "TestParentOwnerTask",
+		TableName:     "parent_owner_tasks",
+		URLParamUUID:  "taskId",
+		PKField:       "ID",
+		ModelType:     reflect.TypeOf(TestParentOwnerTask{}),
+		ParentType:    reflect.TypeOf(TestParentOwnerProject{}),
+		ParentMeta:    projectMeta,
+		ForeignKeyCol: "project_id",
+		ChildMeta:     make(map[string]*metadata.TypeMetadata),
+	}
+
+	ctx := context.Background()
+
+	// Create project where Name = "alice" (matches second ownership field)
+	project := &TestParentOwnerProject{OwnerID: "bob", Name: "alice"}
+	_, err := db.GetDB().NewInsert().Model(project).Returning("*").Exec(ctx)
+	if err != nil {
+		t.Fatal("Failed to create project:", err)
+	}
+
+	// Create task
+	task := &TestParentOwnerTask{ProjectID: project.ID, Title: "Task 1"}
+	_, _ = db.GetDB().NewInsert().Model(task).Returning("*").Exec(ctx)
+
+	taskWrapper := &datastore.Wrapper[TestParentOwnerTask]{Store: db}
+
+	// Alice should see task (matches Name field via OR logic)
+	aliceCtx := context.WithValue(ctx, metadata.MetadataKey, taskMeta)
+	aliceCtx = context.WithValue(aliceCtx, metadata.ParentIDsKey, map[string]string{
+		"projectId": strconv.Itoa(project.ID),
+	})
+	aliceCtx = context.WithValue(aliceCtx, metadata.AuthInfoKey, &metadata.AuthInfo{
+		UserID: "alice",
+		Scopes: []string{"user"},
+	})
+	aliceCtx = context.WithValue(aliceCtx, metadata.ParentOwnershipKey, []*metadata.TypeMetadata{projectMeta})
+
+	tasks, _, _, err := taskWrapper.GetAll(aliceCtx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(tasks) != 1 {
+		t.Errorf("Expected 1 task (OR logic on ownership fields), got %d", len(tasks))
 	}
 }

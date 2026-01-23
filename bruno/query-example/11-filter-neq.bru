@@ -1,0 +1,23 @@
+meta {
+  name: Filter NEQ - Category not equals Fruit
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Category][neq]=Fruit
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 5
+}
+
+tests {
+  test("No results have Category = Fruit", function() {
+    expect(res.body.every(p => p.category !== "Fruit")).to.be.true;
+  });
+}

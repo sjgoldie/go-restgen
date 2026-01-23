@@ -91,34 +91,31 @@ type Post struct {
 router.RegisterRoutes[Model](builder, "/path",
     // Access control (pick one)
     router.AllPublic(),                    // No auth required
-    router.AllScoped("user"),              // Requires "user" scope for all methods
-    router.IsAuthenticated(),              // Just requires valid auth
-    router.RequireScopes("admin"),         // Requires specific scope
+    router.AllScoped("admin"),             // Requires "admin" scope for all methods
+    router.IsAuthenticated(),              // Just requires valid auth, no scope check
 
     // Per-method auth
     router.AuthConfig{
-        Methods: []string{router.MethodGet, router.MethodGetAll},
-        Public:  true,
+        Methods: []string{router.MethodGet, router.MethodList},
+        Scopes:  []string{router.ScopePublic},
     },
     router.AuthConfig{
         Methods: []string{router.MethodPost, router.MethodPut, router.MethodDelete},
         Scopes:  []string{"admin"},
     },
 
-    // Resource type
-    router.AsNestedRoute("parent_id"),     // Nested under parent
-    router.AsSingleRouteWithPut(""),       // Single resource (e.g., /me)
+    // Single resource (for belongs-to relations or /me endpoints)
+    router.AsSingleRouteWithPut(""),       // GET and PUT only, ID from parent FK or custom handler
 
-    // Ownership (users only see their data)
-    router.WithOwnership("user_id", "UserID"),
-    router.WithOwnershipBypassScopes("admin"),
+    // Ownership (users only see their data, admins bypass)
+    router.AllWithOwnershipUnless([]string{"UserID"}, "admin"),
 
     // Query options
     router.WithFilters("Status", "Name"),
     router.WithSorts("Name", "CreatedAt"),
     router.WithPagination(20, 100),
     router.WithDefaultSort("-CreatedAt"),
-    router.WithRelations("Author", "Comments"),
+    router.WithRelationName("Posts"),  // enables ?include=Posts on parent
 
     // Custom handlers
     router.WithCustomGet(customGetFn),
@@ -127,13 +124,12 @@ router.RegisterRoutes[Model](builder, "/path",
     router.WithCustomUpdate(customUpdateFn),
     router.WithCustomDelete(customDeleteFn),
 
-    // File uploads
-    router.WithFileField("file", "FileURL", "image/*"),
+    // File uploads (model must embed filestore.FileFields)
+    router.AsFileResource(),
 
-    // Batch operations
-    router.WithBatchCreate(),
-    router.WithBatchUpdate(),
-    router.WithBatchDelete(),
+    // Batch operations (enabled via auth methods)
+    router.AllScopedWithBatch("admin"),  // all methods + batch for admin scope
+    router.WithBatchLimit(100),          // optional: limit items per batch
 
     // Custom actions
     router.WithAction("publish", publishFn, router.AuthConfig{Scopes: []string{"user"}}),
@@ -178,10 +174,11 @@ func authMiddleware(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         userID, scopes := validateToken(r.Header.Get("Authorization"))
         if userID != "" {
-            ctx := metadata.SetAuthInfo(r.Context(), &metadata.AuthInfo{
+            authInfo := &router.AuthInfo{
                 UserID: userID,
                 Scopes: scopes,
-            })
+            }
+            ctx := context.WithValue(r.Context(), router.AuthInfoKey, authInfo)
             r = r.WithContext(ctx)
         }
         next.ServeHTTP(w, r)
@@ -190,15 +187,13 @@ func authMiddleware(next http.Handler) http.Handler {
 
 r.Use(authMiddleware)
 
-// Routes with ownership
+// Routes with ownership (users only see their own posts, admins see all)
 router.RegisterRoutes[Post](b, "/posts",
-    router.AllScoped("user"),
-    router.WithOwnership("author_id", "AuthorID"),
-    router.WithOwnershipBypassScopes("admin"),
+    router.AllWithOwnershipUnless([]string{"AuthorID"}, "admin"),
 )
 ```
 
-Users only see/modify posts where `AuthorID` matches their `UserID`. Admins bypass.
+Users only see/modify posts where `AuthorID` matches their auth `UserID`. Admins bypass.
 
 ## Pattern: Custom Handlers
 
@@ -274,33 +269,47 @@ router.RegisterRoutes[User](b, "/users",
 
 ```go
 type Document struct {
-    bun.BaseModel  `bun:"table:documents"`
-    ID             int64  `bun:"id,pk,autoincrement" json:"id"`
-    Name           string `bun:"name,notnull" json:"name"`
-    StorageKey     string `bun:"storage_key" json:"-"`
-    Filename       string `bun:"filename" json:"filename"`
-    ContentType    string `bun:"content_type" json:"content_type"`
-    Size           int64  `bun:"size" json:"size"`
-    filestore.FileFields
+    bun.BaseModel `bun:"table:documents"`
+    ID            int64  `bun:"id,pk,autoincrement" json:"id"`
+    Name          string `bun:"name,notnull" json:"name"`
+    filestore.FileFields  // embeds StorageKey, Filename, ContentType, Size + getter/setters
 }
 
-// Implement FileResource interface
-func (d *Document) GetStorageKey() string  { return d.StorageKey }
-func (d *Document) SetStorageKey(k string) { d.StorageKey = k }
-// ... other getters/setters
+// Implement FileStorage interface (your own storage backend)
+type MyStorage struct {
+    basePath string
+}
 
-// Initialize filestore
-storage := filestore.NewLocalStorage("./uploads")
-filestore.Initialize(storage)
+func (s *MyStorage) Store(ctx context.Context, r io.Reader, meta filestore.FileMetadata) (string, error) {
+    key := uuid.New().String()
+    // save file to s.basePath/key
+    return key, nil
+}
+
+func (s *MyStorage) Retrieve(ctx context.Context, key string) (io.ReadCloser, filestore.FileMetadata, error) {
+    // return file reader and metadata
+}
+
+func (s *MyStorage) Delete(ctx context.Context, key string) error {
+    // delete file
+}
+
+func (s *MyStorage) GenerateSignedURL(ctx context.Context, key string) (string, error) {
+    return "", nil  // empty = proxy mode (download via /download endpoint)
+    // or return URL for signed URL mode (direct download from storage)
+}
+
+// Initialize in main()
+filestore.Initialize(&MyStorage{basePath: "./uploads"})
 
 router.RegisterRoutes[Document](b, "/documents",
+    router.AsFileResource(),
     router.AllScoped("user"),
-    router.WithFileField("file", "StorageKey", "application/pdf,image/*"),
 )
 ```
 
-Upload: `POST /documents` with multipart form (file + metadata JSON).
-Download: `GET /documents/{id}/download`
+Upload: `POST /documents` with multipart form (`file` field + optional `metadata` JSON field).
+Download: `GET /documents/{id}/download` (proxy mode) or use `download_url` from response (signed URL mode).
 
 ## Pattern: Custom Actions
 
@@ -334,13 +343,18 @@ Built-in support on GetAll endpoints:
 | Parameter | Example | Description |
 |-----------|---------|-------------|
 | Filter | `?filter[status]=active` | Exact match |
-| Filter ops | `?filter[age][gt]=18` | Operators: eq, neq, gt, gte, lt, lte, like |
+| Filter ops | `?filter[age][gt]=18` | Operators: eq, neq, gt, gte, lt, lte, like, in, nin, bt, nbt |
 | Sort | `?sort=name,-created_at` | `-` prefix for descending |
 | Limit | `?limit=10` | Max results |
 | Offset | `?offset=20` | Skip results |
 | Count | `?count=true` | Include X-Total-Count header |
-| Fields | `?fields=id,name` | Select specific fields |
-| Include | `?include=author,comments` | Load relations |
+| Include | `?include=Posts` | Load relations (requires WithRelationName on child route) |
+
+**Filter operator details:**
+- `in` - In list: `?filter[Status][in]=active,pending`
+- `nin` - Not in list: `?filter[Status][nin]=deleted,archived`
+- `bt` - Between (inclusive): `?filter[Age][bt]=18,65`
+- `nbt` - Not between: `?filter[Price][nbt]=100,500`
 
 ## Error Handling
 

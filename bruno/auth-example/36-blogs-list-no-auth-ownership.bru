@@ -1,0 +1,25 @@
+meta {
+  name: Blogs - List Without Auth (Ownership configured)
+  type: http
+  seq: 36
+}
+
+get {
+  url: {{baseUrl}}/blogs
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  # Issue #24 Test: Ownership Without Auth
+
+  Blogs have ownership configured (AuthorID field).
+  Accessing without auth should return 401, not 500.
+
+  Before fix: Returns 500 "ownership enforced but user ID missing from context"
+  After fix: Returns 401 "unauthorized"
+}

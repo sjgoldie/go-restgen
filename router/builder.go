@@ -557,6 +557,9 @@ func mergeQueryConfigs(meta *metadata.TypeMetadata, queryConfigs []QueryConfig) 
 		if len(qc.SortableFields) > 0 {
 			result.SortableFields = qc.SortableFields
 		}
+		if len(qc.SummableFields) > 0 {
+			result.SummableFields = qc.SummableFields
+		}
 		if qc.DefaultSort != "" {
 			result.DefaultSort = qc.DefaultSort
 		}

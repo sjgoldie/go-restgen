@@ -1,0 +1,23 @@
+meta {
+  name: Filter GT - Price greater than 80
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Price][gt]=80
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 4
+}
+
+tests {
+  test("All results have Price > 80", function() {
+    expect(res.body.every(p => p.price > 80)).to.be.true;
+  });
+}

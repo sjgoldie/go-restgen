@@ -1,0 +1,23 @@
+meta {
+  name: Filter Bool - Active equals false
+  type: http
+  seq: 23
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Active]=false
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 2
+}
+
+tests {
+  test("All returned products are inactive", function() {
+    expect(res.body.every(p => p.active === false)).to.be.true;
+  });
+}

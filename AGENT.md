@@ -343,12 +343,18 @@ Built-in support on GetAll endpoints:
 | Parameter | Example | Description |
 |-----------|---------|-------------|
 | Filter | `?filter[status]=active` | Exact match |
-| Filter ops | `?filter[age][gt]=18` | Operators: eq, neq, gt, gte, lt, lte, like |
+| Filter ops | `?filter[age][gt]=18` | Operators: eq, neq, gt, gte, lt, lte, like, in, nin, bt, nbt |
 | Sort | `?sort=name,-created_at` | `-` prefix for descending |
 | Limit | `?limit=10` | Max results |
 | Offset | `?offset=20` | Skip results |
 | Count | `?count=true` | Include X-Total-Count header |
 | Include | `?include=Posts` | Load relations (requires WithRelationName on child route) |
+
+**Filter operator details:**
+- `in` - In list: `?filter[Status][in]=active,pending`
+- `nin` - Not in list: `?filter[Status][nin]=deleted,archived`
+- `bt` - Between (inclusive): `?filter[Age][bt]=18,65`
+- `nbt` - Not between: `?filter[Price][nbt]=100,500`
 
 ## Error Handling
 

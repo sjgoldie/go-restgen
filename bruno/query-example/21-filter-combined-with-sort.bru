@@ -1,0 +1,28 @@
+meta {
+  name: Filter Combined with Sort - Price>40 sorted by Price desc
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Price][gt]=40&sort=-Price
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 6
+}
+
+tests {
+  test("Results sorted by Price descending", function() {
+    expect(res.body[0].price).to.equal(999);
+    expect(res.body[1].price).to.equal(888);
+    expect(res.body[2].price).to.equal(150);
+    expect(res.body[3].price).to.equal(100);
+    expect(res.body[4].price).to.equal(80);
+    expect(res.body[5].price).to.equal(50);
+  });
+}

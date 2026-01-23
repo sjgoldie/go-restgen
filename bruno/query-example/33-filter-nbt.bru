@@ -1,0 +1,23 @@
+meta {
+  name: Filter NBT - Price not between 50 and 100
+  type: http
+  seq: 33
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Price][nbt]=50,100
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 4
+}
+
+tests {
+  test("All results have Price outside 50-100 range", function() {
+    expect(res.body.every(p => p.price < 50 || p.price > 100)).to.be.true;
+  });
+}

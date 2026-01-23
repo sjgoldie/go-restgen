@@ -1,0 +1,32 @@
+meta {
+  name: Create Product - Carrot (Vegetable, $30, Stock 200)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/products
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Carrot",
+    "category": "Vegetable",
+    "price": 30,
+    "stock": 200,
+    "active": true
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.name: eq Carrot
+  res.body.category: eq Vegetable
+  res.body.price: eq 30
+}
+
+script:post-response {
+  bru.setVar("carrotId", res.body.id);
+}

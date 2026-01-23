@@ -1,0 +1,32 @@
+meta {
+  name: Create Product - Banana (Fruit, $50, Stock 100)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/products
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Banana",
+    "category": "Fruit",
+    "price": 50,
+    "stock": 100,
+    "active": true
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.name: eq Banana
+  res.body.category: eq Fruit
+  res.body.price: eq 50
+}
+
+script:post-response {
+  bru.setVar("bananaId", res.body.id);
+}

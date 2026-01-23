@@ -1,0 +1,25 @@
+meta {
+  name: Filter Int - String value converts to int (Price=100)
+  type: http
+  seq: 27
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Price]=100
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 1
+  res.body[0].price: eq 100
+}
+
+tests {
+  test("Int filter with string value converts properly", function() {
+    expect(res.body[0].price).to.equal(100);
+    expect(res.body[0].name).to.equal("Apple");
+  });
+}

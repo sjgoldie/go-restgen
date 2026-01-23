@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/uptrace/bun"
@@ -14,6 +16,15 @@ import (
 
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/metadata"
+)
+
+var (
+	singleValueOps = map[string]bool{
+		metadata.OpEq: true, "": true,
+		metadata.OpNeq: true, metadata.OpGt: true, metadata.OpGte: true,
+		metadata.OpLt: true, metadata.OpLte: true, metadata.OpLike: true,
+	}
+	rangeOps = map[string]bool{metadata.OpBt: true, metadata.OpNbt: true}
 )
 
 // Wrapper is a generic struct that wraps a Store interface to provide CRUD operations
@@ -749,8 +760,93 @@ func fieldToColumnName(tType reflect.Type, fieldName string) (string, error) {
 	return parts[0], nil
 }
 
+// convertFilterValues converts a string filter value to the appropriate Go type(s)
+// based on the model field's type. For non-string types, comma-separated values
+// are split and each value is converted. For string types, the value is kept intact
+// since commas could be part of the string value itself.
+// Returns a slice of converted values.
+func convertFilterValues(modelType reflect.Type, fieldName string, val string) []any {
+	field, found := modelType.FieldByName(fieldName)
+	if !found {
+		return []any{val}
+	}
+
+	// String fields: don't split - comma could be part of the value
+	if field.Type.Kind() == reflect.String {
+		return []any{val}
+	}
+
+	// Non-string fields: split by comma and convert each
+	parts := strings.Split(val, ",")
+	result := make([]any, len(parts))
+	for i, part := range parts {
+		result[i] = convertSingleValue(field.Type.Kind(), fieldName, strings.TrimSpace(part))
+	}
+	return result
+}
+
+// convertSingleValue converts a single string value to the appropriate Go type
+func convertSingleValue(kind reflect.Kind, fieldName string, val string) any {
+	switch kind {
+	case reflect.Bool:
+		return val == "true" || val == "1"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		i, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			slog.Warn("failed to parse filter value as int", "field", fieldName, "value", val, "error", err)
+			return val
+		}
+		return i
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		u, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			slog.Warn("failed to parse filter value as uint", "field", fieldName, "value", val, "error", err)
+			return val
+		}
+		return u
+	case reflect.Float32, reflect.Float64:
+		f, err := strconv.ParseFloat(val, 64)
+		if err != nil {
+			slog.Warn("failed to parse filter value as float", "field", fieldName, "value", val, "error", err)
+			return val
+		}
+		return f
+	}
+	return val
+}
+
+// getZeroValue returns the zero value for a field type
+func getZeroValue(modelType reflect.Type, fieldName string) any {
+	field, found := modelType.FieldByName(fieldName)
+	if !found {
+		return ""
+	}
+	return reflect.Zero(field.Type).Interface()
+}
+
+// splitStringValues splits a single comma-separated string value into multiple trimmed values
+func splitStringValues(vals []any) []any {
+	if len(vals) != 1 {
+		return vals
+	}
+	strVal, ok := vals[0].(string)
+	if !ok || !strings.Contains(strVal, ",") {
+		return vals
+	}
+	parts := strings.Split(strVal, ",")
+	result := make([]any, len(parts))
+	for i, p := range parts {
+		result[i] = strings.TrimSpace(p)
+	}
+	return result
+}
+
 // applyQueryFilters applies filters from QueryOptions to the query
 // Only fields in metadata.FilterableFields are allowed (others silently ignored)
+//
+// Single-value operators (eq, neq, gt, gte, lt, lte, like): use first value if multiple provided
+// Multi-value operators (in, nin): use all values
+// Range operators (bt, nbt): require exactly 2 values; if fewer provided, zero value is used for missing
 func (w *Wrapper[T]) applyQueryFilters(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
 	if opts == nil || len(opts.Filters) == 0 {
 		return query
@@ -767,22 +863,51 @@ func (w *Wrapper[T]) applyQueryFilters(query *bun.SelectQuery, opts *metadata.Qu
 			continue // skip if can't resolve column
 		}
 
+		vals := convertFilterValues(meta.ModelType, field, filter.Value)
+
+		// Warn if single-value operator received multiple values
+		if len(vals) > 1 && singleValueOps[filter.Operator] {
+			slog.Warn("filter operator expects single value, using first", "operator", filter.Operator, "field", field, "values", len(vals))
+		}
+
+		// Warn and pad if range operator doesn't have exactly 2 values
+		if rangeOps[filter.Operator] && len(vals) != 2 {
+			slog.Warn("filter operator expects exactly 2 values, padding with zero value", "operator", filter.Operator, "field", field, "values", len(vals))
+			for len(vals) < 2 {
+				vals = append(vals, getZeroValue(meta.ModelType, field))
+			}
+		}
+
 		// Apply operator
 		switch filter.Operator {
-		case "eq", "":
-			query = query.Where("?TableAlias.? = ?", bun.Ident(colName), filter.Value)
-		case "neq":
-			query = query.Where("?TableAlias.? != ?", bun.Ident(colName), filter.Value)
-		case "gt":
-			query = query.Where("?TableAlias.? > ?", bun.Ident(colName), filter.Value)
-		case "gte":
-			query = query.Where("?TableAlias.? >= ?", bun.Ident(colName), filter.Value)
-		case "lt":
-			query = query.Where("?TableAlias.? < ?", bun.Ident(colName), filter.Value)
-		case "lte":
-			query = query.Where("?TableAlias.? <= ?", bun.Ident(colName), filter.Value)
-		case "like":
-			query = query.Where("?TableAlias.? LIKE ?", bun.Ident(colName), filter.Value)
+		case metadata.OpEq, "":
+			query = query.Where("?TableAlias.? = ?", bun.Ident(colName), vals[0])
+		case metadata.OpNeq:
+			query = query.Where("?TableAlias.? != ?", bun.Ident(colName), vals[0])
+		case metadata.OpGt:
+			query = query.Where("?TableAlias.? > ?", bun.Ident(colName), vals[0])
+		case metadata.OpGte:
+			query = query.Where("?TableAlias.? >= ?", bun.Ident(colName), vals[0])
+		case metadata.OpLt:
+			query = query.Where("?TableAlias.? < ?", bun.Ident(colName), vals[0])
+		case metadata.OpLte:
+			query = query.Where("?TableAlias.? <= ?", bun.Ident(colName), vals[0])
+		case metadata.OpLike:
+			query = query.Where("?TableAlias.? LIKE ?", bun.Ident(colName), vals[0])
+		case metadata.OpIn:
+			// For string fields, convertFilterValues doesn't split (comma could be in value),
+			// but for in/nin operators, users explicitly want multiple values, so split here
+			vals = splitStringValues(vals)
+			query = query.Where("?TableAlias.? IN (?)", bun.Ident(colName), bun.In(vals))
+		case metadata.OpNin:
+			// For string fields, convertFilterValues doesn't split (comma could be in value),
+			// but for in/nin operators, users explicitly want multiple values, so split here
+			vals = splitStringValues(vals)
+			query = query.Where("?TableAlias.? NOT IN (?)", bun.Ident(colName), bun.In(vals))
+		case metadata.OpBt:
+			query = query.Where("?TableAlias.? BETWEEN ? AND ?", bun.Ident(colName), vals[0], vals[1])
+		case metadata.OpNbt:
+			query = query.Where("?TableAlias.? NOT BETWEEN ? AND ?", bun.Ident(colName), vals[0], vals[1])
 		}
 	}
 	return query

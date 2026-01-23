@@ -1,0 +1,23 @@
+meta {
+  name: Filter LTE - Price less than or equal to 80
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Price][lte]=80
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 3
+}
+
+tests {
+  test("All results have Price <= 80", function() {
+    expect(res.body.every(p => p.price <= 80)).to.be.true;
+  });
+}

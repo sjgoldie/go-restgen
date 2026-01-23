@@ -1,0 +1,29 @@
+meta {
+  name: Filter Combined with Pagination - Active products, limit 2, offset 1
+  type: http
+  seq: 22
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Active]=true&sort=Name&limit=2&offset=1&count=true
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 2
+}
+
+tests {
+  test("Returns 2 active products starting from offset 1", function() {
+    expect(res.body.every(p => p.active === true)).to.be.true;
+    expect(res.body[0].name).to.equal("Apple");
+    expect(res.body[1].name).to.equal("Banana");
+  });
+
+  test("X-Total-Count header shows total active products", function() {
+    expect(res.headers['x-total-count']).to.equal('5');
+  });
+}

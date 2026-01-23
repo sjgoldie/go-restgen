@@ -221,10 +221,25 @@ func AllowedIncludesFromContext(ctx context.Context) AllowedIncludes {
 	return includes
 }
 
+// Filter operators
+const (
+	OpEq   = "eq"   // Equals (default)
+	OpNeq  = "neq"  // Not equals
+	OpGt   = "gt"   // Greater than
+	OpGte  = "gte"  // Greater than or equal
+	OpLt   = "lt"   // Less than
+	OpLte  = "lte"  // Less than or equal
+	OpLike = "like" // SQL LIKE pattern
+	OpIn   = "in"   // In list
+	OpNin  = "nin"  // Not in list
+	OpBt   = "bt"   // Between (inclusive)
+	OpNbt  = "nbt"  // Not between
+)
+
 // FilterValue represents a filter with value and operator
 type FilterValue struct {
 	Value    string
-	Operator string // eq, gt, gte, lt, lte, like, neq (eq is default)
+	Operator string // One of Op* constants (OpEq is default)
 }
 
 // SortField represents a single sort field with direction
@@ -293,7 +308,7 @@ func ParseQueryOptions(query url.Values) *QueryOptions {
 				opts.Filters[field] = FilterValue{Value: value, Operator: op}
 			} else {
 				// Simple filter: filter[field]=value (default eq operator)
-				opts.Filters[inner] = FilterValue{Value: value, Operator: "eq"}
+				opts.Filters[inner] = FilterValue{Value: value, Operator: OpEq}
 			}
 		}
 	}

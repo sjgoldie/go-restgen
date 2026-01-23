@@ -593,6 +593,10 @@ GET /users?filter[Status]=active&filter[Role]=admin
 | `lt` | Less than | `filter[Age][lt]=65` |
 | `lte` | Less than or equal | `filter[Age][lte]=65` |
 | `like` | SQL LIKE pattern | `filter[Name][like]=John%` |
+| `in` | In list | `filter[Status][in]=active,pending` |
+| `nin` | Not in list | `filter[Status][nin]=deleted,archived` |
+| `bt` | Between (inclusive) | `filter[Age][bt]=18,65` |
+| `nbt` | Not between | `filter[Price][nbt]=100,500` |
 
 ### Sorting
 

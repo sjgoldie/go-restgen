@@ -208,7 +208,7 @@ func TestQueryOptionsFromContext(t *testing.T) {
 	// Create QueryOptions
 	opts := &QueryOptions{
 		Filters: map[string]FilterValue{
-			"Name": {Value: "test", Operator: "eq"},
+			"Name": {Value: "test", Operator: OpEq},
 		},
 		Sort: []SortField{
 			{Field: "Name", Desc: false},
@@ -537,56 +537,56 @@ func TestParseQueryOptions_Filters(t *testing.T) {
 			query:         url.Values{"filter[name]": {"John"}},
 			expectedField: "name",
 			expectedValue: "John",
-			expectedOp:    "eq",
+			expectedOp:    OpEq,
 		},
 		{
 			name:          "filter with eq operator",
 			query:         url.Values{"filter[status][eq]": {"active"}},
 			expectedField: "status",
 			expectedValue: "active",
-			expectedOp:    "eq",
+			expectedOp:    OpEq,
 		},
 		{
 			name:          "filter with neq operator",
 			query:         url.Values{"filter[status][neq]": {"deleted"}},
 			expectedField: "status",
 			expectedValue: "deleted",
-			expectedOp:    "neq",
+			expectedOp:    OpNeq,
 		},
 		{
 			name:          "filter with gt operator",
 			query:         url.Values{"filter[age][gt]": {"18"}},
 			expectedField: "age",
 			expectedValue: "18",
-			expectedOp:    "gt",
+			expectedOp:    OpGt,
 		},
 		{
 			name:          "filter with gte operator",
 			query:         url.Values{"filter[age][gte]": {"21"}},
 			expectedField: "age",
 			expectedValue: "21",
-			expectedOp:    "gte",
+			expectedOp:    OpGte,
 		},
 		{
 			name:          "filter with lt operator",
 			query:         url.Values{"filter[age][lt]": {"65"}},
 			expectedField: "age",
 			expectedValue: "65",
-			expectedOp:    "lt",
+			expectedOp:    OpLt,
 		},
 		{
 			name:          "filter with lte operator",
 			query:         url.Values{"filter[age][lte]": {"100"}},
 			expectedField: "age",
 			expectedValue: "100",
-			expectedOp:    "lte",
+			expectedOp:    OpLte,
 		},
 		{
 			name:          "filter with like operator",
 			query:         url.Values{"filter[name][like]": {"%john%"}},
 			expectedField: "name",
 			expectedValue: "%john%",
-			expectedOp:    "like",
+			expectedOp:    OpLike,
 		},
 	}
 

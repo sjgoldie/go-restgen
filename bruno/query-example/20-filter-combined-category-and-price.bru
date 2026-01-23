@@ -1,0 +1,25 @@
+meta {
+  name: Filter Combined - Category=Vegetable AND Price>=50
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Category]=Vegetable&filter[Price][gte]=50
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 1
+  res.body[0].name: eq Eggplant
+}
+
+tests {
+  test("Result is Vegetable with Price >= 50", function() {
+    expect(res.body[0].category).to.equal("Vegetable");
+    expect(res.body[0].price).to.be.at.least(50);
+  });
+}

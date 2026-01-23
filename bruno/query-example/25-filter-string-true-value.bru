@@ -1,0 +1,25 @@
+meta {
+  name: Filter String - True looking value (Category=true)
+  type: http
+  seq: 25
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Category]=true
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 1
+  res.body[0].category: eq "true"
+}
+
+tests {
+  test("String filter with 'true' value stays as string", function() {
+    expect(res.body[0].category).to.equal("true");
+    expect(res.body[0].name).to.equal("123");
+  });
+}

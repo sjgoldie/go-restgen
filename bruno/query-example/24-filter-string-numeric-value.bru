@@ -1,0 +1,24 @@
+meta {
+  name: Filter String - Numeric looking value (Name=123)
+  type: http
+  seq: 24
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Name]=123
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 1
+  res.body[0].name: eq "123"
+}
+
+tests {
+  test("String filter with numeric value stays as string", function() {
+    expect(res.body[0].name).to.equal("123");
+  });
+}

@@ -1,0 +1,35 @@
+meta {
+  name: Create Product - Apple (Fruit, $100, Stock 50)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/products
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Apple",
+    "category": "Fruit",
+    "price": 100,
+    "stock": 50,
+    "active": true
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.name: eq Apple
+  res.body.category: eq Fruit
+  res.body.price: eq 100
+  res.body.stock: eq 50
+  res.body.active: eq true
+}
+
+script:post-response {
+  bru.setVar("appleId", res.body.id);
+}

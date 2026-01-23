@@ -1,0 +1,23 @@
+meta {
+  name: Filter IN - Category in (Fruit, Bakery)
+  type: http
+  seq: 30
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Category][in]=Fruit,Bakery
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 3
+}
+
+tests {
+  test("All results have Category in [Fruit, Bakery]", function() {
+    expect(res.body.every(p => p.category === "Fruit" || p.category === "Bakery")).to.be.true;
+  });
+}

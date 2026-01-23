@@ -1,0 +1,18 @@
+meta {
+  name: Filter LIKE - Name starts with E
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Name][like]=E%25
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length 1
+  res.body[0].name: eq Eggplant
+}

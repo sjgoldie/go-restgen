@@ -1,0 +1,33 @@
+meta {
+  name: Comments - Access Under Owned Blog Without Auth
+  type: http
+  seq: 38
+}
+
+get {
+  url: {{baseUrl}}/blogs/1/posts/1/comments
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  # Issue #28 Test: Grandparent Ownership Check
+
+  Comments are nested under Posts which are nested under Blogs.
+  Comments have PublicReadOnly() - GET is public.
+  Posts have ownership (AuthorID, EditorID).
+  Blogs have ownership (AuthorID).
+
+  Even though Comments GET is public, the grandparent Blog
+  and parent Post both have ownership configured.
+
+  Accessing comments without auth should return 401 because
+  the parent chain requires ownership validation.
+
+  Before fix: Returns 200 (comments are public)
+  After fix: Returns 401 (parent ownership required)
+}

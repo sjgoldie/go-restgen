@@ -497,6 +497,7 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 		childFKCol    string
 		parentTable   string
 		parentURLUUID string
+		parentMeta    *metadata.TypeMetadata
 	}
 
 	var joins []joinInfo
@@ -511,11 +512,22 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 			childFKCol:    childMeta.ForeignKeyCol,
 			parentTable:   parentMeta.TableName,
 			parentURLUUID: parentMeta.URLParamUUID,
+			parentMeta:    parentMeta,
 		})
 
 		// Move up the chain
 		childMeta = parentMeta
 		parentMeta = parentMeta.ParentMeta
+	}
+
+	// Get parents needing ownership filtering (set by auth middleware)
+	parentsNeedingOwnership, _ := ctx.Value(metadata.ParentOwnershipKey).([]*metadata.TypeMetadata)
+
+	// Get UserID from AuthInfo for parent ownership filtering
+	// (OwnershipUserIDKey may not be set if current route doesn't have ownership)
+	var ownershipUserID string
+	if authInfo, ok := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo); ok && authInfo != nil {
+		ownershipUserID = authInfo.UserID
 	}
 
 	// Now build the JOINs and WHERE clauses
@@ -566,9 +578,44 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 		// WHERE parent_table.id = ?
 		query = query.Where("?.? = ?",
 			bun.Ident(join.parentTable), bun.Ident("id"), parentID)
+
+		// Issue #28 fix: Apply ownership filter for this parent if needed
+		if slices.Contains(parentsNeedingOwnership, join.parentMeta) && ownershipUserID != "" {
+			query = applyParentOwnershipFilter(query, join.parentMeta, ownershipUserID)
+		}
 	}
 
 	return query, nil
+}
+
+// applyParentOwnershipFilter adds ownership WHERE clause for a parent table
+func applyParentOwnershipFilter(query *bun.SelectQuery, parentMeta *metadata.TypeMetadata, userID string) *bun.SelectQuery {
+	if len(parentMeta.OwnershipFields) == 0 {
+		return query
+	}
+
+	// Get the parent type for column name lookup
+	parentType := parentMeta.ModelType
+	if parentType.Kind() == reflect.Ptr {
+		parentType = parentType.Elem()
+	}
+
+	// Build WHERE clause for ownership: parent_table.ownership_field = userID
+	// For multiple fields, use OR logic (same as applyOwnershipFilterWithMeta)
+	for i, fieldName := range parentMeta.OwnershipFields {
+		colName, err := fieldToColumnName(parentType, fieldName)
+		if err != nil {
+			continue
+		}
+
+		if i == 0 {
+			query = query.Where("?.? = ?", bun.Ident(parentMeta.TableName), bun.Ident(colName), userID)
+		} else {
+			query = query.WhereOr("?.? = ?", bun.Ident(parentMeta.TableName), bun.Ident(colName), userID)
+		}
+	}
+
+	return query
 }
 
 // applyOwnershipFilterWithMeta applies ownership filtering to a query if enforced in context

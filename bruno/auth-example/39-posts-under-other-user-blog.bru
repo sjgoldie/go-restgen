@@ -1,0 +1,40 @@
+meta {
+  name: Posts - Access Under Other User's Blog
+  type: http
+  seq: 39
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{bob_blog_id}}/posts
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Alice cannot see posts under Bob's blog", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body).to.be.an('array');
+    expect(res.body.length).to.equal(0);
+  });
+}
+
+docs {
+  # Issue #28 Test: Parent Ownership Filtering
+
+  Alice tries to access posts under Bob's blog.
+  Blogs have ownership - Alice can only see her own blogs.
+
+  Parent ownership filtering prevents Alice from seeing Bob's blog's posts.
+  Returns 200 with empty array (data is protected, which is what matters).
+
+  Note: This test requires bob_blog_id to be set from test 05-blogs-create-bob.bru
+}

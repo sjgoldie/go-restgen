@@ -41,8 +41,8 @@ type preFetchResult[T any] struct {
 // GetAll retrieves all items of type T from the datastore
 // Filters from context are applied automatically
 // Relations can be loaded via ?include= query parameter (parsed into QueryOptions.Include)
-// Returns items, total count (0 if not requested), and error
-func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, error) {
+// Returns items, total count (0 if not requested), sums (nil if not requested), and error
+func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -52,19 +52,19 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, error) {
 	// Get metadata from context
 	meta, err := metadata.FromContext(ctx)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 
 	// Apply parent filters and JOINs from metadata
 	query, err = w.applyParentFiltersWithMeta(ctx, query, meta)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 
 	// Apply ownership filter for type T
 	query, err = w.applyOwnershipFilterWithMeta(ctx, query, meta)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 
 	// Get query options from context (optional)
@@ -73,20 +73,20 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, error) {
 	// Apply filters from query options
 	query = w.applyQueryFilters(query, opts, meta)
 
-	// Get total count BEFORE sorting/pagination (if requested)
-	// Use the same query with filters already applied
+	// Compute aggregates (count and/or sums) BEFORE sorting/pagination
 	var totalCount int
-	if opts != nil && opts.CountTotal {
-		totalCount, err = query.Count(ctx)
+	var sums map[string]float64
+	if opts != nil && (opts.CountTotal || len(opts.Sums) > 0) {
+		totalCount, sums, err = w.computeAggregates(ctx, query, opts, meta)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 	}
 
 	// Apply sorting from query options (or default sort)
 	query = w.applyQuerySorting(query, opts, meta)
 
-	// Apply pagination AFTER count
+	// Apply pagination AFTER aggregates
 	query = w.applyQueryPagination(query, opts, meta)
 
 	// Apply relation includes from query options
@@ -95,16 +95,16 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, error) {
 	if err := query.Scan(ctx); err != nil {
 		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		// Check for connection issues
 		if errors.Is(err, sql.ErrConnDone) {
-			return nil, 0, apperrors.ErrUnavailable
+			return nil, 0, nil, apperrors.ErrUnavailable
 		}
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 
-	return items, totalCount, nil
+	return items, totalCount, sums, nil
 }
 
 // Get retrieves a single item of type T by ID from the datastore
@@ -839,6 +839,135 @@ func splitStringValues(vals []any) []any {
 		result[i] = strings.TrimSpace(p)
 	}
 	return result
+}
+
+// isNumericField checks if a field on the model type is a numeric type (int, uint, float)
+func isNumericField(modelType reflect.Type, fieldName string) bool {
+	field, found := modelType.FieldByName(fieldName)
+	if !found {
+		return false
+	}
+	switch field.Type.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
+}
+
+// computeAggregates computes count and/or sum aggregates for the query.
+// When both count and sums are requested, they're combined into a single query.
+// Invalid sum fields (not in allowlist, non-numeric, or non-existent) return 0 with slog warning.
+func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) (int, map[string]float64, error) {
+	var totalCount int
+	var sums map[string]float64
+
+	// Build aggregation query - clone the base query to preserve WHERE conditions
+	aggQuery := w.Store.GetDB().NewSelect().
+		TableExpr("(?) AS subq", query.Clone())
+
+	// Track which fields to actually sum (valid ones)
+	validSumFields := make(map[string]string) // fieldName -> colName
+
+	// Initialize sums map if any sums requested
+	if len(opts.Sums) > 0 {
+		sums = make(map[string]float64)
+
+		for _, field := range opts.Sums {
+			// Initialize all requested fields to 0 (security: don't reveal which fields are valid)
+			sums[field] = 0
+
+			// Check if field is in allowlist
+			if !slices.Contains(meta.SummableFields, field) {
+				slog.Warn("sum requested for field not in SummableFields", "field", field, "type", meta.TypeName)
+				continue
+			}
+
+			// Check if field exists and is numeric
+			if !isNumericField(meta.ModelType, field) {
+				slog.Warn("sum requested for non-numeric field", "field", field, "type", meta.TypeName)
+				continue
+			}
+
+			// Get column name
+			colName, err := fieldToColumnName(meta.ModelType, field)
+			if err != nil {
+				slog.Warn("sum requested for field with invalid column mapping", "field", field, "type", meta.TypeName, "error", err)
+				continue
+			}
+
+			validSumFields[field] = colName
+		}
+	}
+
+	// Build the SELECT clause with aggregates
+	hasCount := opts.CountTotal
+	hasSums := len(validSumFields) > 0
+
+	switch {
+	case hasCount && hasSums:
+		// Both count and sums - combine into one query
+		selectParts := []string{"COUNT(*) AS count"}
+		for field, colName := range validSumFields {
+			selectParts = append(selectParts, fmt.Sprintf("COALESCE(SUM(%s), 0) AS sum_%s", colName, field))
+		}
+		aggQuery = aggQuery.ColumnExpr(strings.Join(selectParts, ", "))
+	case hasCount:
+		// Count only
+		aggQuery = aggQuery.ColumnExpr("COUNT(*) AS count")
+	case hasSums:
+		// Sums only
+		selectParts := []string{}
+		for field, colName := range validSumFields {
+			selectParts = append(selectParts, fmt.Sprintf("COALESCE(SUM(%s), 0) AS sum_%s", colName, field))
+		}
+		aggQuery = aggQuery.ColumnExpr(strings.Join(selectParts, ", "))
+	default:
+		// No valid aggregates - return early
+		return 0, sums, nil
+	}
+
+	// Execute the aggregate query
+	rows, err := aggQuery.Rows(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	if rows.Next() {
+		// Build scan destinations based on what we're selecting
+		cols, _ := rows.Columns()
+		scanDests := make([]any, len(cols))
+		results := make(map[string]float64)
+
+		for i, col := range cols {
+			var val float64
+			scanDests[i] = &val
+			results[col] = 0
+		}
+
+		if err := rows.Scan(scanDests...); err != nil {
+			return 0, nil, err
+		}
+
+		// Extract results
+		for i, col := range cols {
+			results[col] = *scanDests[i].(*float64)
+		}
+
+		if opts.CountTotal {
+			totalCount = int(results["count"])
+		}
+
+		for field := range validSumFields {
+			if val, ok := results["sum_"+field]; ok {
+				sums[field] = val
+			}
+		}
+	}
+
+	return totalCount, sums, nil
 }
 
 // applyQueryFilters applies filters from QueryOptions to the query

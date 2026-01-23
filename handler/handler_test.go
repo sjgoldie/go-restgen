@@ -1972,11 +1972,11 @@ func TestCustomGetAll(t *testing.T) {
 	}()
 
 	// Custom function that filters to only return users with ID > 201
-	customGetAll := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, error) {
+	customGetAll := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
 		// Get all, then filter
-		all, _, err := svc.GetAll(ctx)
+		all, _, _, err := svc.GetAll(ctx)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		var filtered []*TestUser
 		for _, u := range all {
@@ -1984,7 +1984,7 @@ func TestCustomGetAll(t *testing.T) {
 				filtered = append(filtered, u)
 			}
 		}
-		return filtered, len(filtered), nil
+		return filtered, len(filtered), nil, nil
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
@@ -2686,5 +2686,217 @@ func TestStandardCreate_CleansUpFileOnDBError(t *testing.T) {
 	// Verify file was cleaned up
 	if len(deletedKeys) == 0 {
 		t.Error("Expected file to be deleted after DB error")
+	}
+}
+
+// TestSumProduct is a test model for sum header tests
+type TestSumProduct struct {
+	bun.BaseModel `bun:"table:sum_products"`
+	ID            int     `bun:"id,pk,autoincrement" json:"id"`
+	Name          string  `bun:"name,notnull" json:"name"`
+	Price         int     `bun:"price,notnull" json:"price"`
+	Rating        float64 `bun:"rating,notnull" json:"rating"`
+	InStock       bool    `bun:"in_stock,notnull" json:"in_stock"`
+}
+
+func TestHandler_GetAll_SumHeaders(t *testing.T) {
+	// Setup: create sum_products table
+	db, _ := datastore.Get()
+	_, err := db.GetDB().NewCreateTable().Model((*TestSumProduct)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create sum_products table:", err)
+	}
+	defer db.GetDB().NewDropTable().Model((*TestSumProduct)(nil)).IfExists().Exec(context.Background())
+
+	// Clean table and reset sequence
+	_, _ = db.GetDB().NewDelete().Model((*TestSumProduct)(nil)).Where("1=1").Exec(context.Background())
+	_, _ = db.GetDB().Exec("DELETE FROM sqlite_sequence WHERE name = 'sum_products'")
+
+	// Insert test data
+	products := []TestSumProduct{
+		{Name: "Apple", Price: 100, Rating: 4.5, InStock: true},
+		{Name: "Banana", Price: 50, Rating: 3.8, InStock: true},
+		{Name: "Carrot", Price: 30, Rating: 4.2, InStock: false},
+	}
+	for _, p := range products {
+		_, err := db.GetDB().NewInsert().Model(&p).Exec(context.Background())
+		if err != nil {
+			t.Fatal("Failed to insert test product:", err)
+		}
+	}
+
+	sumMeta := &metadata.TypeMetadata{
+		TypeID:           "test_sum_product_id",
+		TypeName:         "TestSumProduct",
+		TableName:        "sum_products",
+		URLParamUUID:     "id",
+		PKField:          "ID",
+		ModelType:        reflect.TypeOf(TestSumProduct{}),
+		FilterableFields: []string{"Name", "Price", "InStock"},
+		SortableFields:   []string{"Name", "Price"},
+		SummableFields:   []string{"Price", "Rating", "Name", "InStock"},
+		DefaultLimit:     10,
+		MaxLimit:         100,
+	}
+
+	tests := []struct {
+		name            string
+		queryString     string
+		expectedHeaders map[string]string
+	}{
+		{
+			name:        "single integer sum",
+			queryString: "sum=Price",
+			expectedHeaders: map[string]string{
+				"X-Sum-Price": "180", // 100 + 50 + 30
+			},
+		},
+		{
+			name:        "single float sum",
+			queryString: "sum=Rating",
+			expectedHeaders: map[string]string{
+				"X-Sum-Rating": "12.5", // 4.5 + 3.8 + 4.2
+			},
+		},
+		{
+			name:        "multiple sums",
+			queryString: "sum=Price,Rating",
+			expectedHeaders: map[string]string{
+				"X-Sum-Price":  "180",
+				"X-Sum-Rating": "12.5",
+			},
+		},
+		{
+			name:        "non-numeric field returns 0",
+			queryString: "sum=Name",
+			expectedHeaders: map[string]string{
+				"X-Sum-Name": "0",
+			},
+		},
+		{
+			name:        "bool field returns 0",
+			queryString: "sum=InStock",
+			expectedHeaders: map[string]string{
+				"X-Sum-InStock": "0",
+			},
+		},
+		{
+			name:        "mixed valid and invalid",
+			queryString: "sum=Price,Name",
+			expectedHeaders: map[string]string{
+				"X-Sum-Price": "180",
+				"X-Sum-Name":  "0",
+			},
+		},
+		{
+			name:        "sum with count combined",
+			queryString: "sum=Price&count=true",
+			expectedHeaders: map[string]string{
+				"X-Sum-Price":   "180",
+				"X-Total-Count": "3",
+			},
+		},
+		{
+			name:        "sum with filter",
+			queryString: "sum=Price&filter[InStock]=true",
+			expectedHeaders: map[string]string{
+				"X-Sum-Price": "150", // Only Apple(100) + Banana(50)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := chi.NewRouter()
+			r.Use(withMeta(sumMeta))
+			r.Get("/products", handler.GetAll[TestSumProduct](handler.StandardGetAll[TestSumProduct]))
+
+			url := "/products"
+			if tt.queryString != "" {
+				url += "?" + tt.queryString
+			}
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			w := httptest.NewRecorder()
+
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+				return
+			}
+
+			// Check expected headers
+			for header, expected := range tt.expectedHeaders {
+				actual := w.Header().Get(header)
+				if actual != expected {
+					t.Errorf("Expected header %s=%s, got %s", header, expected, actual)
+				}
+			}
+		})
+	}
+}
+
+func TestHandler_GetAll_ErrorPaths(t *testing.T) {
+	tests := []struct {
+		name         string
+		getAllFunc   handler.CustomGetAllFunc[TestUser]
+		expectedCode int
+		expectedBody string
+	}{
+		{
+			name: "context canceled",
+			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
+				return nil, 0, nil, context.Canceled
+			},
+			expectedCode: http.StatusOK, // No response written when context is canceled
+		},
+		{
+			name: "context deadline exceeded",
+			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
+				return nil, 0, nil, context.DeadlineExceeded
+			},
+			expectedCode: http.StatusGatewayTimeout,
+			expectedBody: "request timeout",
+		},
+		{
+			name: "service unavailable",
+			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
+				return nil, 0, nil, apperrors.ErrUnavailable
+			},
+			expectedCode: http.StatusServiceUnavailable,
+			expectedBody: "service temporarily unavailable",
+		},
+		{
+			name: "generic error",
+			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
+				return nil, 0, nil, fmt.Errorf("some internal error")
+			},
+			expectedCode: http.StatusInternalServerError,
+			expectedBody: "internal server error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := chi.NewRouter()
+			r.Use(withMeta(userMeta))
+			r.Get(testUsersPath, handler.GetAll[TestUser](tt.getAllFunc))
+
+			req := httptest.NewRequest(http.MethodGet, testUsersPath, nil)
+			w := httptest.NewRecorder()
+
+			r.ServeHTTP(w, req)
+
+			if w.Code != tt.expectedCode {
+				t.Errorf("Expected status %d, got %d: %s", tt.expectedCode, w.Code, w.Body.String())
+			}
+
+			if tt.expectedBody != "" {
+				body := w.Body.String()
+				if !bytes.Contains([]byte(body), []byte(tt.expectedBody)) {
+					t.Errorf("Expected body to contain '%s', got '%s'", tt.expectedBody, body)
+				}
+			}
+		})
 	}
 }

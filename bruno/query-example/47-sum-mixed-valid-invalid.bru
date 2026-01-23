@@ -1,0 +1,28 @@
+meta {
+  name: Sum Mixed Valid and Invalid Fields
+  type: http
+  seq: 47
+}
+
+get {
+  url: {{baseUrl}}/products?sum=Price,Name
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("X-Sum-Price header contains valid sum", function() {
+    // Price is numeric and allowed, should return actual sum
+    expect(res.headers['x-sum-price']).to.equal('2297');
+  });
+
+  test("X-Sum-Name header returns 0 for invalid field", function() {
+    // Name is string, should return 0 but still be present
+    expect(res.headers['x-sum-name']).to.equal('0');
+  });
+}

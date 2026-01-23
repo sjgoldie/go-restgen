@@ -1,0 +1,23 @@
+meta {
+  name: Sum Single Field - Price
+  type: http
+  seq: 40
+}
+
+get {
+  url: {{baseUrl}}/products?sum=Price
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("X-Sum-Price header contains sum of all prices", function() {
+    // Apple=100 + Banana=50 + Carrot=30 + Donut=150 + Eggplant=80 + 123=999 + FalseItem=888 = 2297
+    expect(res.headers['x-sum-price']).to.equal('2297');
+  });
+}

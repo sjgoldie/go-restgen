@@ -1,0 +1,23 @@
+meta {
+  name: Sum Bool Field - Returns 0
+  type: http
+  seq: 45
+}
+
+get {
+  url: {{baseUrl}}/products?sum=Active
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("X-Sum-Active header returns 0 for bool field", function() {
+    // Bool fields cannot be summed, should return 0
+    expect(res.headers['x-sum-active']).to.equal('0');
+  });
+}

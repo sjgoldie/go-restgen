@@ -94,3 +94,36 @@ func TestWithQuery(t *testing.T) {
 		t.Errorf("expected max limit 50, got %d", config.MaxLimit)
 	}
 }
+
+func TestWithSums(t *testing.T) {
+	config := WithSums("Price", "Stock", "Quantity")
+
+	if len(config.SummableFields) != 3 {
+		t.Errorf("expected 3 summable fields, got %d", len(config.SummableFields))
+	}
+	if config.SummableFields[0] != "Price" {
+		t.Errorf("expected first field to be 'Price', got '%s'", config.SummableFields[0])
+	}
+	if config.SummableFields[1] != "Stock" {
+		t.Errorf("expected second field to be 'Stock', got '%s'", config.SummableFields[1])
+	}
+	if config.SummableFields[2] != "Quantity" {
+		t.Errorf("expected third field to be 'Quantity', got '%s'", config.SummableFields[2])
+	}
+}
+
+func TestWithQuery_IncludesSummableFields(t *testing.T) {
+	input := QueryConfig{
+		FilterableFields: []string{"Name"},
+		SummableFields:   []string{"Price", "Stock"},
+	}
+
+	config := WithQuery(input)
+
+	if len(config.SummableFields) != 2 {
+		t.Errorf("expected 2 summable fields, got %d", len(config.SummableFields))
+	}
+	if config.SummableFields[0] != "Price" {
+		t.Errorf("expected first summable field to be 'Price', got '%s'", config.SummableFields[0])
+	}
+}

@@ -1,5 +1,5 @@
 meta {
-  name: Comments - Get All (Public)
+  name: Comments - Get All (As Owner)
   type: http
   seq: 12
 }
@@ -7,7 +7,11 @@ meta {
 get {
   url: {{baseUrl}}/blogs/{{aliceBlogId}}/posts/{{alicePostId}}/comments
   body: none
-  auth: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
 }
 
 assert {
@@ -16,8 +20,19 @@ assert {
 }
 
 tests {
-  test("Getting comments is public (no auth required)", function() {
+  test("Blog owner can get comments", function() {
     expect(res.status).to.equal(200);
     expect(res.body).to.be.an('array');
   });
+}
+
+docs {
+  # Get Comments as Blog Owner
+
+  Alice retrieves comments from her own blog's post.
+  This works because Alice owns the parent blog.
+
+  Note: After Issue #28 fix, accessing nested resources requires
+  passing parent ownership checks. Anonymous access to comments
+  is no longer possible when the parent blog has ownership configured.
 }

@@ -47,6 +47,13 @@ func checkAuth(authInfo *AuthInfo, config *AuthConfig) authResult {
 		}
 	}
 
+	// Issue #24 fix: If auth is required (ScopeAuthOnly or ownership), verify UserID is non-empty.
+	// This catches the case where middleware sets AuthInfo{} but doesn't populate UserID.
+	authRequired := containsScope(config.Scopes, ScopeAuthOnly) || config.Ownership != nil
+	if authRequired && authInfo.UserID == "" {
+		return authResult{Status: authUnauthorized}
+	}
+
 	// Auth passed - ownership applies if configured
 	return authResult{Status: authOK, ApplyOwnership: config.Ownership != nil}
 }
@@ -89,8 +96,72 @@ func wrapWithAuth(next http.Handler, config *AuthConfig) http.Handler {
 			ctx = applyOwnershipContext(ctx, authInfo, config.Ownership)
 		}
 
+		// Issue #28 fix: Check parent chain for ownership requirements
+		// Get metadata from context (set by metadata middleware that runs before auth middleware)
+		meta, _ := ctx.Value(metadata.MetadataKey).(*metadata.TypeMetadata)
+		if meta != nil {
+			parentResult := checkParentOwnership(authInfo, meta)
+			switch parentResult.status {
+			case authUnauthorized:
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			case authForbidden:
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			// Store parent ownership info in context for datastore to apply filtering
+			if len(parentResult.parentsNeedingOwnership) > 0 {
+				ctx = context.WithValue(ctx, metadata.ParentOwnershipKey, parentResult.parentsNeedingOwnership)
+			}
+		}
+
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// parentOwnershipResult holds the result of checking parent ownership chain
+type parentOwnershipResult struct {
+	status                  authStatus
+	parentsNeedingOwnership []*metadata.TypeMetadata // Parents that need ownership filtering applied
+}
+
+// checkParentOwnership walks the parent metadata chain and checks ownership requirements.
+// Returns unauthorized if any parent has ownership and user is not authenticated.
+// Returns list of parents needing ownership filtering (user doesn't have bypass scope).
+func checkParentOwnership(authInfo *AuthInfo, meta *metadata.TypeMetadata) parentOwnershipResult {
+	var parentsNeedingOwnership []*metadata.TypeMetadata
+
+	// Walk up the parent chain
+	for parent := meta.ParentMeta; parent != nil; parent = parent.ParentMeta {
+		// Check if this parent has ownership configured
+		if len(parent.OwnershipFields) == 0 {
+			continue
+		}
+
+		// Parent has ownership - user must be authenticated with a valid UserID
+		if authInfo == nil || authInfo.UserID == "" {
+			return parentOwnershipResult{status: authUnauthorized}
+		}
+
+		// Check if user has bypass scope for this parent
+		hasBypass := false
+		for _, bypassScope := range parent.BypassScopes {
+			if hasAnyScope(authInfo.Scopes, []string{bypassScope}) {
+				hasBypass = true
+				break
+			}
+		}
+
+		// If no bypass, this parent needs ownership filtering
+		if !hasBypass {
+			parentsNeedingOwnership = append(parentsNeedingOwnership, parent)
+		}
+	}
+
+	return parentOwnershipResult{
+		status:                  authOK,
+		parentsNeedingOwnership: parentsNeedingOwnership,
+	}
 }
 
 // blockUnauthorized returns 401 for any request (no auth config = blocked)

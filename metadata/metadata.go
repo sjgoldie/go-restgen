@@ -90,6 +90,13 @@ type ownershipFieldsKeyType string
 // OwnershipFieldsKey is the context key for the ownership fields
 const OwnershipFieldsKey ownershipFieldsKeyType = "restgen_ownership_fields"
 
+// parentOwnershipKeyType is the context key type for parent ownership metadata
+type parentOwnershipKeyType string
+
+// ParentOwnershipKey is the context key for storing parent metadata that need ownership filtering
+// Value is []*TypeMetadata - list of parent types in the chain that require ownership checks
+const ParentOwnershipKey parentOwnershipKeyType = "restgen_parent_ownership"
+
 // TypeMetadata contains all metadata for a registered type
 type TypeMetadata struct {
 	TypeID          string        // Unique UUID for this type

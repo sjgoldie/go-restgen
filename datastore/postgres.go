@@ -11,11 +11,13 @@ import (
 
 // PostgreSQL implements Store for PostgreSQL databases
 type PostgreSQL struct {
-	sqlDB *sql.DB
-	db    *bun.DB
+	sqlDB          *sql.DB
+	db             *bun.DB
+	ownsConnection bool
 }
 
-// NewPostgres creates a new PostgreSQL datastore
+// NewPostgres creates a new PostgreSQL datastore.
+// The datastore owns the connection and Cleanup() will close it.
 func NewPostgres(dsn string) (*PostgreSQL, error) {
 	connector := pgdriver.NewConnector(pgdriver.WithDSN(dsn))
 	sqlDB := sql.OpenDB(connector)
@@ -23,9 +25,25 @@ func NewPostgres(dsn string) (*PostgreSQL, error) {
 	db := bun.NewDB(sqlDB, pgdialect.New())
 
 	return &PostgreSQL{
-		sqlDB: sqlDB,
-		db:    db,
+		sqlDB:          sqlDB,
+		db:             db,
+		ownsConnection: true,
 	}, nil
+}
+
+// NewPostgresWithDB creates a PostgreSQL datastore from an existing *sql.DB.
+// Use this when you need to manage the database connection externally,
+// such as with Vault rotating credentials or custom connection pooling.
+//
+// IMPORTANT: The caller retains ownership of the *sql.DB connection.
+// Cleanup() will close the bun.DB wrapper but will NOT close the underlying
+// *sql.DB - you must close it yourself when done.
+func NewPostgresWithDB(sqlDB *sql.DB) *PostgreSQL {
+	return &PostgreSQL{
+		sqlDB:          sqlDB,
+		db:             bun.NewDB(sqlDB, pgdialect.New()),
+		ownsConnection: false,
+	}
 }
 
 func (p *PostgreSQL) GetDB() *bun.DB {
@@ -37,10 +55,12 @@ func (p *PostgreSQL) GetTimeout() time.Duration {
 }
 
 func (p *PostgreSQL) Cleanup() {
-	if p.db != nil {
-		_ = p.db.Close()
-	}
-	if p.sqlDB != nil {
-		_ = p.sqlDB.Close()
+	if p.ownsConnection {
+		if p.db != nil {
+			_ = p.db.Close()
+		}
+		if p.sqlDB != nil {
+			_ = p.sqlDB.Close()
+		}
 	}
 }

@@ -82,6 +82,37 @@ defer datastore.Cleanup()
 db, err := datastore.NewSQLite("./data.db")
 ```
 
+### Using an External Database Connection
+
+Use `NewPostgresWithDB` or `NewSQLiteWithDB` when you need to manage the database connection externally, such as with Vault rotating credentials or custom connection pooling:
+
+```go
+import (
+    "database/sql"
+    "github.com/sjgoldie/go-restgen/datastore"
+    _ "github.com/jackc/pgx/v5/stdlib"
+)
+
+// Create and configure your own *sql.DB
+sqlDB, err := sql.Open("pgx", "postgres://user:pass@localhost:5432/dbname")
+if err != nil {
+    log.Fatal(err)
+}
+sqlDB.SetMaxOpenConns(25)
+sqlDB.SetMaxIdleConns(5)
+
+// Pass to go-restgen
+db := datastore.NewPostgresWithDB(sqlDB)
+datastore.Initialize(db)
+
+// IMPORTANT: You own the connection - close it yourself when done
+defer sqlDB.Close()
+```
+
+**Connection ownership:**
+- `NewPostgres(dsn)` / `NewSQLite(dsn)`: go-restgen owns the connection; `Cleanup()` closes it
+- `NewPostgresWithDB(sqlDB)` / `NewSQLiteWithDB(sqlDB)`: you own the connection; `Cleanup()` does NOT close it - you must close it yourself
+
 ## Primary Key Types
 
 go-restgen supports both integer and UUID primary keys. The framework automatically detects and handles the PK type based on your model definition.

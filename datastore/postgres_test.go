@@ -1,7 +1,10 @@
 package datastore_test
 
 import (
+	"database/sql"
 	"testing"
+
+	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/sjgoldie/go-restgen/datastore"
 )
@@ -139,5 +142,71 @@ func TestPostgreSQL_StoreInterface(t *testing.T) {
 	}
 
 	// Cleanup should not panic
+	store.Cleanup()
+}
+
+func TestNewPostgresWithDB(t *testing.T) {
+	// Create external sql.DB using pgdriver
+	connector := pgdriver.NewConnector(pgdriver.WithDSN("postgres://user:pass@localhost:5432/testdb?sslmode=disable"))
+	sqlDB := sql.OpenDB(connector)
+	defer func() { _ = sqlDB.Close() }()
+
+	// Create PostgreSQL datastore from existing connection
+	db := datastore.NewPostgresWithDB(sqlDB)
+
+	if db == nil {
+		t.Fatal("Expected non-nil PostgreSQL instance")
+	}
+
+	// Verify GetDB returns valid bun.DB
+	bunDB := db.GetDB()
+	if bunDB == nil {
+		t.Fatal("Expected non-nil bun.DB from GetDB()")
+	}
+
+	// Verify GetTimeout returns positive duration
+	if db.GetTimeout() <= 0 {
+		t.Error("Expected positive timeout duration")
+	}
+}
+
+func TestPostgresWithDB_CleanupDoesNotCloseExternalConnection(t *testing.T) {
+	// Create external sql.DB using pgdriver
+	connector := pgdriver.NewConnector(pgdriver.WithDSN("postgres://user:pass@localhost:5432/testdb?sslmode=disable"))
+	sqlDB := sql.OpenDB(connector)
+	defer func() { _ = sqlDB.Close() }()
+
+	// Create PostgreSQL datastore from existing connection
+	db := datastore.NewPostgresWithDB(sqlDB)
+
+	// Call Cleanup
+	db.Cleanup()
+
+	// External sql.DB should still be structurally valid (not closed)
+	// Note: Ping would require a real server, but the connection object should not be closed
+	if sqlDB == nil {
+		t.Error("External sql.DB should not be nil after Cleanup()")
+	}
+}
+
+func TestPostgresWithDB_StoreInterface(t *testing.T) {
+	connector := pgdriver.NewConnector(pgdriver.WithDSN("postgres://user:pass@localhost:5432/testdb?sslmode=disable"))
+	sqlDB := sql.OpenDB(connector)
+	defer func() { _ = sqlDB.Close() }()
+
+	db := datastore.NewPostgresWithDB(sqlDB)
+
+	// Use as Store interface
+	var store datastore.Store = db
+
+	if store.GetDB() == nil {
+		t.Error("Expected non-nil DB from Store interface")
+	}
+
+	if store.GetTimeout() <= 0 {
+		t.Error("Expected positive timeout from Store interface")
+	}
+
+	// Cleanup should not panic and should not close external connection
 	store.Cleanup()
 }

@@ -2,9 +2,11 @@ package datastore_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/driver/sqliteshim"
 
 	"github.com/sjgoldie/go-restgen/datastore"
 )
@@ -224,4 +226,81 @@ func TestSQLite_StoreInterface(t *testing.T) {
 
 	// Cleanup should not panic
 	store.Cleanup()
+}
+
+func TestNewSQLiteWithDB(t *testing.T) {
+	// Create external sql.DB
+	sqlDB, err := sql.Open(sqliteshim.ShimName, ":memory:")
+	if err != nil {
+		t.Fatal("Failed to create sql.DB:", err)
+	}
+	defer func() { _ = sqlDB.Close() }()
+
+	// Create SQLite datastore from existing connection
+	db := datastore.NewSQLiteWithDB(sqlDB)
+
+	if db == nil {
+		t.Fatal("Expected non-nil SQLite instance")
+	}
+
+	// Verify GetDB returns valid bun.DB
+	bunDB := db.GetDB()
+	if bunDB == nil {
+		t.Fatal("Expected non-nil bun.DB from GetDB()")
+	}
+
+	// Verify the DB is functional
+	_, err = bunDB.NewCreateTable().Model((*SQLiteTestModel)(nil)).Exec(context.Background())
+	if err != nil {
+		t.Error("Expected to be able to create table:", err)
+	}
+}
+
+func TestSQLiteWithDB_CleanupDoesNotCloseExternalConnection(t *testing.T) {
+	// Create external sql.DB
+	sqlDB, err := sql.Open(sqliteshim.ShimName, ":memory:")
+	if err != nil {
+		t.Fatal("Failed to create sql.DB:", err)
+	}
+	defer func() { _ = sqlDB.Close() }()
+
+	// Create SQLite datastore from existing connection
+	db := datastore.NewSQLiteWithDB(sqlDB)
+
+	// Call Cleanup
+	db.Cleanup()
+
+	// External sql.DB should still be usable
+	err = sqlDB.Ping()
+	if err != nil {
+		t.Errorf("External sql.DB should still be usable after Cleanup(), got error: %v", err)
+	}
+}
+
+func TestSQLiteWithDB_StoreInterface(t *testing.T) {
+	sqlDB, err := sql.Open(sqliteshim.ShimName, ":memory:")
+	if err != nil {
+		t.Fatal("Failed to create sql.DB:", err)
+	}
+	defer func() { _ = sqlDB.Close() }()
+
+	db := datastore.NewSQLiteWithDB(sqlDB)
+
+	// Use as Store interface
+	var store datastore.Store = db
+
+	if store.GetDB() == nil {
+		t.Error("Expected non-nil DB from Store interface")
+	}
+
+	if store.GetTimeout() <= 0 {
+		t.Error("Expected positive timeout from Store interface")
+	}
+
+	store.Cleanup()
+
+	// External connection should still work
+	if err := sqlDB.Ping(); err != nil {
+		t.Errorf("External sql.DB should still be usable after Cleanup(), got error: %v", err)
+	}
 }

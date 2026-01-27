@@ -17,7 +17,3 @@ assert {
   res.body.filename: eq test-image.txt
   res.body.alt_text: eq Test image for Bruno
 }
-
-script:post-response {
-  bru.setVar("downloadUrl", res.body.download_url);
-}

@@ -1,11 +1,11 @@
 meta {
-  name: Download Image Direct (Signed URL)
+  name: Download Image via Download Endpoint
   type: http
   seq: 7
 }
 
 get {
-  url: {{downloadUrl}}
+  url: {{baseUrl}}/posts/{{postId}}/images/{{imageId}}/download
   body: none
   auth: none
 }

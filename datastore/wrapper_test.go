@@ -3293,3 +3293,1127 @@ func TestParentOwnership_MultipleOwnershipFields(t *testing.T) {
 		t.Errorf("Expected 1 task (OR logic on ownership fields), got %d", len(tasks))
 	}
 }
+
+// ============================================================================
+// Relation Filter Tests (Issue #35)
+// Tests for filtering and including across relation chains
+// 5-level hierarchy: User → Account → Site → Bill → LineItem
+// ============================================================================
+
+// RelUser is the top-level model (customer)
+type RelUser struct {
+	bun.BaseModel `bun:"table:rel_users"`
+	ID            int           `bun:"id,pk,autoincrement"`
+	Name          string        `bun:"name,notnull"`
+	Email         string        `bun:"email,notnull"`
+	CreatedAt     time.Time     `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	Accounts      []*RelAccount `bun:"rel:has-many,join:id=user_id"`
+}
+
+// RelAccount belongs to User, has many Sites
+type RelAccount struct {
+	bun.BaseModel `bun:"table:rel_accounts"`
+	ID            int        `bun:"id,pk,autoincrement"`
+	UserID        int        `bun:"user_id,notnull"`
+	User          *RelUser   `bun:"rel:belongs-to,join:user_id=id"`
+	OwnerID       string     `bun:"owner_id,notnull"`
+	Status        string     `bun:"status,notnull"`
+	Balance       float64    `bun:"balance,notnull,default:0"`
+	CreatedAt     time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	Sites         []*RelSite `bun:"rel:has-many,join:id=account_id"`
+}
+
+// RelSite belongs to Account, has many Bills
+type RelSite struct {
+	bun.BaseModel `bun:"table:rel_sites"`
+	ID            int         `bun:"id,pk,autoincrement"`
+	AccountID     int         `bun:"account_id,notnull"`
+	Account       *RelAccount `bun:"rel:belongs-to,join:account_id=id"`
+	OwnerID       string      `bun:"owner_id,notnull"`
+	NMI           string      `bun:"nmi,notnull"`
+	Region        string      `bun:"region,notnull"`
+	Address       string      `bun:"address,notnull"`
+	CreatedAt     time.Time   `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	Bills         []*RelBill  `bun:"rel:has-many,join:id=site_id"`
+}
+
+// RelBill belongs to Site, has many LineItems
+type RelBill struct {
+	bun.BaseModel `bun:"table:rel_bills"`
+	ID            int            `bun:"id,pk,autoincrement"`
+	SiteID        int            `bun:"site_id,notnull"`
+	Site          *RelSite       `bun:"rel:belongs-to,join:site_id=id"`
+	OwnerID       string         `bun:"owner_id,notnull"`
+	Status        string         `bun:"status,notnull"`
+	Amount        float64        `bun:"amount,notnull"`
+	DueDate       time.Time      `bun:"due_date,notnull"`
+	CreatedAt     time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	LineItems     []*RelLineItem `bun:"rel:has-many,join:id=bill_id"`
+}
+
+// RelLineItem belongs to Bill (deepest level)
+type RelLineItem struct {
+	bun.BaseModel `bun:"table:rel_line_items"`
+	ID            int       `bun:"id,pk,autoincrement"`
+	BillID        int       `bun:"bill_id,notnull"`
+	Bill          *RelBill  `bun:"rel:belongs-to,join:bill_id=id"`
+	OwnerID       string    `bun:"owner_id,notnull"`
+	Description   string    `bun:"description,notnull"`
+	Amount        float64   `bun:"amount,notnull"`
+	CreatedAt     time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+}
+
+// setupRelationFilterTestDB creates the database and tables for relation filter tests
+func setupRelationFilterTestDB(t *testing.T) (*datastore.SQLite, func()) {
+	t.Helper()
+	db, err := datastore.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal("Failed to create SQLite:", err)
+	}
+
+	ctx := context.Background()
+	models := []interface{}{
+		(*RelUser)(nil),
+		(*RelAccount)(nil),
+		(*RelSite)(nil),
+		(*RelBill)(nil),
+		(*RelLineItem)(nil),
+	}
+
+	for _, model := range models {
+		if _, err := db.GetDB().NewCreateTable().Model(model).IfNotExists().Exec(ctx); err != nil {
+			t.Fatal("Failed to create table:", err)
+		}
+	}
+
+	return db, func() { db.GetDB().Close() }
+}
+
+// createRelationFilterTestMeta creates the full 5-level metadata chain
+func createRelationFilterTestMeta() (userMeta, accountMeta, siteMeta, billMeta, lineItemMeta *metadata.TypeMetadata) {
+	userMeta = &metadata.TypeMetadata{
+		TypeID:           "rel_user",
+		TypeName:         "RelUser",
+		TableName:        "rel_users",
+		URLParamUUID:     "userId",
+		PKField:          "ID",
+		ModelType:        reflect.TypeOf(RelUser{}),
+		ChildMeta:        make(map[string]*metadata.TypeMetadata),
+		FilterableFields: []string{"Name", "Email"},
+		SortableFields:   []string{"Name", "Email", "CreatedAt"},
+	}
+
+	accountMeta = &metadata.TypeMetadata{
+		TypeID:           "rel_account",
+		TypeName:         "RelAccount",
+		TableName:        "rel_accounts",
+		URLParamUUID:     "accountId",
+		PKField:          "ID",
+		ModelType:        reflect.TypeOf(RelAccount{}),
+		ParentType:       reflect.TypeOf(RelUser{}),
+		ParentMeta:       userMeta,
+		ForeignKeyCol:    "user_id",
+		RelationName:     "Accounts",
+		OwnershipFields:  []string{"OwnerID"},
+		ChildMeta:        make(map[string]*metadata.TypeMetadata),
+		FilterableFields: []string{"Status", "Balance"},
+		SortableFields:   []string{"Status", "Balance", "CreatedAt"},
+	}
+
+	siteMeta = &metadata.TypeMetadata{
+		TypeID:           "rel_site",
+		TypeName:         "RelSite",
+		TableName:        "rel_sites",
+		URLParamUUID:     "siteId",
+		PKField:          "ID",
+		ModelType:        reflect.TypeOf(RelSite{}),
+		ParentType:       reflect.TypeOf(RelAccount{}),
+		ParentMeta:       accountMeta,
+		ForeignKeyCol:    "account_id",
+		RelationName:     "Sites",
+		OwnershipFields:  []string{"OwnerID"},
+		ChildMeta:        make(map[string]*metadata.TypeMetadata),
+		FilterableFields: []string{"NMI", "Region", "Address"},
+		SortableFields:   []string{"NMI", "Region", "CreatedAt"},
+	}
+
+	billMeta = &metadata.TypeMetadata{
+		TypeID:           "rel_bill",
+		TypeName:         "RelBill",
+		TableName:        "rel_bills",
+		URLParamUUID:     "billId",
+		PKField:          "ID",
+		ModelType:        reflect.TypeOf(RelBill{}),
+		ParentType:       reflect.TypeOf(RelSite{}),
+		ParentMeta:       siteMeta,
+		ForeignKeyCol:    "site_id",
+		RelationName:     "Bills",
+		OwnershipFields:  []string{"OwnerID"},
+		ChildMeta:        make(map[string]*metadata.TypeMetadata),
+		FilterableFields: []string{"Status", "Amount", "DueDate"},
+		SortableFields:   []string{"Status", "Amount", "DueDate", "CreatedAt"},
+	}
+
+	lineItemMeta = &metadata.TypeMetadata{
+		TypeID:           "rel_line_item",
+		TypeName:         "RelLineItem",
+		TableName:        "rel_line_items",
+		URLParamUUID:     "lineItemId",
+		PKField:          "ID",
+		ModelType:        reflect.TypeOf(RelLineItem{}),
+		ParentType:       reflect.TypeOf(RelBill{}),
+		ParentMeta:       billMeta,
+		ForeignKeyCol:    "bill_id",
+		RelationName:     "LineItems",
+		OwnershipFields:  []string{"OwnerID"},
+		ChildMeta:        make(map[string]*metadata.TypeMetadata),
+		FilterableFields: []string{"Description", "Amount"},
+		SortableFields:   []string{"Description", "Amount", "CreatedAt"},
+	}
+
+	// Wire up ChildMeta for downward traversal
+	userMeta.ChildMeta["Accounts"] = accountMeta
+	accountMeta.ChildMeta["Sites"] = siteMeta
+	siteMeta.ChildMeta["Bills"] = billMeta
+	billMeta.ChildMeta["LineItems"] = lineItemMeta
+
+	return userMeta, accountMeta, siteMeta, billMeta, lineItemMeta
+}
+
+// seedRelationFilterTestData creates comprehensive test data for relation filter tests
+// Returns IDs for verification: user IDs, account IDs, site IDs, bill IDs, lineItem IDs
+func seedRelationFilterTestData(t *testing.T, db *datastore.SQLite) (users []RelUser, accounts []RelAccount, sites []RelSite, bills []RelBill, lineItems []RelLineItem) {
+	t.Helper()
+	ctx := context.Background()
+
+	// Create 2 users
+	users = []RelUser{
+		{Name: "Alice Smith", Email: "alice@example.com"},
+		{Name: "Bob Jones", Email: "bob@example.com"},
+	}
+	for i := range users {
+		_, err := db.GetDB().NewInsert().Model(&users[i]).Returning("*").Exec(ctx)
+		if err != nil {
+			t.Fatal("Failed to create user:", err)
+		}
+	}
+
+	// Create 3 accounts (2 for Alice, 1 for Bob)
+	accounts = []RelAccount{
+		{UserID: users[0].ID, OwnerID: "alice", Status: "Active", Balance: 100.00},
+		{UserID: users[0].ID, OwnerID: "alice", Status: "Suspended", Balance: 250.50},
+		{UserID: users[1].ID, OwnerID: "bob", Status: "Active", Balance: 0.00},
+	}
+	for i := range accounts {
+		_, err := db.GetDB().NewInsert().Model(&accounts[i]).Returning("*").Exec(ctx)
+		if err != nil {
+			t.Fatal("Failed to create account:", err)
+		}
+	}
+
+	// Create 4 sites (2 for Alice's first account, 1 each for others)
+	sites = []RelSite{
+		{AccountID: accounts[0].ID, OwnerID: "alice", NMI: "6407112345678", Region: "NSW", Address: "123 Main St"},
+		{AccountID: accounts[0].ID, OwnerID: "alice", NMI: "6407198765432", Region: "VIC", Address: "456 Oak Ave"},
+		{AccountID: accounts[1].ID, OwnerID: "alice", NMI: "6407145678901", Region: "QLD", Address: "789 Pine Rd"},
+		{AccountID: accounts[2].ID, OwnerID: "bob", NMI: "6407167890123", Region: "NSW", Address: "321 Elm St"},
+	}
+	for i := range sites {
+		_, err := db.GetDB().NewInsert().Model(&sites[i]).Returning("*").Exec(ctx)
+		if err != nil {
+			t.Fatal("Failed to create site:", err)
+		}
+	}
+
+	// Create 6 bills across sites with varying statuses
+	dueDate := time.Now().Add(30 * 24 * time.Hour)
+	pastDue := time.Now().Add(-7 * 24 * time.Hour)
+	bills = []RelBill{
+		{SiteID: sites[0].ID, OwnerID: "alice", Status: "Paid", Amount: 150.00, DueDate: dueDate},
+		{SiteID: sites[0].ID, OwnerID: "alice", Status: "Overdue", Amount: 200.00, DueDate: pastDue},
+		{SiteID: sites[1].ID, OwnerID: "alice", Status: "Pending", Amount: 175.50, DueDate: dueDate},
+		{SiteID: sites[2].ID, OwnerID: "alice", Status: "Overdue", Amount: 423.80, DueDate: pastDue},
+		{SiteID: sites[3].ID, OwnerID: "bob", Status: "Paid", Amount: 89.99, DueDate: dueDate},
+		{SiteID: sites[3].ID, OwnerID: "bob", Status: "Pending", Amount: 125.00, DueDate: dueDate},
+	}
+	for i := range bills {
+		_, err := db.GetDB().NewInsert().Model(&bills[i]).Returning("*").Exec(ctx)
+		if err != nil {
+			t.Fatal("Failed to create bill:", err)
+		}
+	}
+
+	// Create line items for bills
+	lineItems = []RelLineItem{
+		{BillID: bills[0].ID, OwnerID: "alice", Description: "Electricity Usage", Amount: 120.00},
+		{BillID: bills[0].ID, OwnerID: "alice", Description: "Service Fee", Amount: 30.00},
+		{BillID: bills[1].ID, OwnerID: "alice", Description: "Electricity Usage", Amount: 180.00},
+		{BillID: bills[1].ID, OwnerID: "alice", Description: "Late Fee", Amount: 20.00},
+		{BillID: bills[2].ID, OwnerID: "alice", Description: "Electricity Usage", Amount: 175.50},
+		{BillID: bills[3].ID, OwnerID: "alice", Description: "Electricity Usage", Amount: 400.00},
+		{BillID: bills[3].ID, OwnerID: "alice", Description: "Peak Surcharge", Amount: 23.80},
+		{BillID: bills[4].ID, OwnerID: "bob", Description: "Electricity Usage", Amount: 89.99},
+		{BillID: bills[5].ID, OwnerID: "bob", Description: "Electricity Usage", Amount: 100.00},
+		{BillID: bills[5].ID, OwnerID: "bob", Description: "Network Fee", Amount: 25.00},
+	}
+	for i := range lineItems {
+		_, err := db.GetDB().NewInsert().Model(&lineItems[i]).Returning("*").Exec(ctx)
+		if err != nil {
+			t.Fatal("Failed to create line item:", err)
+		}
+	}
+
+	return users, accounts, sites, bills, lineItems
+}
+
+// ============================================================================
+// Parent Field Filter Tests (Upward: belongs-to chain)
+// ============================================================================
+
+func TestRelationFilter_ParentField_OneLevel(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	_, accountMeta, siteMeta, _, _ := createRelationFilterTestMeta()
+	_, accounts, _, _, _ := seedRelationFilterTestData(t, db)
+
+	// Test: Filter Sites by Account.Status = "Active"
+	// Should return sites belonging to active accounts only
+	siteWrapper := &datastore.Wrapper[RelSite]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Account.Status": {Value: "Active", Operator: metadata.OpEq},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, siteMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	sites, _, _, err := siteWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Alice has 2 sites under Active account, Bob has 1 site under Active account = 3 total
+	// Alice's Suspended account has 1 site which should be excluded
+	expectedCount := 3
+	if len(sites) != expectedCount {
+		t.Errorf("Expected %d sites with Active account, got %d", expectedCount, len(sites))
+	}
+
+	// Verify all returned sites belong to active accounts
+	activeAccountIDs := make(map[int]bool)
+	for _, acc := range accounts {
+		if acc.Status == "Active" {
+			activeAccountIDs[acc.ID] = true
+		}
+	}
+	for _, site := range sites {
+		if !activeAccountIDs[site.AccountID] {
+			t.Errorf("Site %d belongs to non-active account %d", site.ID, site.AccountID)
+		}
+	}
+
+	_ = accountMeta // Used for metadata chain setup
+}
+
+func TestRelationFilter_ParentField_TwoLevels(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, siteMeta, _, _ := createRelationFilterTestMeta()
+	users, _, _, _, _ := seedRelationFilterTestData(t, db)
+
+	// Test: Filter Sites by Account.User.Email containing "alice"
+	// Should return only Alice's sites (3 sites)
+	siteWrapper := &datastore.Wrapper[RelSite]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Account.User.Email": {Value: "%alice%", Operator: metadata.OpLike},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, siteMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	sites, _, _, err := siteWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Alice has 3 sites total
+	expectedCount := 3
+	if len(sites) != expectedCount {
+		t.Errorf("Expected %d sites for Alice, got %d", expectedCount, len(sites))
+	}
+
+	_ = userMeta
+	_ = users
+}
+
+func TestRelationFilter_ParentField_ThreeLevels(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	_, _, _, billMeta, _ := createRelationFilterTestMeta()
+	users, _, _, _, _ := seedRelationFilterTestData(t, db)
+
+	// Test: Filter Bills by Site.Account.User.Name = "Alice Smith"
+	// Should return only Alice's bills (4 bills)
+	billWrapper := &datastore.Wrapper[RelBill]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Site.Account.User.Name": {Value: "Alice Smith", Operator: metadata.OpEq},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, billMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	bills, _, _, err := billWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Alice has 4 bills
+	expectedCount := 4
+	if len(bills) != expectedCount {
+		t.Errorf("Expected %d bills for Alice Smith, got %d", expectedCount, len(bills))
+	}
+
+	_ = users
+}
+
+func TestRelationFilter_ParentField_FourLevels(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	_, _, _, _, lineItemMeta := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Test: Filter LineItems by Bill.Site.Account.User.Email containing "bob"
+	// Should return only Bob's line items (3 line items)
+	lineItemWrapper := &datastore.Wrapper[RelLineItem]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Bill.Site.Account.User.Email": {Value: "%bob%", Operator: metadata.OpLike},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, lineItemMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	lineItems, _, _, err := lineItemWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Bob has 3 line items
+	expectedCount := 3
+	if len(lineItems) != expectedCount {
+		t.Errorf("Expected %d line items for Bob, got %d", expectedCount, len(lineItems))
+	}
+}
+
+// ============================================================================
+// Child Field Filter Tests (Downward: has-many chain with EXISTS)
+// ============================================================================
+
+func TestRelationFilter_ChildField_OneLevel(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Test: Filter Users who have at least one Account with Status = "Suspended"
+	// Should return only Alice (she has a Suspended account)
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts.Status": {Value: "Suspended", Operator: metadata.OpEq},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Only Alice has a Suspended account
+	expectedCount := 1
+	if len(users) != expectedCount {
+		t.Errorf("Expected %d user with Suspended account, got %d", expectedCount, len(users))
+	}
+	if len(users) > 0 && users[0].Name != "Alice Smith" {
+		t.Errorf("Expected Alice Smith, got %s", users[0].Name)
+	}
+}
+
+func TestRelationFilter_ChildField_TwoLevels(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Test: Filter Users who have at least one Site in Region = "QLD"
+	// Should return only Alice (she has a QLD site)
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts.Sites.Region": {Value: "QLD", Operator: metadata.OpEq},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Only Alice has a QLD site
+	expectedCount := 1
+	if len(users) != expectedCount {
+		t.Errorf("Expected %d user with QLD site, got %d", expectedCount, len(users))
+	}
+	if len(users) > 0 && users[0].Name != "Alice Smith" {
+		t.Errorf("Expected Alice Smith, got %s", users[0].Name)
+	}
+}
+
+func TestRelationFilter_ChildField_ThreeLevels(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Test: Filter Users who have at least one Bill with Status = "Overdue"
+	// Should return only Alice (she has Overdue bills)
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts.Sites.Bills.Status": {Value: "Overdue", Operator: metadata.OpEq},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Only Alice has Overdue bills
+	expectedCount := 1
+	if len(users) != expectedCount {
+		t.Errorf("Expected %d user with Overdue bills, got %d", expectedCount, len(users))
+	}
+	if len(users) > 0 && users[0].Name != "Alice Smith" {
+		t.Errorf("Expected Alice Smith, got %s", users[0].Name)
+	}
+}
+
+func TestRelationFilter_ChildField_FourLevels(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Test: Filter Users who have at least one LineItem with Description containing "Late Fee"
+	// Should return only Alice (she has a Late Fee line item)
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts.Sites.Bills.LineItems.Description": {Value: "%Late Fee%", Operator: metadata.OpLike},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Only Alice has a Late Fee line item
+	expectedCount := 1
+	if len(users) != expectedCount {
+		t.Errorf("Expected %d user with Late Fee line item, got %d", expectedCount, len(users))
+	}
+	if len(users) > 0 && users[0].Name != "Alice Smith" {
+		t.Errorf("Expected Alice Smith, got %s", users[0].Name)
+	}
+}
+
+func TestRelationFilter_ChildField_MultipleMatches_NoDuplicates(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Test: Filter Users who have at least one Site in Region = "NSW"
+	// Alice has 1 NSW site, Bob has 1 NSW site = 2 users
+	// Important: Each user should appear only ONCE despite having matching children
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts.Sites.Region": {Value: "NSW", Operator: metadata.OpEq},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Both Alice and Bob have NSW sites
+	expectedCount := 2
+	if len(users) != expectedCount {
+		t.Errorf("Expected %d users with NSW sites (no duplicates), got %d", expectedCount, len(users))
+	}
+
+	// Verify no duplicates
+	seen := make(map[int]bool)
+	for _, user := range users {
+		if seen[user.ID] {
+			t.Errorf("Duplicate user returned: ID %d", user.ID)
+		}
+		seen[user.ID] = true
+	}
+}
+
+// ============================================================================
+// Parent Include Tests (Upward: belongs-to chain)
+// ============================================================================
+
+func TestRelationInclude_Parent_OneLevel(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	_, accountMeta, siteMeta, _, _ := createRelationFilterTestMeta()
+	_, _, sites, _, _ := seedRelationFilterTestData(t, db)
+
+	// Test: Get Site with ?include=Account
+	// Should populate Site.Account
+	siteWrapper := &datastore.Wrapper[RelSite]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Include: []string{"Account"},
+	}
+
+	// Register Account as a parent that can be included
+	siteMeta.ParentMeta = accountMeta
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, siteMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Account": false})
+
+	site, err := siteWrapper.Get(ctx, strconv.Itoa(sites[0].ID))
+	if err != nil {
+		t.Fatal("Get failed:", err)
+	}
+
+	if site.Account == nil {
+		t.Error("Expected Account to be included, got nil")
+	} else if site.Account.ID != sites[0].AccountID {
+		t.Errorf("Expected Account ID %d, got %d", sites[0].AccountID, site.Account.ID)
+	}
+}
+
+func TestRelationInclude_Parent_TwoLevels(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, accountMeta, siteMeta, _, _ := createRelationFilterTestMeta()
+	_, _, sites, _, _ := seedRelationFilterTestData(t, db)
+
+	// Test: Get Site with ?include=Account.User
+	// Should populate Site.Account and Site.Account.User
+	siteWrapper := &datastore.Wrapper[RelSite]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Include: []string{"Account.User"},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, siteMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Account.User": false})
+
+	site, err := siteWrapper.Get(ctx, strconv.Itoa(sites[0].ID))
+	if err != nil {
+		t.Fatal("Get failed:", err)
+	}
+
+	if site.Account == nil {
+		t.Error("Expected Account to be included, got nil")
+	} else if site.Account.User == nil {
+		t.Error("Expected Account.User to be included, got nil")
+	}
+
+	_ = userMeta
+	_ = accountMeta
+}
+
+func TestRelationInclude_Parent_ThreeLevels(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	_, _, _, billMeta, _ := createRelationFilterTestMeta()
+	_, _, _, bills, _ := seedRelationFilterTestData(t, db)
+
+	// Test: Get Bill with ?include=Site.Account.User
+	// Should populate full parent chain
+	billWrapper := &datastore.Wrapper[RelBill]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Include: []string{"Site.Account.User"},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, billMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Site.Account.User": false})
+
+	bill, err := billWrapper.Get(ctx, strconv.Itoa(bills[0].ID))
+	if err != nil {
+		t.Fatal("Get failed:", err)
+	}
+
+	switch {
+	case bill.Site == nil:
+		t.Error("Expected Site to be included, got nil")
+	case bill.Site.Account == nil:
+		t.Error("Expected Site.Account to be included, got nil")
+	case bill.Site.Account.User == nil:
+		t.Error("Expected Site.Account.User to be included, got nil")
+	}
+}
+
+func TestRelationInclude_Parent_FourLevels(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	_, _, _, _, lineItemMeta := createRelationFilterTestMeta()
+	_, _, _, _, lineItems := seedRelationFilterTestData(t, db)
+
+	// Test: Get LineItem with ?include=Bill.Site.Account.User
+	// Should populate full 4-level parent chain
+	lineItemWrapper := &datastore.Wrapper[RelLineItem]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Include: []string{"Bill.Site.Account.User"},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, lineItemMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Bill.Site.Account.User": false})
+
+	lineItem, err := lineItemWrapper.Get(ctx, strconv.Itoa(lineItems[0].ID))
+	if err != nil {
+		t.Fatal("Get failed:", err)
+	}
+
+	switch {
+	case lineItem.Bill == nil:
+		t.Error("Expected Bill to be included, got nil")
+	case lineItem.Bill.Site == nil:
+		t.Error("Expected Bill.Site to be included, got nil")
+	case lineItem.Bill.Site.Account == nil:
+		t.Error("Expected Bill.Site.Account to be included, got nil")
+	case lineItem.Bill.Site.Account.User == nil:
+		t.Error("Expected Bill.Site.Account.User to be included, got nil")
+	}
+}
+
+// ============================================================================
+// Nested Child Include Tests (Downward: has-many chain)
+// ============================================================================
+
+func TestRelationInclude_NestedChild_TwoLevels(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	users, _, _, _, _ := seedRelationFilterTestData(t, db)
+
+	// Test: Get User with ?include=Accounts.Sites
+	// Should populate User.Accounts and each Account.Sites
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Include: []string{"Accounts.Sites"},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Accounts.Sites": false})
+
+	user, err := userWrapper.Get(ctx, strconv.Itoa(users[0].ID))
+	if err != nil {
+		t.Fatal("Get failed:", err)
+	}
+
+	// Alice has 2 accounts
+	if len(user.Accounts) != 2 {
+		t.Errorf("Expected 2 accounts for Alice, got %d", len(user.Accounts))
+	}
+
+	// First account should have 2 sites, second should have 1
+	totalSites := 0
+	for _, acc := range user.Accounts {
+		totalSites += len(acc.Sites)
+	}
+	if totalSites != 3 {
+		t.Errorf("Expected 3 total sites for Alice, got %d", totalSites)
+	}
+}
+
+func TestRelationInclude_NestedChild_ThreeLevels(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	users, _, _, _, _ := seedRelationFilterTestData(t, db)
+
+	// Test: Get User with ?include=Accounts.Sites.Bills
+	// Should populate full 3-level child chain
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Include: []string{"Accounts.Sites.Bills"},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Accounts.Sites.Bills": false})
+
+	user, err := userWrapper.Get(ctx, strconv.Itoa(users[0].ID))
+	if err != nil {
+		t.Fatal("Get failed:", err)
+	}
+
+	// Count total bills across all accounts/sites
+	totalBills := 0
+	for _, acc := range user.Accounts {
+		for _, site := range acc.Sites {
+			totalBills += len(site.Bills)
+		}
+	}
+
+	// Alice has 4 bills
+	if totalBills != 4 {
+		t.Errorf("Expected 4 total bills for Alice, got %d", totalBills)
+	}
+}
+
+func TestRelationInclude_NestedChild_FourLevels(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	users, _, _, _, _ := seedRelationFilterTestData(t, db)
+
+	// Test: Get User with ?include=Accounts.Sites.Bills.LineItems
+	// Should populate full 4-level child chain
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Include: []string{"Accounts.Sites.Bills.LineItems"},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Accounts.Sites.Bills.LineItems": false})
+
+	user, err := userWrapper.Get(ctx, strconv.Itoa(users[0].ID))
+	if err != nil {
+		t.Fatal("Get failed:", err)
+	}
+
+	// Count total line items across all accounts/sites/bills
+	totalLineItems := 0
+	for _, acc := range user.Accounts {
+		for _, site := range acc.Sites {
+			for _, bill := range site.Bills {
+				totalLineItems += len(bill.LineItems)
+			}
+		}
+	}
+
+	// Alice has 7 line items
+	if totalLineItems != 7 {
+		t.Errorf("Expected 7 total line items for Alice, got %d", totalLineItems)
+	}
+}
+
+// ============================================================================
+// Security Negative Tests
+// ============================================================================
+
+func TestRelationFilter_Security_UnauthorizedFilterPath_Ignored(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Test: Filter on path not in FilterableFields should be silently ignored
+	// FilterableFields only has direct fields, not relation paths
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts.SecretField": {Value: "sensitive", Operator: metadata.OpEq},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Should return all users (filter ignored)
+	if len(users) != 2 {
+		t.Errorf("Expected 2 users (filter ignored), got %d", len(users))
+	}
+}
+
+func TestRelationFilter_Security_NonExistentRelation_Ignored(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Test: Filter on non-existent relation should be silently ignored (no schema leak)
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"NonExistent.Field": {Value: "value", Operator: metadata.OpEq},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll should not error on non-existent relation:", err)
+	}
+
+	// Should return all users (filter ignored)
+	if len(users) != 2 {
+		t.Errorf("Expected 2 users (filter ignored), got %d", len(users))
+	}
+}
+
+func TestRelationFilter_Security_InvalidFieldInValidRelation_Ignored(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Test: Filter on valid relation but invalid field should be silently ignored
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts.NonExistentField": {Value: "value", Operator: metadata.OpEq},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll should not error on invalid field:", err)
+	}
+
+	// Should return all users (filter ignored)
+	if len(users) != 2 {
+		t.Errorf("Expected 2 users (filter ignored), got %d", len(users))
+	}
+}
+
+func TestRelationInclude_Security_UnauthorizedInclude_Ignored(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	_, _, siteMeta, _, _ := createRelationFilterTestMeta()
+	_, _, sites, _, _ := seedRelationFilterTestData(t, db)
+
+	// Test: Include not in AllowedIncludes should be silently ignored
+	siteWrapper := &datastore.Wrapper[RelSite]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Include: []string{"Account"},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, siteMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	// Deliberately NOT setting AllowedIncludes for Account
+
+	site, err := siteWrapper.Get(ctx, strconv.Itoa(sites[0].ID))
+	if err != nil {
+		t.Fatal("Get failed:", err)
+	}
+
+	// Account should NOT be populated (not authorized)
+	if site.Account != nil {
+		t.Error("Expected Account to be nil (not authorized), but it was populated")
+	}
+}
+
+func TestRelationFilter_Security_OwnershipStillEnforced(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	_, _, siteMeta, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Test: Even with relation filters, ownership should still be enforced
+	// Alice should only see her own sites even when filtering by parent fields
+	siteWrapper := &datastore.Wrapper[RelSite]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Account.Status": {Value: "Active", Operator: metadata.OpEq},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, siteMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "alice", Scopes: []string{"user"}})
+	ctx = context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctx = context.WithValue(ctx, metadata.OwnershipUserIDKey, "alice")
+
+	sites, _, _, err := siteWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Alice has 2 sites under Active accounts, Bob's site should be excluded by ownership
+	expectedCount := 2
+	if len(sites) != expectedCount {
+		t.Errorf("Expected %d sites (ownership enforced), got %d", expectedCount, len(sites))
+	}
+
+	// Verify all sites belong to Alice
+	for _, site := range sites {
+		if site.OwnerID != "alice" {
+			t.Errorf("Expected site owned by alice, got %s", site.OwnerID)
+		}
+	}
+}
+
+func TestRelationFilter_Security_CantBypassParentOwnershipViaChildFilter(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Test: Bob tries to see Alice's data by filtering on her child records
+	// This should still only return Bob's own data
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	// Bob tries to filter for users with "alice" owned accounts
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts.OwnerID": {Value: "alice", Operator: metadata.OpEq},
+		},
+	}
+
+	// Configure ownership on User level
+	userMeta.OwnershipFields = []string{"Email"} // Pretend Email maps to ownership
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "bob@example.com", Scopes: []string{"user"}})
+	ctx = context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctx = context.WithValue(ctx, metadata.OwnershipUserIDKey, "bob@example.com")
+
+	users, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Even with filter for alice's accounts, Bob should only see his own user record
+	// (or none if his accounts don't match the filter)
+	for _, user := range users {
+		if user.Email != "bob@example.com" {
+			t.Errorf("Bob should not see Alice's data, but saw user with email %s", user.Email)
+		}
+	}
+}
+
+// ============================================================================
+// Combined Filter and Include Tests
+// ============================================================================
+
+func TestRelationFilter_CombinedFilterAndInclude(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Test: Filter users by child field AND include the children
+	// Filter: Users with Overdue bills
+	// Include: Show those accounts
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts.Sites.Bills.Status": {Value: "Overdue", Operator: metadata.OpEq},
+		},
+		Include: []string{"Accounts"},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Accounts": false})
+
+	users, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Only Alice has Overdue bills
+	if len(users) != 1 {
+		t.Errorf("Expected 1 user with Overdue bills, got %d", len(users))
+	}
+
+	// Her accounts should be included
+	if len(users) > 0 && len(users[0].Accounts) == 0 {
+		t.Error("Expected Accounts to be included")
+	}
+}

@@ -123,9 +123,11 @@ var benchReactionMeta = &metadata.TypeMetadata{
 	ForeignKeyCol: "comment_id",
 }
 
-// addMetaToRequest adds metadata to request context
+// addMetaToRequest adds metadata and query options to request context (mirrors real middleware)
 func addMetaToRequest(r *http.Request, meta *metadata.TypeMetadata) *http.Request {
 	ctx := context.WithValue(r.Context(), metadata.MetadataKey, meta)
+	opts := metadata.ParseQueryOptions(r.URL.Query())
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 	return r.WithContext(ctx)
 }
 

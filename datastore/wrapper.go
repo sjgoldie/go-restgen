@@ -772,7 +772,7 @@ func fieldToColumnName(tType reflect.Type, fieldName string) (string, error) {
 // are split and each value is converted. For string types, the value is kept intact
 // since commas could be part of the string value itself.
 // Returns a slice of converted values.
-func convertFilterValues(modelType reflect.Type, fieldName string, val string) []any {
+func convertFilterValues(ctx context.Context, modelType reflect.Type, fieldName string, val string) []any {
 	field, found := modelType.FieldByName(fieldName)
 	if !found {
 		return []any{val}
@@ -787,34 +787,34 @@ func convertFilterValues(modelType reflect.Type, fieldName string, val string) [
 	parts := strings.Split(val, ",")
 	result := make([]any, len(parts))
 	for i, part := range parts {
-		result[i] = convertSingleValue(field.Type.Kind(), fieldName, strings.TrimSpace(part))
+		result[i] = convertSingleValue(ctx, field.Type.Kind(), fieldName, strings.TrimSpace(part))
 	}
 	return result
 }
 
 // convertSingleValue converts a single string value to the appropriate Go type
-func convertSingleValue(kind reflect.Kind, fieldName string, val string) any {
+func convertSingleValue(ctx context.Context, kind reflect.Kind, fieldName string, val string) any {
 	switch kind {
 	case reflect.Bool:
 		return val == "true" || val == "1"
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		i, err := strconv.ParseInt(val, 10, 64)
 		if err != nil {
-			slog.Warn("failed to parse filter value as int", "field", fieldName, "value", val, "error", err)
+			slog.DebugContext(ctx, "failed to parse filter value as int", "field", fieldName, "value", val, "error", err)
 			return val
 		}
 		return i
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		u, err := strconv.ParseUint(val, 10, 64)
 		if err != nil {
-			slog.Warn("failed to parse filter value as uint", "field", fieldName, "value", val, "error", err)
+			slog.DebugContext(ctx, "failed to parse filter value as uint", "field", fieldName, "value", val, "error", err)
 			return val
 		}
 		return u
 	case reflect.Float32, reflect.Float64:
 		f, err := strconv.ParseFloat(val, 64)
 		if err != nil {
-			slog.Warn("failed to parse filter value as float", "field", fieldName, "value", val, "error", err)
+			slog.DebugContext(ctx, "failed to parse filter value as float", "field", fieldName, "value", val, "error", err)
 			return val
 		}
 		return f
@@ -887,20 +887,20 @@ func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQue
 
 			// Check if field is in allowlist
 			if !slices.Contains(meta.SummableFields, field) {
-				slog.Warn("sum requested for field not in SummableFields", "field", field, "type", meta.TypeName)
+				slog.WarnContext(ctx, "sum requested for field not in SummableFields", "field", field, "type", meta.TypeName)
 				continue
 			}
 
 			// Check if field exists and is numeric
 			if !isNumericField(meta.ModelType, field) {
-				slog.Warn("sum requested for non-numeric field", "field", field, "type", meta.TypeName)
+				slog.WarnContext(ctx, "sum requested for non-numeric field", "field", field, "type", meta.TypeName)
 				continue
 			}
 
 			// Get column name
 			colName, err := fieldToColumnName(meta.ModelType, field)
 			if err != nil {
-				slog.Warn("sum requested for field with invalid column mapping", "field", field, "type", meta.TypeName, "error", err)
+				slog.WarnContext(ctx, "sum requested for field with invalid column mapping", "field", field, "type", meta.TypeName, "error", err)
 				continue
 			}
 
@@ -1001,7 +1001,7 @@ func (w *Wrapper[T]) applyQueryFilters(ctx context.Context, query *bun.SelectQue
 					continue
 				}
 			}
-			query = w.applyParentFieldFilter(query, meta, path, filter)
+			query = w.applyParentFieldFilter(ctx, query, meta, path, filter)
 			continue
 		}
 
@@ -1015,22 +1015,22 @@ func (w *Wrapper[T]) applyQueryFilters(ctx context.Context, query *bun.SelectQue
 			continue
 		}
 
-		vals := prepareFilterValues(meta.ModelType, field, filter)
+		vals := prepareFilterValues(ctx, meta.ModelType, field, filter)
 		query = applyFilter(query, "", colName, filter.Operator, vals)
 	}
 	return query
 }
 
 // prepareFilterValues converts and validates filter values, handling operator-specific requirements
-func prepareFilterValues(modelType reflect.Type, field string, filter metadata.FilterValue) []interface{} {
-	vals := convertFilterValues(modelType, field, filter.Value)
+func prepareFilterValues(ctx context.Context, modelType reflect.Type, field string, filter metadata.FilterValue) []interface{} {
+	vals := convertFilterValues(ctx, modelType, field, filter.Value)
 
 	if len(vals) > 1 && singleValueOps[filter.Operator] {
-		slog.Warn("filter operator expects single value, using first", "operator", filter.Operator, "field", field, "values", len(vals))
+		slog.WarnContext(ctx, "filter operator expects single value, using first", "operator", filter.Operator, "field", field, "values", len(vals))
 	}
 
 	if rangeOps[filter.Operator] && len(vals) != 2 {
-		slog.Warn("filter operator expects exactly 2 values, padding with zero value", "operator", filter.Operator, "field", field, "values", len(vals))
+		slog.WarnContext(ctx, "filter operator expects exactly 2 values, padding with zero value", "operator", filter.Operator, "field", field, "values", len(vals))
 		for len(vals) < 2 {
 			vals = append(vals, getZeroValue(modelType, field))
 		}
@@ -1179,6 +1179,7 @@ func (w *Wrapper[T]) runValidation(ctx context.Context, meta *metadata.TypeMetad
 
 	// Run the validator
 	if err := validator(vc); err != nil {
+		slog.WarnContext(ctx, "validation rejected", "type", meta.TypeName, "operation", op, "reason", err.Error())
 		// Wrap the error in a ValidationError to preserve the message
 		return apperrors.NewValidationError(err.Error())
 	}
@@ -1674,7 +1675,7 @@ func parseRelationPath(key string) *relationPath {
 }
 
 // applyParentFieldFilter applies a filter on a parent relation field using JOINs
-func (w *Wrapper[T]) applyParentFieldFilter(query *bun.SelectQuery, meta *metadata.TypeMetadata, path *relationPath, filter metadata.FilterValue) *bun.SelectQuery {
+func (w *Wrapper[T]) applyParentFieldFilter(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, path *relationPath, filter metadata.FilterValue) *bun.SelectQuery {
 	joinChain := w.resolveParentChain(meta, path.relations)
 	if len(joinChain) == 0 {
 		return query
@@ -1691,7 +1692,7 @@ func (w *Wrapper[T]) applyParentFieldFilter(query *bun.SelectQuery, meta *metada
 	}
 
 	query = w.buildParentJoins(query, meta, joinChain)
-	vals := prepareFilterValues(targetMeta.ModelType, path.field, filter)
+	vals := prepareFilterValues(ctx, targetMeta.ModelType, path.field, filter)
 	return applyFilter(query, targetMeta.TableName, colName, filter.Operator, vals)
 }
 
@@ -1783,7 +1784,7 @@ func (w *Wrapper[T]) applyChildFieldFilter(ctx context.Context, query *bun.Selec
 		return query
 	}
 
-	vals := prepareFilterValues(targetMeta.ModelType, path.field, filter)
+	vals := prepareFilterValues(ctx, targetMeta.ModelType, path.field, filter)
 	if len(vals) == 0 {
 		return query
 	}

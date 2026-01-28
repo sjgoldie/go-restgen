@@ -1608,11 +1608,21 @@ func (s *MySQL) Cleanup() {
 
 ## Advanced Usage
 
-### Configure Logging
+### Observability (Logging, Tracing, Metrics)
 
-Handlers log warnings using `log/slog`. **By default, warnings are suppressed** (log level set to Error).
+go-restgen is designed to work with OpenTelemetry (OTEL) for comprehensive observability.
 
-**Enable warnings in development:**
+#### Logging
+
+All logging uses context-aware `slog` methods (`slog.ErrorContext`, `slog.WarnContext`, etc.) which propagate trace IDs when OTEL is configured. Log levels are:
+
+| Level | Purpose | Examples |
+|-------|---------|----------|
+| Error | Server failures needing attention | DB errors, service failures |
+| Warn | Recoverable issues | Auth rejections, validation failures, cleanup errors |
+| Debug | Client errors (already returning 4xx) | Bad JSON, missing parameters |
+
+Configure logging in your application:
 
 ```go
 import (
@@ -1621,17 +1631,80 @@ import (
 )
 
 func main() {
-    // Enable warnings for debugging
+    // Configure log level (Error, Warn, Info, Debug)
     logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
         Level: slog.LevelWarn,
     }))
     slog.SetDefault(logger)
 
-    // ... rest of your setup
+    // For OTEL trace propagation, use a bridge like slog-otel:
+    // logger := slogmulti.Fanout(
+    //     slog.NewTextHandler(os.Stderr, nil),
+    //     otelslog.NewHandler(otelslog.HandlerConfig{}),
+    // )
 }
 ```
 
-**Note**: Warning logs may contain sensitive information (IDs, error details). Only enable in development/debugging environments.
+#### Tracing
+
+go-restgen is OTEL-ready but doesn't include tracing itself. Add tracing via middleware and Bun hooks:
+
+| Component | How to Add | What You Get |
+|-----------|------------|--------------|
+| HTTP requests | Use `otelchi` middleware | Request spans with method, path, status |
+| Database queries | Use `bunotel.NewQueryHook()` | DB spans with query details |
+| Trace context in logs | Configure slog with OTEL bridge | trace_id/span_id in log entries |
+
+```go
+import (
+    "github.com/riandyrn/otelchi"
+    "github.com/uptrace/bun/extra/bunotel"
+)
+
+func main() {
+    r := chi.NewRouter()
+
+    // Add OTEL tracing middleware
+    r.Use(otelchi.Middleware("my-service"))
+
+    // Add Bun query tracing
+    db.AddQueryHook(bunotel.NewQueryHook())
+}
+```
+
+#### Metrics
+
+go-restgen includes optional metrics middleware that records request duration and count:
+
+```go
+import "github.com/sjgoldie/go-restgen/metrics"
+
+func main() {
+    // Initialize with your meter provider (or nil for global)
+    metrics.Initialize(meterProvider)
+
+    r := chi.NewRouter()
+    r.Use(metrics.Middleware())
+}
+```
+
+**Recorded metrics:**
+
+| Metric | Type | Attributes | Description |
+|--------|------|------------|-------------|
+| `restgen.request.duration` | Histogram | resource, method, status | Request duration in ms |
+| `restgen.request.count` | Counter | resource, method, status | Total request count |
+
+The `resource` attribute uses the go-restgen type name (e.g., "Post", "User") when available, falling back to the URL path.
+
+**Use case:** Track slow endpoints and error rates per resource type.
+
+```go
+// Custom metric recording for actions or custom handlers
+metrics.RecordCustom(ctx, "Order", "cancel", 200, 45.2)
+```
+
+If OTEL is not configured, metrics are no-ops with negligible overhead.
 
 ### Mix with Custom Handlers
 

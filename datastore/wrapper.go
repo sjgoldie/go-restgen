@@ -13,6 +13,7 @@ import (
 
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/driver/pgdriver"
+	"github.com/uptrace/bun/schema"
 
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/metadata"
@@ -24,7 +25,13 @@ var (
 		metadata.OpNeq: true, metadata.OpGt: true, metadata.OpGte: true,
 		metadata.OpLt: true, metadata.OpLte: true, metadata.OpLike: true,
 	}
-	rangeOps = map[string]bool{metadata.OpBt: true, metadata.OpNbt: true}
+	rangeOps  = map[string]bool{metadata.OpBt: true, metadata.OpNbt: true}
+	filterOps = map[string]string{
+		metadata.OpEq: "=", "": "=", metadata.OpNeq: "!=",
+		metadata.OpGt: ">", metadata.OpGte: ">=", metadata.OpLt: "<", metadata.OpLte: "<=",
+		metadata.OpLike: "LIKE", metadata.OpIn: "IN", metadata.OpNin: "NOT IN",
+		metadata.OpBt: "BETWEEN", metadata.OpNbt: "NOT BETWEEN",
+	}
 )
 
 // Wrapper is a generic struct that wraps a Store interface to provide CRUD operations
@@ -71,7 +78,7 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64,
 	opts := metadata.QueryOptionsFromContext(ctx)
 
 	// Apply filters from query options
-	query = w.applyQueryFilters(query, opts, meta)
+	query = w.applyQueryFilters(ctx, query, opts, meta)
 
 	// Compute aggregates (count and/or sums) BEFORE sorting/pagination
 	var totalCount int
@@ -765,7 +772,7 @@ func fieldToColumnName(tType reflect.Type, fieldName string) (string, error) {
 // are split and each value is converted. For string types, the value is kept intact
 // since commas could be part of the string value itself.
 // Returns a slice of converted values.
-func convertFilterValues(modelType reflect.Type, fieldName string, val string) []any {
+func convertFilterValues(ctx context.Context, modelType reflect.Type, fieldName string, val string) []any {
 	field, found := modelType.FieldByName(fieldName)
 	if !found {
 		return []any{val}
@@ -780,34 +787,34 @@ func convertFilterValues(modelType reflect.Type, fieldName string, val string) [
 	parts := strings.Split(val, ",")
 	result := make([]any, len(parts))
 	for i, part := range parts {
-		result[i] = convertSingleValue(field.Type.Kind(), fieldName, strings.TrimSpace(part))
+		result[i] = convertSingleValue(ctx, field.Type.Kind(), fieldName, strings.TrimSpace(part))
 	}
 	return result
 }
 
 // convertSingleValue converts a single string value to the appropriate Go type
-func convertSingleValue(kind reflect.Kind, fieldName string, val string) any {
+func convertSingleValue(ctx context.Context, kind reflect.Kind, fieldName string, val string) any {
 	switch kind {
 	case reflect.Bool:
 		return val == "true" || val == "1"
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		i, err := strconv.ParseInt(val, 10, 64)
 		if err != nil {
-			slog.Warn("failed to parse filter value as int", "field", fieldName, "value", val, "error", err)
+			slog.DebugContext(ctx, "failed to parse filter value as int", "field", fieldName, "value", val, "error", err)
 			return val
 		}
 		return i
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		u, err := strconv.ParseUint(val, 10, 64)
 		if err != nil {
-			slog.Warn("failed to parse filter value as uint", "field", fieldName, "value", val, "error", err)
+			slog.DebugContext(ctx, "failed to parse filter value as uint", "field", fieldName, "value", val, "error", err)
 			return val
 		}
 		return u
 	case reflect.Float32, reflect.Float64:
 		f, err := strconv.ParseFloat(val, 64)
 		if err != nil {
-			slog.Warn("failed to parse filter value as float", "field", fieldName, "value", val, "error", err)
+			slog.DebugContext(ctx, "failed to parse filter value as float", "field", fieldName, "value", val, "error", err)
 			return val
 		}
 		return f
@@ -880,20 +887,20 @@ func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQue
 
 			// Check if field is in allowlist
 			if !slices.Contains(meta.SummableFields, field) {
-				slog.Warn("sum requested for field not in SummableFields", "field", field, "type", meta.TypeName)
+				slog.WarnContext(ctx, "sum requested for field not in SummableFields", "field", field, "type", meta.TypeName)
 				continue
 			}
 
 			// Check if field exists and is numeric
 			if !isNumericField(meta.ModelType, field) {
-				slog.Warn("sum requested for non-numeric field", "field", field, "type", meta.TypeName)
+				slog.WarnContext(ctx, "sum requested for non-numeric field", "field", field, "type", meta.TypeName)
 				continue
 			}
 
 			// Get column name
 			colName, err := fieldToColumnName(meta.ModelType, field)
 			if err != nil {
-				slog.Warn("sum requested for field with invalid column mapping", "field", field, "type", meta.TypeName, "error", err)
+				slog.WarnContext(ctx, "sum requested for field with invalid column mapping", "field", field, "type", meta.TypeName, "error", err)
 				continue
 			}
 
@@ -972,74 +979,103 @@ func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQue
 
 // applyQueryFilters applies filters from QueryOptions to the query
 // Only fields in metadata.FilterableFields are allowed (others silently ignored)
+// Supports relation paths like "Account.Status" or "Account.User.Email"
 //
 // Single-value operators (eq, neq, gt, gte, lt, lte, like): use first value if multiple provided
 // Multi-value operators (in, nin): use all values
 // Range operators (bt, nbt): require exactly 2 values; if fewer provided, zero value is used for missing
-func (w *Wrapper[T]) applyQueryFilters(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
+func (w *Wrapper[T]) applyQueryFilters(ctx context.Context, query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
 	if opts == nil || len(opts.Filters) == 0 {
 		return query
 	}
 
 	for field, filter := range opts.Filters {
-		// Skip fields not in allowlist
+		path := parseRelationPath(field)
+
+		// Relation path filter
+		if len(path.relations) > 0 {
+			firstRel := path.relations[0]
+			if meta.ChildMeta != nil {
+				if _, isChild := meta.ChildMeta[firstRel]; isChild {
+					query = w.applyChildFieldFilter(ctx, query, meta, path, filter)
+					continue
+				}
+			}
+			query = w.applyParentFieldFilter(ctx, query, meta, path, filter)
+			continue
+		}
+
+		// Direct field filter - skip fields not in allowlist
 		if !slices.Contains(meta.FilterableFields, field) {
 			continue
 		}
 
 		colName, err := fieldToColumnName(meta.ModelType, field)
 		if err != nil {
-			continue // skip if can't resolve column
+			continue
 		}
 
-		vals := convertFilterValues(meta.ModelType, field, filter.Value)
-
-		// Warn if single-value operator received multiple values
-		if len(vals) > 1 && singleValueOps[filter.Operator] {
-			slog.Warn("filter operator expects single value, using first", "operator", filter.Operator, "field", field, "values", len(vals))
-		}
-
-		// Warn and pad if range operator doesn't have exactly 2 values
-		if rangeOps[filter.Operator] && len(vals) != 2 {
-			slog.Warn("filter operator expects exactly 2 values, padding with zero value", "operator", filter.Operator, "field", field, "values", len(vals))
-			for len(vals) < 2 {
-				vals = append(vals, getZeroValue(meta.ModelType, field))
-			}
-		}
-
-		// Apply operator
-		switch filter.Operator {
-		case metadata.OpEq, "":
-			query = query.Where("?TableAlias.? = ?", bun.Ident(colName), vals[0])
-		case metadata.OpNeq:
-			query = query.Where("?TableAlias.? != ?", bun.Ident(colName), vals[0])
-		case metadata.OpGt:
-			query = query.Where("?TableAlias.? > ?", bun.Ident(colName), vals[0])
-		case metadata.OpGte:
-			query = query.Where("?TableAlias.? >= ?", bun.Ident(colName), vals[0])
-		case metadata.OpLt:
-			query = query.Where("?TableAlias.? < ?", bun.Ident(colName), vals[0])
-		case metadata.OpLte:
-			query = query.Where("?TableAlias.? <= ?", bun.Ident(colName), vals[0])
-		case metadata.OpLike:
-			query = query.Where("?TableAlias.? LIKE ?", bun.Ident(colName), vals[0])
-		case metadata.OpIn:
-			// For string fields, convertFilterValues doesn't split (comma could be in value),
-			// but for in/nin operators, users explicitly want multiple values, so split here
-			vals = splitStringValues(vals)
-			query = query.Where("?TableAlias.? IN (?)", bun.Ident(colName), bun.In(vals))
-		case metadata.OpNin:
-			// For string fields, convertFilterValues doesn't split (comma could be in value),
-			// but for in/nin operators, users explicitly want multiple values, so split here
-			vals = splitStringValues(vals)
-			query = query.Where("?TableAlias.? NOT IN (?)", bun.Ident(colName), bun.In(vals))
-		case metadata.OpBt:
-			query = query.Where("?TableAlias.? BETWEEN ? AND ?", bun.Ident(colName), vals[0], vals[1])
-		case metadata.OpNbt:
-			query = query.Where("?TableAlias.? NOT BETWEEN ? AND ?", bun.Ident(colName), vals[0], vals[1])
-		}
+		vals := prepareFilterValues(ctx, meta.ModelType, field, filter)
+		query = applyFilter(query, "", colName, filter.Operator, vals)
 	}
 	return query
+}
+
+// prepareFilterValues converts and validates filter values, handling operator-specific requirements
+func prepareFilterValues(ctx context.Context, modelType reflect.Type, field string, filter metadata.FilterValue) []interface{} {
+	vals := convertFilterValues(ctx, modelType, field, filter.Value)
+
+	if len(vals) > 1 && singleValueOps[filter.Operator] {
+		slog.WarnContext(ctx, "filter operator expects single value, using first", "operator", filter.Operator, "field", field, "values", len(vals))
+	}
+
+	if rangeOps[filter.Operator] && len(vals) != 2 {
+		slog.WarnContext(ctx, "filter operator expects exactly 2 values, padding with zero value", "operator", filter.Operator, "field", field, "values", len(vals))
+		for len(vals) < 2 {
+			vals = append(vals, getZeroValue(modelType, field))
+		}
+	}
+
+	if filter.Operator == metadata.OpIn || filter.Operator == metadata.OpNin {
+		vals = splitStringValues(vals)
+	}
+
+	return vals
+}
+
+// applyFilter applies a filter to a query. Pass "" for tableName to use ?TableAlias (base query).
+func applyFilter(query *bun.SelectQuery, tableName, colName, operator string, vals []interface{}) *bun.SelectQuery {
+	if len(vals) == 0 {
+		return query
+	}
+
+	// Build table.column reference - either "?TableAlias.?" or "?.?" with table ident
+	var tblCol string
+	var args []interface{}
+	if tableName == "" {
+		tblCol = "?TableAlias.?"
+		args = []interface{}{bun.Ident(colName)}
+	} else {
+		tblCol = "?.?"
+		args = []interface{}{bun.Ident(tableName), bun.Ident(colName)}
+	}
+
+	switch operator {
+	case metadata.OpIn:
+		return query.Where(tblCol+" IN (?)", append(args, bun.In(vals))...)
+	case metadata.OpNin:
+		return query.Where(tblCol+" NOT IN (?)", append(args, bun.In(vals))...)
+	case metadata.OpBt:
+		return query.Where(tblCol+" BETWEEN ? AND ?", append(args, vals[0], vals[1])...)
+	case metadata.OpNbt:
+		return query.Where(tblCol+" NOT BETWEEN ? AND ?", append(args, vals[0], vals[1])...)
+	default:
+		op := filterOps[operator]
+		if op == "" {
+			op = "="
+		}
+		return query.Where(fmt.Sprintf("%s %s ?", tblCol, op), append(args, vals[0])...)
+	}
 }
 
 // applyQuerySorting applies sorting from QueryOptions to the query
@@ -1143,6 +1179,7 @@ func (w *Wrapper[T]) runValidation(ctx context.Context, meta *metadata.TypeMetad
 
 	// Run the validator
 	if err := validator(vc); err != nil {
+		slog.WarnContext(ctx, "validation rejected", "type", meta.TypeName, "operation", op, "reason", err.Error())
 		// Wrap the error in a ValidationError to preserve the message
 		return apperrors.NewValidationError(err.Error())
 	}
@@ -1237,7 +1274,11 @@ func (w *Wrapper[T]) resolveChildIDFromParent(ctx context.Context, parentID stri
 
 // applyRelationIncludes adds relation loading for includes specified in query options.
 // Authorization is checked via AllowedIncludes from context (set by wrapWithAuth middleware).
-// Only relations in AllowedIncludes AND registered in ChildMeta are loaded.
+// Supports:
+// - Simple child includes: "Accounts" (via ChildMeta)
+// - Nested child includes: "Accounts.Sites.Bills" (via ChildMeta chain)
+// - Parent includes: "Account" (via ParentMeta)
+// - Nested parent includes: "Account.User" (via ParentMeta chain)
 // The bool value in AllowedIncludes indicates whether to apply ownership filtering.
 func (w *Wrapper[T]) applyRelationIncludes(ctx context.Context, query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
 	if opts == nil || len(opts.Include) == 0 || meta == nil {
@@ -1248,35 +1289,101 @@ func (w *Wrapper[T]) applyRelationIncludes(ctx context.Context, query *bun.Selec
 	allowedIncludes := metadata.AllowedIncludesFromContext(ctx)
 
 	for _, relationName := range opts.Include {
-		// Check if this relation is authorized (in AllowedIncludes)
+		// Check if this relation is authorized
 		applyOwnership, authorized := allowedIncludes[relationName]
 		if !authorized {
-			// Silently ignore unauthorized relations for security
 			continue
 		}
 
-		// Check if this relation is registered in ChildMeta
-		childMeta, exists := meta.ChildMeta[relationName]
+		// Nested path (contains dots)
+		if strings.Contains(relationName, ".") {
+			query = w.applyNestedInclude(ctx, query, meta, relationName, applyOwnership)
+			continue
+		}
+
+		// Simple child include (has-many)
+		if childMeta, exists := meta.ChildMeta[relationName]; exists {
+			cm := childMeta
+			shouldApplyOwnership := applyOwnership
+			query = query.Relation(relationName, func(q *bun.SelectQuery) *bun.SelectQuery {
+				if !shouldApplyOwnership {
+					return q
+				}
+				filtered, err := w.applyOwnershipFilterWithMeta(ctx, q, cm)
+				if err != nil {
+					return q.Where("1 = 0")
+				}
+				return filtered
+			})
+			continue
+		}
+
+		// Simple parent include (belongs-to)
+		if meta.ParentMeta != nil && strings.EqualFold(relationName, w.getRelationNameForParent(meta, meta.ParentMeta)) {
+			query = query.Relation(relationName)
+		}
+	}
+
+	return query
+}
+
+// applyNestedInclude handles nested include paths like "Accounts.Sites.Bills" or "Account.User"
+func (w *Wrapper[T]) applyNestedInclude(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, includePath string, applyOwnership bool) *bun.SelectQuery {
+	parts := strings.Split(includePath, ".")
+	if len(parts) < 2 {
+		return query
+	}
+
+	firstRel := parts[0]
+
+	// Determine direction: check if first part is a child or parent relation
+	if meta.ChildMeta != nil {
+		if _, isChild := meta.ChildMeta[firstRel]; isChild {
+			// Nested child include (e.g., Accounts.Sites.Bills)
+			return w.applyNestedChildInclude(ctx, query, meta, parts, applyOwnership)
+		}
+	}
+
+	// Check if it's a parent include
+	if meta.ParentMeta != nil {
+		parentName := w.getRelationNameForParent(meta, meta.ParentMeta)
+		if strings.EqualFold(firstRel, parentName) {
+			// Nested parent include (e.g., Account.User)
+			return w.applyNestedParentInclude(ctx, query, meta, parts, applyOwnership)
+		}
+	}
+
+	return query
+}
+
+// applyNestedChildInclude handles nested child includes like "Accounts.Sites.Bills"
+// Applies ownership filtering at each level that has it configured
+func (w *Wrapper[T]) applyNestedChildInclude(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, parts []string, applyOwnership bool) *bun.SelectQuery {
+	// Build chain of metadata for each level
+	chain := make([]*metadata.TypeMetadata, 0, len(parts))
+	currentMeta := meta
+	for _, part := range parts {
+		if currentMeta.ChildMeta == nil {
+			return query
+		}
+		childMeta, exists := currentMeta.ChildMeta[part]
 		if !exists {
-			// Silently ignore unknown relations for security
-			continue
+			return query
 		}
+		chain = append(chain, childMeta)
+		currentMeta = childMeta
+	}
 
-		// Capture for closure
+	// Add .Relation() for each level, applying ownership where configured
+	for i, childMeta := range chain {
+		path := strings.Join(parts[:i+1], ".")
 		cm := childMeta
-		shouldApplyOwnership := applyOwnership
-
-		// Add the relation with ownership filtering applied based on authorization
-		query = query.Relation(relationName, func(q *bun.SelectQuery) *bun.SelectQuery {
-			if !shouldApplyOwnership {
-				// User has bypass scope for this child - no ownership filter
+		query = query.Relation(path, func(q *bun.SelectQuery) *bun.SelectQuery {
+			if !applyOwnership || len(cm.OwnershipFields) == 0 {
 				return q
 			}
-
-			// Apply ownership filter with child's metadata
 			filtered, err := w.applyOwnershipFilterWithMeta(ctx, q, cm)
 			if err != nil {
-				// On error, return empty result set (secure default)
 				return q.Where("1 = 0")
 			}
 			return filtered
@@ -1284,6 +1391,50 @@ func (w *Wrapper[T]) applyRelationIncludes(ctx context.Context, query *bun.Selec
 	}
 
 	return query
+}
+
+// applyNestedParentInclude handles nested parent includes like "Account.User"
+func (w *Wrapper[T]) applyNestedParentInclude(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, parts []string, applyOwnership bool) *bun.SelectQuery {
+	// Validate the entire chain exists in ParentMeta
+	currentMeta := meta
+	for range parts {
+		if currentMeta.ParentMeta == nil {
+			return query
+		}
+		currentMeta = currentMeta.ParentMeta
+	}
+
+	// Build the nested relation path for Bun
+	// For parent chain, we need to use the actual field names (e.g., "Account.User")
+	fullPath := strings.Join(parts, ".")
+
+	query = query.Relation(fullPath)
+
+	return query
+}
+
+// getRelationNameForParent finds the belongs-to relation field name on the child
+// that references the parent type, using Bun's schema
+func (w *Wrapper[T]) getRelationNameForParent(childMeta, parentMeta *metadata.TypeMetadata) string {
+	parentType := parentMeta.ModelType
+	if parentType.Kind() == reflect.Ptr {
+		parentType = parentType.Elem()
+	}
+
+	// Use Bun's schema to find belongs-to relation pointing to parent type
+	table := w.Store.GetDB().Table(childMeta.ModelType)
+	for name, rel := range table.Relations {
+		if rel.Type == schema.BelongsToRelation && rel.JoinTable.Type == parentType {
+			return name
+		}
+	}
+
+	// Fallback: derive from type name (for backwards compatibility)
+	name := parentMeta.TypeName
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		name = name[idx+1:]
+	}
+	return strings.TrimPrefix(name, "Rel")
 }
 
 // BatchCreate creates multiple items in a single transaction.
@@ -1498,6 +1649,213 @@ func (w *Wrapper[T]) preFetchItems(ctx context.Context, meta *metadata.TypeMetad
 	}
 
 	return result, nil
+}
+
+// ============================================================================
+// Relation Filter Helpers (Issue #35)
+// ============================================================================
+
+// relationPath represents a parsed relation path like "Account.User.Email"
+type relationPath struct {
+	relations []string // ["Account", "User"] - empty for direct fields
+	field     string   // "Email"
+}
+
+// parseRelationPath splits a filter key into relation chain and final field
+// Always returns a valid struct; relations is empty for direct fields
+func parseRelationPath(key string) *relationPath {
+	parts := strings.Split(key, ".")
+	if len(parts) == 1 {
+		return &relationPath{field: key}
+	}
+	return &relationPath{
+		relations: parts[:len(parts)-1],
+		field:     parts[len(parts)-1],
+	}
+}
+
+// applyParentFieldFilter applies a filter on a parent relation field using JOINs
+func (w *Wrapper[T]) applyParentFieldFilter(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, path *relationPath, filter metadata.FilterValue) *bun.SelectQuery {
+	joinChain := w.resolveParentChain(meta, path.relations)
+	if len(joinChain) == 0 {
+		return query
+	}
+
+	targetMeta := joinChain[len(joinChain)-1]
+	if !slices.Contains(targetMeta.FilterableFields, path.field) {
+		return query
+	}
+
+	colName, err := fieldToColumnName(targetMeta.ModelType, path.field)
+	if err != nil {
+		return query
+	}
+
+	query = w.buildParentJoins(query, meta, joinChain)
+	vals := prepareFilterValues(ctx, targetMeta.ModelType, path.field, filter)
+	return applyFilter(query, targetMeta.TableName, colName, filter.Operator, vals)
+}
+
+// resolveParentChain walks up ParentMeta to resolve a relation path
+func (w *Wrapper[T]) resolveParentChain(meta *metadata.TypeMetadata, relations []string) []*metadata.TypeMetadata {
+	var chain []*metadata.TypeMetadata
+	current := meta
+
+	for _, relName := range relations {
+		if current.ParentMeta == nil {
+			return nil
+		}
+		parent := current.ParentMeta
+		if !w.matchesParentName(current, parent, relName) {
+			return nil
+		}
+		chain = append(chain, parent)
+		current = parent
+	}
+	return chain
+}
+
+// matchesParentName checks if a relation name matches the parent relation field on the child
+func (w *Wrapper[T]) matchesParentName(child, parent *metadata.TypeMetadata, relName string) bool {
+	// First try: find via Bun's schema
+	actualName := w.getRelationNameForParent(child, parent)
+	if strings.EqualFold(relName, actualName) {
+		return true
+	}
+	// Also check explicit RelationName if set
+	return parent.RelationName != "" && strings.EqualFold(relName, parent.RelationName)
+}
+
+// buildParentJoins adds JOINs for a parent chain
+func (w *Wrapper[T]) buildParentJoins(query *bun.SelectQuery, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata) *bun.SelectQuery {
+	if len(chain) == 0 {
+		return query
+	}
+
+	// First join: from base table using ?TableAlias
+	fkOnChild := hasField(baseMeta.ModelType, baseMeta.ForeignKeyCol)
+	query = w.joinParentFromBase(query, baseMeta, chain[0], fkOnChild)
+
+	// Remaining joins: from previously joined tables
+	for i := 1; i < len(chain); i++ {
+		child, parent := chain[i-1], chain[i]
+		fkOnChild := hasField(child.ModelType, child.ForeignKeyCol)
+		query = w.joinParentFromTable(query, child, parent, fkOnChild)
+	}
+	return query
+}
+
+func (w *Wrapper[T]) joinParentFromBase(query *bun.SelectQuery, child, parent *metadata.TypeMetadata, fkOnChild bool) *bun.SelectQuery {
+	if fkOnChild {
+		return query.Join("JOIN ? ON ?TableAlias.? = ?.?",
+			bun.Ident(parent.TableName), bun.Ident(child.ForeignKeyCol),
+			bun.Ident(parent.TableName), bun.Ident("id"))
+	}
+	return query.Join("JOIN ? ON ?.? = ?TableAlias.?",
+		bun.Ident(parent.TableName), bun.Ident(parent.TableName),
+		bun.Ident(child.ForeignKeyCol), bun.Ident("id"))
+}
+
+func (w *Wrapper[T]) joinParentFromTable(query *bun.SelectQuery, child, parent *metadata.TypeMetadata, fkOnChild bool) *bun.SelectQuery {
+	if fkOnChild {
+		return query.Join("JOIN ? ON ?.? = ?.?",
+			bun.Ident(parent.TableName), bun.Ident(child.TableName),
+			bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident("id"))
+	}
+	return query.Join("JOIN ? ON ?.? = ?.?",
+		bun.Ident(parent.TableName), bun.Ident(parent.TableName),
+		bun.Ident(child.ForeignKeyCol), bun.Ident(child.TableName), bun.Ident("id"))
+}
+
+// applyChildFieldFilter applies a filter on a child relation field using EXISTS subqueries
+func (w *Wrapper[T]) applyChildFieldFilter(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, path *relationPath, filter metadata.FilterValue) *bun.SelectQuery {
+	childChain := w.resolveChildChain(meta, path.relations)
+	if len(childChain) == 0 {
+		return query
+	}
+
+	targetMeta := childChain[len(childChain)-1]
+	if !slices.Contains(targetMeta.FilterableFields, path.field) {
+		return query
+	}
+
+	colName, err := fieldToColumnName(targetMeta.ModelType, path.field)
+	if err != nil {
+		return query
+	}
+
+	vals := prepareFilterValues(ctx, targetMeta.ModelType, path.field, filter)
+	if len(vals) == 0 {
+		return query
+	}
+
+	condition, args := buildFilterCondition(targetMeta.TableName, colName, filter.Operator, vals)
+	existsSQL := w.wrapInExists(meta, childChain, condition)
+	return query.Where(existsSQL, args...)
+}
+
+// resolveChildChain walks down ChildMeta to resolve a relation path
+func (w *Wrapper[T]) resolveChildChain(meta *metadata.TypeMetadata, relations []string) []*metadata.TypeMetadata {
+	var chain []*metadata.TypeMetadata
+	current := meta
+
+	for _, relName := range relations {
+		if current.ChildMeta == nil {
+			return nil
+		}
+		child, exists := current.ChildMeta[relName]
+		if !exists {
+			return nil
+		}
+		chain = append(chain, child)
+		current = child
+	}
+	return chain
+}
+
+// buildFilterCondition creates a SQL condition string and args for a filter
+func buildFilterCondition(table, col, operator string, vals []interface{}) (string, []interface{}) {
+	switch operator {
+	case metadata.OpIn:
+		placeholders := strings.Repeat("?, ", len(vals))
+		return fmt.Sprintf("%s.%s IN (%s)", table, col, placeholders[:len(placeholders)-2]), vals
+	case metadata.OpNin:
+		placeholders := strings.Repeat("?, ", len(vals))
+		return fmt.Sprintf("%s.%s NOT IN (%s)", table, col, placeholders[:len(placeholders)-2]), vals
+	case metadata.OpBt:
+		return fmt.Sprintf("%s.%s BETWEEN ? AND ?", table, col), vals[:2]
+	case metadata.OpNbt:
+		return fmt.Sprintf("%s.%s NOT BETWEEN ? AND ?", table, col), vals[:2]
+	default:
+		op := filterOps[operator]
+		if op == "" {
+			op = "="
+		}
+		return fmt.Sprintf("%s.%s %s ?", table, col, op), vals[:1]
+	}
+}
+
+// wrapInExists wraps a condition in nested EXISTS subqueries
+func (w *Wrapper[T]) wrapInExists(baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, innerCondition string) string {
+	if len(chain) == 0 {
+		return innerCondition
+	}
+
+	// Pre-compute parent table for each child: base alias for first, chain element for rest
+	parents := make([]string, len(chain))
+	parents[0] = w.Store.GetDB().Table(baseMeta.ModelType).Alias
+	for i := 1; i < len(chain); i++ {
+		parents[i] = chain[i-1].TableName
+	}
+
+	// Wrap from deepest child up
+	sql := innerCondition
+	for i := len(chain) - 1; i >= 0; i-- {
+		child := chain[i]
+		sql = fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = %s.id AND %s)",
+			child.TableName, child.TableName, child.ForeignKeyCol, parents[i], sql)
+	}
+	return sql
 }
 
 // translateError converts database errors to application errors

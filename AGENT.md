@@ -401,3 +401,32 @@ For each resource:
 - [ ] Ownership filters work correctly
 - [ ] Nested routes validate parent exists
 - [ ] Query params (filter, sort, limit) work
+
+## External Database Connections
+
+Use `NewPostgresWithDB` or `NewSQLiteWithDB` when you need to manage the database connection externally (e.g., Vault rotating credentials, custom connection pooling):
+
+```go
+// Create your own *sql.DB with custom configuration
+sqlDB, err := sql.Open("pgx", connString)
+if err != nil {
+    log.Fatal(err)
+}
+// Configure pooling, timeouts, etc.
+sqlDB.SetMaxOpenConns(25)
+sqlDB.SetMaxIdleConns(5)
+
+// Pass to go-restgen
+db := datastore.NewPostgresWithDB(sqlDB)
+datastore.Initialize(db)
+
+// IMPORTANT: Cleanup() will NOT close your *sql.DB
+// You must close it yourself when done
+defer sqlDB.Close()
+```
+
+**Key difference from `NewPostgres(dsn)`:**
+- `NewPostgres(dsn)`: go-restgen owns the connection; `Cleanup()` closes it
+- `NewPostgresWithDB(sqlDB)`: you own the connection; `Cleanup()` does nothing to it
+
+Same pattern applies for SQLite with `NewSQLiteWithDB(sqlDB)`.

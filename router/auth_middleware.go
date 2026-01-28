@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/sjgoldie/go-restgen/metadata"
@@ -83,9 +84,11 @@ func wrapWithAuth(next http.Handler, config *AuthConfig) http.Handler {
 		result := checkAuth(authInfo, config)
 		switch result.Status {
 		case authUnauthorized:
+			slog.WarnContext(ctx, "auth rejected: unauthorized", "path", r.URL.Path, "method", r.Method)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		case authForbidden:
+			slog.WarnContext(ctx, "auth rejected: forbidden", "path", r.URL.Path, "method", r.Method)
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 			// authOK falls through to continue processing
@@ -103,9 +106,11 @@ func wrapWithAuth(next http.Handler, config *AuthConfig) http.Handler {
 			parentResult := checkParentOwnership(authInfo, meta)
 			switch parentResult.status {
 			case authUnauthorized:
+				slog.WarnContext(ctx, "auth rejected: parent ownership requires auth", "path", r.URL.Path, "method", r.Method, "type", meta.TypeName)
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			case authForbidden:
+				slog.WarnContext(ctx, "auth rejected: parent ownership forbidden", "path", r.URL.Path, "method", r.Method, "type", meta.TypeName)
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
@@ -167,6 +172,7 @@ func checkParentOwnership(authInfo *AuthInfo, meta *metadata.TypeMetadata) paren
 // blockUnauthorized returns 401 for any request (no auth config = blocked)
 func blockUnauthorized(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slog.WarnContext(r.Context(), "auth rejected: no auth config", "path", r.URL.Path, "method", r.Method)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	})
 }

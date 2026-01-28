@@ -171,7 +171,7 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	}
 	foreignKeyCol, err := findParentRelationshipFromType(tType, parentType)
 	if err != nil {
-		slog.Warn("could not find parent relationship",
+		slog.WarnContext(context.Background(), "could not find parent relationship",
 			"type", typeName,
 			"error", err)
 	}
@@ -579,13 +579,13 @@ func validateParentRelationship(parentMeta *metadata.TypeMetadata, foreignKeyCol
 	if parentMeta != nil {
 		// We're nested but have no parent relationship - could be belongs-to registered for ?include=
 		if foreignKeyCol == "" {
-			slog.Warn("type registered as nested but has no foreign key to parent - CRUD operations on this route may not work correctly",
+			slog.WarnContext(context.Background(), "type registered as nested but has no foreign key to parent - CRUD operations on this route may not work correctly",
 				"type", typeName,
 				"parent", parentMeta.TypeName)
 		}
 	} else if foreignKeyCol != "" {
 		// We have a parent relationship but we're not nested
-		slog.Warn("type has parent relationship but is not registered as nested",
+		slog.WarnContext(context.Background(), "type has parent relationship but is not registered as nested",
 			"type", typeName,
 			"foreignKey", foreignKeyCol)
 	}

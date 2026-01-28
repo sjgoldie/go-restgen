@@ -126,10 +126,11 @@ func main() {
 
 	// Custom endpoint to view audit logs
 	r.Get("/audit-logs", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		var logs []JobAuditLog
-		err := db.GetDB().NewSelect().Model(&logs).Order("id DESC").Limit(50).Scan(r.Context())
+		err := db.GetDB().NewSelect().Model(&logs).Order("id DESC").Limit(50).Scan(ctx)
 		if err != nil {
-			slog.Warn("failed to fetch audit logs", "error", err)
+			slog.ErrorContext(ctx, "failed to fetch audit logs", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}

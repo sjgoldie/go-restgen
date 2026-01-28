@@ -1,12 +1,8 @@
 // Package handler provides generic HTTP handlers for RESTful CRUD endpoints.
 //
-// By default, handler warnings are suppressed (log level set to Error).
-// To enable warnings in development, set the log level:
-//
-//	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-//	    Level: slog.LevelWarn,
-//	}))
-//	slog.SetDefault(logger)
+// Logging uses context-aware slog methods for OpenTelemetry trace propagation.
+// Log levels: Error for server failures, Warn for recoverable issues, Debug for client errors.
+// Configure logging in your application's main() before starting handlers.
 package handler
 
 import (
@@ -17,7 +13,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -30,15 +25,6 @@ import (
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/service"
 )
-
-func init() {
-	// Set default log level to Error (suppresses warnings in production)
-	// Users can override this in their main() before starting handlers
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelError,
-	}))
-	slog.SetDefault(logger)
-}
 
 // Custom handler function types
 // These allow developers to provide custom logic while the framework handles
@@ -148,7 +134,7 @@ type batchSetup[T any] struct {
 }
 
 // handleMutationError handles errors from Create/Update operations
-func handleMutationError(w http.ResponseWriter, err error, operation string) {
+func handleMutationError(ctx context.Context, w http.ResponseWriter, err error, operation string) {
 	if errors.Is(err, context.Canceled) {
 		return // Client disconnected, no response needed
 	}
@@ -179,7 +165,7 @@ func handleMutationError(w http.ResponseWriter, err error, operation string) {
 		http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	slog.Warn("failed to "+operation+" item", "error", err)
+	slog.ErrorContext(ctx, "failed to "+operation+" item", "error", err)
 	http.Error(w, "internal server error", http.StatusInternalServerError)
 }
 
@@ -199,19 +185,19 @@ func StandardGetAll[T any](ctx context.Context, svc *service.Common[T], meta *me
 //   - count=true to include X-Total-Count header
 func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
 		svc, err := service.New[T]()
 		if err != nil {
-			slog.Warn("failed to create service", "error", err)
+			slog.ErrorContext(ctx, "failed to create service", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		ctx := r.Context()
-
 		// Get metadata from context
 		meta, err := metadata.FromContext(ctx)
 		if err != nil {
-			slog.Warn("metadata not found in context", "error", err)
+			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -237,7 +223,7 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 				http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			slog.Warn("failed to get all items", "error", err)
+			slog.ErrorContext(ctx, "failed to get all items", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -266,7 +252,7 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(items); err != nil {
-			slog.Warn("failed to encode response", "error", err)
+			slog.ErrorContext(ctx, "failed to encode response", "error", err)
 		}
 	}
 }
@@ -287,19 +273,19 @@ func StandardGetByParentRelation[T any](ctx context.Context, svc *service.Common
 // or provide a custom function for specialized logic (e.g., getting user from auth token).
 func Get[T any](getFunc CustomGetFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
 		svc, err := service.New[T]()
 		if err != nil {
-			slog.Warn("failed to create service", "error", err)
+			slog.ErrorContext(ctx, "failed to create service", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		ctx := r.Context()
-
 		// Get metadata from context
 		meta, err := metadata.FromContext(ctx)
 		if err != nil {
-			slog.Warn("metadata not found in context", "error", err)
+			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -310,7 +296,7 @@ func Get[T any](getFunc CustomGetFunc[T]) http.HandlerFunc {
 		if meta.URLParamUUID != "" {
 			id = chi.URLParam(r, meta.URLParamUUID)
 			if id == "" {
-				slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
+				slog.DebugContext(ctx, "missing id parameter", "paramUUID", meta.URLParamUUID)
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
@@ -338,7 +324,7 @@ func Get[T any](getFunc CustomGetFunc[T]) http.HandlerFunc {
 				http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			slog.Warn("failed to get item", "id", id, "error", err)
+			slog.ErrorContext(ctx, "failed to get item", "id", id, "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -346,7 +332,7 @@ func Get[T any](getFunc CustomGetFunc[T]) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(item); err != nil {
-			slog.Warn("failed to encode response", "error", err)
+			slog.ErrorContext(ctx, "failed to encode response", "error", err)
 		}
 	}
 }
@@ -379,7 +365,7 @@ func StandardCreate[T any](ctx context.Context, svc *service.Common[T], meta *me
 		// Clean up stored file on DB error
 		if storageKey != "" {
 			if delErr := svc.DeleteStoredFile(ctx, storageKey); delErr != nil {
-				slog.Warn("failed to delete orphaned file after DB error", "key", storageKey, "error", delErr)
+				slog.WarnContext(ctx, "failed to delete orphaned file after DB error", "key", storageKey, "error", delErr)
 			}
 		}
 		return nil, err
@@ -394,19 +380,19 @@ func StandardCreate[T any](ctx context.Context, svc *service.Common[T], meta *me
 // Automatically detects multipart form data for file uploads.
 func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
 		svc, err := service.New[T]()
 		if err != nil {
-			slog.Warn("failed to create service", "error", err)
+			slog.ErrorContext(ctx, "failed to create service", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		ctx := r.Context()
-
 		// Get metadata from context
 		meta, err := metadata.FromContext(ctx)
 		if err != nil {
-			slog.Warn("metadata not found in context", "error", err)
+			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -423,7 +409,7 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 		if strings.HasPrefix(contentType, "multipart/form-data") {
 			// Parse multipart form
 			if err := r.ParseMultipartForm(32 << 20); err != nil {
-				slog.Warn("failed to parse multipart form", "error", err)
+				slog.DebugContext(ctx, "failed to parse multipart form", "error", err)
 				http.Error(w, "bad request: failed to parse multipart form", http.StatusBadRequest)
 				return
 			}
@@ -446,7 +432,7 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 			// JSON metadata comes from form field in multipart
 			if metadataValues, ok := r.MultipartForm.Value["metadata"]; ok && len(metadataValues) > 0 {
 				if err := json.Unmarshal([]byte(metadataValues[0]), &item); err != nil {
-					slog.Warn("failed to parse metadata JSON", "error", err)
+					slog.DebugContext(ctx, "failed to parse metadata JSON", "error", err)
 					http.Error(w, "bad request: invalid metadata JSON", http.StatusBadRequest)
 					return
 				}
@@ -454,7 +440,7 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 		} else {
 			// JSON body
 			if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
-				slog.Warn("failed to decode request body", "error", err)
+				slog.DebugContext(ctx, "failed to decode request body", "error", err)
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
@@ -463,14 +449,14 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 		// Call the provided function
 		savedItem, err := createFunc(ctx, svc, meta, auth, item, file, fileMeta)
 		if err != nil {
-			handleMutationError(w, err, "create")
+			handleMutationError(ctx, w, err, "create")
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		if err := json.NewEncoder(w).Encode(savedItem); err != nil {
-			slog.Warn("failed to encode response", "error", err)
+			slog.ErrorContext(ctx, "failed to encode response", "error", err)
 		}
 	}
 }
@@ -492,18 +478,19 @@ func StandardUpdateByParentRelation[T any](ctx context.Context, svc *service.Com
 // or provide a custom function for specialized logic.
 func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
 		svc, err := service.New[T]()
 		if err != nil {
-			slog.Warn("failed to create service", "error", err)
+			slog.ErrorContext(ctx, "failed to create service", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
 		// Get metadata from context
-		ctx := r.Context()
 		meta, err := metadata.FromContext(ctx)
 		if err != nil {
-			slog.Warn("metadata not found in context", "error", err)
+			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -514,7 +501,7 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 		if meta.URLParamUUID != "" {
 			id = chi.URLParam(r, meta.URLParamUUID)
 			if id == "" {
-				slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
+				slog.DebugContext(ctx, "missing id parameter", "paramUUID", meta.URLParamUUID)
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
@@ -525,7 +512,7 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 
 		var item T
 		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
-			slog.Warn("failed to decode request body", "error", err)
+			slog.DebugContext(ctx, "failed to decode request body", "error", err)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -535,7 +522,7 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 		// Skip for single routes with no URL param - custom function handles ID
 		if id != "" {
 			if err := setIDField(&item, id, meta.PKField); err != nil {
-				slog.Warn("failed to set ID field", "error", err)
+				slog.ErrorContext(ctx, "failed to set ID field", "error", err)
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
@@ -544,14 +531,14 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 		// Call the provided function
 		savedItem, err := updateFunc(ctx, svc, meta, auth, id, item)
 		if err != nil {
-			handleMutationError(w, err, "update")
+			handleMutationError(ctx, w, err, "update")
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(savedItem); err != nil {
-			slog.Warn("failed to encode response", "error", err)
+			slog.ErrorContext(ctx, "failed to encode response", "error", err)
 		}
 	}
 }
@@ -579,7 +566,7 @@ func StandardDelete[T any](ctx context.Context, svc *service.Common[T], meta *me
 	// Delete from storage if there was a file (log but don't fail if this fails)
 	if storageKey != "" {
 		if err := svc.DeleteStoredFile(ctx, storageKey); err != nil {
-			slog.Warn("failed to delete file from storage", "key", storageKey, "error", err)
+			slog.WarnContext(ctx, "failed to delete file from storage", "key", storageKey, "error", err)
 		}
 	}
 
@@ -591,18 +578,19 @@ func StandardDelete[T any](ctx context.Context, svc *service.Common[T], meta *me
 // or provide a custom function for specialized logic.
 func Delete[T any](deleteFunc CustomDeleteFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
 		svc, err := service.New[T]()
 		if err != nil {
-			slog.Warn("failed to create service", "error", err)
+			slog.ErrorContext(ctx, "failed to create service", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
 		// Get metadata from context
-		ctx := r.Context()
 		meta, err := metadata.FromContext(ctx)
 		if err != nil {
-			slog.Warn("metadata not found in context", "error", err)
+			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -610,7 +598,7 @@ func Delete[T any](deleteFunc CustomDeleteFunc[T]) http.HandlerFunc {
 		// Get ID from URL parameter (passed as string to support both int and UUID PKs)
 		id := chi.URLParam(r, meta.URLParamUUID)
 		if id == "" {
-			slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
+			slog.DebugContext(ctx, "missing id parameter", "paramUUID", meta.URLParamUUID)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -642,7 +630,7 @@ func Delete[T any](deleteFunc CustomDeleteFunc[T]) http.HandlerFunc {
 				http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			slog.Warn("failed to delete item", "id", id, "error", err)
+			slog.ErrorContext(ctx, "failed to delete item", "id", id, "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -655,25 +643,25 @@ func Delete[T any](deleteFunc CustomDeleteFunc[T]) http.HandlerFunc {
 // Streams the file for proxy mode, redirects to signed URL for signed URL mode.
 func Download[T any]() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
 		svc, err := service.New[T]()
 		if err != nil {
-			slog.Warn("failed to create service", "error", err)
+			slog.ErrorContext(ctx, "failed to create service", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		ctx := r.Context()
-
 		meta, err := metadata.FromContext(ctx)
 		if err != nil {
-			slog.Warn("metadata not found in context", "error", err)
+			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
 		id := chi.URLParam(r, meta.URLParamUUID)
 		if id == "" {
-			slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
+			slog.DebugContext(ctx, "missing id parameter", "paramUUID", meta.URLParamUUID)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -696,7 +684,7 @@ func Download[T any]() http.HandlerFunc {
 				http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			slog.Warn("failed to download file", "id", id, "error", err)
+			slog.ErrorContext(ctx, "failed to download file", "id", id, "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -725,7 +713,7 @@ func Download[T any]() http.HandlerFunc {
 
 		w.WriteHeader(http.StatusOK)
 		if _, err := io.Copy(w, result.Reader); err != nil {
-			slog.Warn("failed to stream file", "error", err)
+			slog.WarnContext(ctx, "failed to stream file", "error", err)
 		}
 	}
 }
@@ -770,25 +758,25 @@ func setIDField[T any](item *T, id string, pkFieldName string) error {
 // The item is fetched first (validating existence and permissions), then passed to the action function.
 func Action[T any](actionFunc ActionFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
 		svc, err := service.New[T]()
 		if err != nil {
-			slog.Warn("failed to create service", "error", err)
+			slog.ErrorContext(ctx, "failed to create service", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		ctx := r.Context()
-
 		meta, err := metadata.FromContext(ctx)
 		if err != nil {
-			slog.Warn("metadata not found in context", "error", err)
+			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
 		id := chi.URLParam(r, meta.URLParamUUID)
 		if id == "" {
-			slog.Warn("missing id parameter", "paramUUID", meta.URLParamUUID)
+			slog.DebugContext(ctx, "missing id parameter", "paramUUID", meta.URLParamUUID)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -800,14 +788,14 @@ func Action[T any](actionFunc ActionFunc[T]) http.HandlerFunc {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
-			handleMutationError(w, err, "get for action")
+			handleMutationError(ctx, w, err, "get for action")
 			return
 		}
 
 		// Read request body for action payload
 		payload, err := io.ReadAll(r.Body)
 		if err != nil {
-			slog.Warn("failed to read request body", "error", err)
+			slog.DebugContext(ctx, "failed to read request body", "error", err)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -816,7 +804,7 @@ func Action[T any](actionFunc ActionFunc[T]) http.HandlerFunc {
 
 		result, err := actionFunc(ctx, svc, meta, auth, id, item, payload)
 		if err != nil {
-			handleMutationError(w, err, "action")
+			handleMutationError(ctx, w, err, "action")
 			return
 		}
 
@@ -828,7 +816,7 @@ func Action[T any](actionFunc ActionFunc[T]) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(result); err != nil {
-			slog.Warn("failed to encode response", "error", err)
+			slog.ErrorContext(ctx, "failed to encode response", "error", err)
 		}
 	}
 }
@@ -851,18 +839,18 @@ func StandardBatchDelete[T any](ctx context.Context, svc *service.Common[T], met
 // setupBatch performs common validation and setup for batch operations.
 // Returns nil if successful, otherwise writes error response and returns error.
 func setupBatch[T any](w http.ResponseWriter, r *http.Request, opName string) *batchSetup[T] {
+	ctx := r.Context()
+
 	svc, err := service.New[T]()
 	if err != nil {
-		slog.Warn("failed to create service", "error", err)
+		slog.ErrorContext(ctx, "failed to create service", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return nil
 	}
 
-	ctx := r.Context()
-
 	meta, err := metadata.FromContext(ctx)
 	if err != nil {
-		slog.Warn("metadata not found in context", "error", err)
+		slog.ErrorContext(ctx, "metadata not found in context", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return nil
 	}
@@ -874,7 +862,7 @@ func setupBatch[T any](w http.ResponseWriter, r *http.Request, opName string) *b
 
 	var items []T
 	if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
-		slog.Warn("failed to decode batch request", "error", err)
+		slog.DebugContext(ctx, "failed to decode batch request", "error", err)
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return nil
 	}
@@ -910,14 +898,14 @@ func BatchCreate[T any](createFunc CustomBatchCreateFunc[T]) http.HandlerFunc {
 
 		results, err := createFunc(setup.ctx, setup.svc, setup.meta, setup.auth, setup.items)
 		if err != nil {
-			handleBatchError(w, err, "batch create")
+			handleBatchError(setup.ctx, w, err, "batch create")
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		if err := json.NewEncoder(w).Encode(results); err != nil {
-			slog.Warn("failed to encode response", "error", err)
+			slog.ErrorContext(setup.ctx, "failed to encode response", "error", err)
 		}
 	}
 }
@@ -932,14 +920,14 @@ func BatchUpdate[T any](updateFunc CustomBatchUpdateFunc[T]) http.HandlerFunc {
 
 		results, err := updateFunc(setup.ctx, setup.svc, setup.meta, setup.auth, setup.items)
 		if err != nil {
-			handleBatchError(w, err, "batch update")
+			handleBatchError(setup.ctx, w, err, "batch update")
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(results); err != nil {
-			slog.Warn("failed to encode response", "error", err)
+			slog.ErrorContext(setup.ctx, "failed to encode response", "error", err)
 		}
 	}
 }
@@ -953,7 +941,7 @@ func BatchDelete[T any](deleteFunc CustomBatchDeleteFunc[T]) http.HandlerFunc {
 		}
 
 		if err := deleteFunc(setup.ctx, setup.svc, setup.meta, setup.auth, setup.items); err != nil {
-			handleBatchError(w, err, "batch delete")
+			handleBatchError(setup.ctx, w, err, "batch delete")
 			return
 		}
 
@@ -962,7 +950,7 @@ func BatchDelete[T any](deleteFunc CustomBatchDeleteFunc[T]) http.HandlerFunc {
 }
 
 // handleBatchError handles errors from batch operations
-func handleBatchError(w http.ResponseWriter, err error, operation string) {
+func handleBatchError(ctx context.Context, w http.ResponseWriter, err error, operation string) {
 	if errors.Is(err, context.Canceled) {
 		return
 	}
@@ -992,6 +980,6 @@ func handleBatchError(w http.ResponseWriter, err error, operation string) {
 		http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	slog.Warn("failed to "+operation, "error", err)
+	slog.ErrorContext(ctx, "failed to "+operation, "error", err)
 	http.Error(w, "internal server error", http.StatusInternalServerError)
 }

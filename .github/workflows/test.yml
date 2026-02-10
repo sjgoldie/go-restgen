@@ -16,7 +16,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.12'
 
       - name: Install dependencies
         run: go mod download
@@ -51,7 +51,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.12'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -93,7 +93,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.12'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -135,7 +135,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.12'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -177,7 +177,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.12'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -219,7 +219,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.12'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -261,7 +261,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.12'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -303,7 +303,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.12'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -346,7 +346,7 @@ jobs:
   #     - name: Set up Go
   #       uses: actions/setup-go@v5
   #       with:
-  #         go-version: '1.24.11'
+  #         go-version: '1.24.12'
 
   #     - name: Set up Node
   #       uses: actions/setup-node@v4
@@ -388,7 +388,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.12'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -430,7 +430,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.12'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -472,7 +472,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.12'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -514,7 +514,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.12'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -556,7 +556,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.12'
 
       - name: Set up Node
         uses: actions/setup-node@v4

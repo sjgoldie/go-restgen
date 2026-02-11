@@ -1,0 +1,29 @@
+meta {
+  name: Include - Parent Post on Comment (Owner)
+  type: http
+  seq: 43
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{aliceBlogId}}/posts/{{alicePostId}}/comments/{{commentId}}?include=Post
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.post: isDefined
+}
+
+tests {
+  test("Owner can include parent Post on Comment", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.post).to.be.an('object');
+    expect(res.body.post.title).to.equal("Alice's First Post");
+  });
+}

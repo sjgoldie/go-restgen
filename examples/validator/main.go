@@ -190,5 +190,9 @@ func main() {
 	fmt.Println("  # Transition from pending to in_progress")
 	fmt.Println("  curl -X PUT http://localhost:8080/tasks/1 -H 'Content-Type: application/json' \\")
 	fmt.Println("    -d '{\"title\": \"My Task\", \"status\": \"in_progress\", \"priority\": 3}'")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }

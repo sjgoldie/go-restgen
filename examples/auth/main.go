@@ -72,7 +72,7 @@ type Blog struct {
 	Status        string    `bun:"status,notnull,default:'draft'" json:"status"` // draft, published, archived
 	CreatedAt     time.Time `bun:"created_at,notnull,skipupdate" json:"created_at,omitempty"`
 	UpdatedAt     time.Time `bun:"updated_at,notnull" json:"updated_at,omitempty"`
-	Posts         []*Post   `bun:"rel:has-many,join:id=blog_id" json:"-"`
+	Posts         []*Post   `bun:"rel:has-many,join:id=blog_id" json:"posts,omitempty"`
 }
 
 func (b *Blog) BeforeAppendModel(ctx context.Context, query bun.Query) error {
@@ -92,14 +92,14 @@ type Post struct {
 	bun.BaseModel `bun:"table:posts"`
 	ID            int        `bun:"id,pk,autoincrement" json:"id"`
 	BlogID        int        `bun:"blog_id,notnull,skipupdate" json:"blog_id"`
-	Blog          *Blog      `bun:"rel:belongs-to,join:blog_id=id" json:"-"`
+	Blog          *Blog      `bun:"rel:belongs-to,join:blog_id=id" json:"blog,omitempty"`
 	AuthorID      string     `bun:"author_id,notnull" json:"author_id"` // Owner field 1
 	EditorID      string     `bun:"editor_id" json:"editor_id"`         // Owner field 2 (optional)
 	Title         string     `bun:"title,notnull" json:"title"`
 	Content       string     `bun:"content" json:"content"`
 	CreatedAt     time.Time  `bun:"created_at,notnull,skipupdate" json:"created_at,omitempty"`
 	UpdatedAt     time.Time  `bun:"updated_at,notnull" json:"updated_at,omitempty"`
-	Comments      []*Comment `bun:"rel:has-many,join:id=post_id" json:"-"`
+	Comments      []*Comment `bun:"rel:has-many,join:id=post_id" json:"comments,omitempty"`
 }
 
 func (p *Post) BeforeAppendModel(ctx context.Context, query bun.Query) error {
@@ -119,7 +119,7 @@ type Comment struct {
 	bun.BaseModel `bun:"table:comments"`
 	ID            int       `bun:"id,pk,autoincrement" json:"id"`
 	PostID        int       `bun:"post_id,notnull,skipupdate" json:"post_id"`
-	Post          *Post     `bun:"rel:belongs-to,join:post_id=id" json:"-"`
+	Post          *Post     `bun:"rel:belongs-to,join:post_id=id" json:"post,omitempty"`
 	AuthorName    string    `bun:"author_name,notnull" json:"author_name"`
 	Text          string    `bun:"text,notnull" json:"text"`
 	CreatedAt     time.Time `bun:"created_at,notnull,skipupdate" json:"created_at,omitempty"`
@@ -302,11 +302,13 @@ func main() {
 			// Post - multiple ownership fields (AuthorID OR EditorID), admin bypass
 			router.RegisterRoutes[Post](b, "/posts",
 				router.AllWithOwnershipUnless([]string{"AuthorID", "EditorID"}, "admin"),
+				router.WithRelationName("Posts"),
 				func(b *router.Builder) {
 					// Comment - MethodAll override: default auth-only, but GET is public
 					router.RegisterRoutes[Comment](b, "/comments",
 						router.IsAuthenticated(), // Default: all methods require auth
 						router.PublicReadOnly(),  // Override: GET is public
+						router.WithRelationName("Comments"),
 					)
 				},
 			)
@@ -374,5 +376,9 @@ func main() {
 	fmt.Println("   DELETE /reports/{id}       (requires auth)")
 	fmt.Println("\nSee README.md for complete curl examples")
 
-	log.Fatal(http.ListenAndServe(":8080", r))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }

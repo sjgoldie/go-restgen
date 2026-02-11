@@ -1,0 +1,21 @@
+meta {
+  name: Include - Parent Blog on Post No Auth (Blocked)
+  type: http
+  seq: 47
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{aliceBlogId}}/posts/{{alicePostId}}?include=Blog
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  Post has ownership configured (AuthorID, EditorID).
+  Blog parent also has ownership (AuthorID).
+  Accessing without auth returns 401 due to parent ownership checks.
+}

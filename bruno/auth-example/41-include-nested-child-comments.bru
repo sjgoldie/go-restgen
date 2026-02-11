@@ -1,0 +1,32 @@
+meta {
+  name: Include - Nested Child Posts.Comments (Owner)
+  type: http
+  seq: 41
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{aliceBlogId}}?include=Posts.Comments
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.posts: isDefined
+}
+
+tests {
+  test("Owner can include nested child Posts.Comments on Blog", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.posts).to.be.an('array');
+    expect(res.body.posts.length).to.be.greaterThan(0);
+    expect(res.body.posts[0].comments).to.be.an('array');
+    expect(res.body.posts[0].comments.length).to.be.greaterThan(0);
+    expect(res.body.posts[0].comments[0].text).to.be.a('string');
+  });
+}

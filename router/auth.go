@@ -43,6 +43,16 @@ type AuthConfig struct {
 	// Populated automatically when child routes are registered with WithRelationName().
 	// Key is the relation name (e.g., "Posts"), value is the child's merged auth config for MethodGet.
 	ChildAuth map[string]*AuthConfig
+
+	// ParentAuth points to the parent route's GET auth config (for ?include= authorization of
+	// parent types in the belongs-to direction). Forms a linked list up the parent chain.
+	// Populated automatically during route registration.
+	ParentAuth *AuthConfig
+
+	// ParentIncludeName is the belongs-to relation field name used in ?include= paths
+	// (e.g., "Author" for a Post that belongs to Author). Derived from the model's struct
+	// field during route registration.
+	ParentIncludeName string
 }
 
 // OwnershipConfig defines ownership validation rules.

@@ -112,5 +112,9 @@ func main() {
 	fmt.Println("  curl 'http://localhost:8080/users?filter[Name]=Alice'")
 	fmt.Println("  curl 'http://localhost:8080/users?sort=-CreatedAt&limit=10'")
 	fmt.Println("  curl 'http://localhost:8080/users?limit=10&offset=20&count=true'")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }

@@ -22,6 +22,7 @@ type Builder struct {
 	router                  chi.Router             // Chi router being configured
 	parentMeta              *metadata.TypeMetadata // Metadata of the immediate parent (nil for root)
 	parentChildRelationAuth map[string]*AuthConfig // Parent's shared child relation auth map (children add to this via registerChildAuthConfig)
+	parentGetAuth           *AuthConfig            // Parent's GET auth config (for ParentAuth chain on child configs)
 }
 
 // customHandlers holds optional custom handler functions for a route registration
@@ -169,7 +170,7 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	if b.parentMeta != nil {
 		parentType = b.parentMeta.ModelType
 	}
-	foreignKeyCol, err := findParentRelationshipFromType(tType, parentType)
+	parentRel, err := findParentRelationshipFromType(tType, parentType)
 	if err != nil {
 		slog.WarnContext(context.Background(), "could not find parent relationship",
 			"type", typeName,
@@ -177,7 +178,7 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	}
 
 	// Validate parent relationship
-	validateParentRelationship(b.parentMeta, foreignKeyCol, typeName)
+	validateParentRelationship(b.parentMeta, parentRel.foreignKeyCol, typeName)
 
 	// Determine PK field name - default to "ID" convention
 	if pkField == "" {
@@ -194,15 +195,9 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 		ModelType:      tType,
 		ParentType:     parentType,
 		ParentMeta:     b.parentMeta,
-		ForeignKeyCol:  foreignKeyCol,
+		ForeignKeyCol:  parentRel.foreignKeyCol,
 		ChildMeta:      make(map[string]*metadata.TypeMetadata),
 		IsFileResource: isFileResource,
-	}
-
-	// Register this type as a child of the parent (for ?include= support)
-	// Only register if relationName is explicitly provided via WithRelationName
-	if b.parentMeta != nil && relationName != "" {
-		b.parentMeta.ChildMeta[relationName] = meta
 	}
 
 	// Merge auth configs (last wins for each method)
@@ -215,6 +210,17 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	for _, config := range authMap {
 		if config != nil {
 			config.ChildAuth = childRelationAuth
+		}
+	}
+
+	// Link parent auth chain for ?include= authorization of parent types (belongs-to direction).
+	// Same pattern as ParentMeta on TypeMetadata — piggybacking on the same registration flow.
+	if b.parentGetAuth != nil {
+		for _, config := range authMap {
+			if config != nil {
+				config.ParentAuth = b.parentGetAuth
+				config.ParentIncludeName = parentRel.fieldName
+			}
 		}
 	}
 
@@ -239,6 +245,14 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 
 	// Merge query configs (last wins for each setting)
 	meta = mergeQueryConfigs(meta, queryConfigs)
+
+	// Register this type as a child of the parent (for ?include= support).
+	// Must happen AFTER mergeQueryConfigs because Clone() creates a new ChildMeta map.
+	// If registered before, the parent's ChildMeta would point to the pre-clone metadata,
+	// and grandchild registrations (which mutate the post-clone metadata) would be invisible.
+	if b.parentMeta != nil && relationName != "" {
+		b.parentMeta.ChildMeta[relationName] = meta
+	}
 
 	// Set validator if provided
 	if validator != nil {
@@ -397,8 +411,12 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 
 				// Register action endpoints - POST /resources/{id}/{action-name}
 				for i := range actions {
-					// Assign shared childRelationAuth to action's auth config for ?include= support
+					// Assign shared auth references to action's auth config for ?include= support
 					actions[i].auth.ChildAuth = setup.childRelationAuth
+					if parentGetAuth := setup.authMap[MethodGet]; parentGetAuth != nil {
+						actions[i].auth.ParentAuth = parentGetAuth.ParentAuth
+						actions[i].auth.ParentIncludeName = parentGetAuth.ParentIncludeName
+					}
 					r.Method("POST", "/"+actions[i].name, wrapHandler(handler.Action[T](actions[i].fn), &actions[i].auth))
 				}
 
@@ -412,6 +430,7 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 				router:                  nestedRouter,
 				parentMeta:              meta,
 				parentChildRelationAuth: setup.childRelationAuth,
+				parentGetAuth:           setup.authMap[MethodGet],
 			}
 			nested(childBuilder)
 		}
@@ -475,29 +494,36 @@ func createParentIDMiddleware(paramUUID string) func(http.Handler) http.Handler 
 	}
 }
 
+// parentRelation holds the results of finding a parent relationship
+type parentRelation struct {
+	foreignKeyCol string // FK column name (e.g., "author_id")
+	fieldName     string // Struct field name for belongs-to (e.g., "Author")
+}
+
 // findParentRelationshipFromType looks for a belongs-to relationship between child and parent types
-// and extracts the foreign key from the bun relation tag. Returns the foreign key column name.
+// and extracts the foreign key from the bun relation tag. Returns the foreign key column name
+// and the belongs-to field name.
 // Handles two cases:
 // 1. Child has belongs-to Parent (e.g., Comment belongs-to Post) - FK is on child
 // 2. Parent has belongs-to Child (e.g., Post belongs-to User/Author) - FK is on parent
-func findParentRelationshipFromType(childType reflect.Type, parentType reflect.Type) (foreignKeyCol string, err error) {
+func findParentRelationshipFromType(childType reflect.Type, parentType reflect.Type) (parentRelation, error) {
 	if parentType == nil {
-		return "", nil
+		return parentRelation{}, nil
 	}
 	// Case 1: child belongs-to parent
-	if fk := parseForeignKeyFromRelation(childType, parentType); fk != "" {
-		return fk, nil
+	if rel := parseBelongsToRelation(childType, parentType); rel.foreignKeyCol != "" {
+		return rel, nil
 	}
 	// Case 2: parent belongs-to child (inverted)
-	if fk := parseForeignKeyFromRelation(parentType, childType); fk != "" {
-		return fk, nil
+	if rel := parseBelongsToRelation(parentType, childType); rel.foreignKeyCol != "" {
+		return rel, nil
 	}
-	return "", fmt.Errorf("no relationship between %s and %s found", childType.Name(), parentType.Name())
+	return parentRelation{}, fmt.Errorf("no relationship between %s and %s found", childType.Name(), parentType.Name())
 }
 
-// parseForeignKeyFromRelation looks for a belongs-to field on sourceType pointing to targetType
-// Returns the FK column name from the bun tag, or empty string if not found
-func parseForeignKeyFromRelation(sourceType, targetType reflect.Type) string {
+// parseBelongsToRelation looks for a belongs-to field on sourceType pointing to targetType.
+// Returns the FK column name and the struct field name.
+func parseBelongsToRelation(sourceType, targetType reflect.Type) parentRelation {
 	for i := 0; i < sourceType.NumField(); i++ {
 		field := sourceType.Field(i)
 
@@ -517,13 +543,16 @@ func parseForeignKeyFromRelation(sourceType, targetType reflect.Type) string {
 				if strings.HasPrefix(part, "join:") {
 					joinClause := strings.TrimPrefix(part, "join:")
 					if idx := strings.Index(joinClause, "="); idx != -1 {
-						return strings.TrimSpace(joinClause[:idx])
+						return parentRelation{
+							foreignKeyCol: strings.TrimSpace(joinClause[:idx]),
+							fieldName:     field.Name,
+						}
 					}
 				}
 			}
 		}
 	}
-	return ""
+	return parentRelation{}
 }
 
 // getTableName extracts table name from bun tag on the struct

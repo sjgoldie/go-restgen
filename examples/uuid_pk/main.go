@@ -158,5 +158,9 @@ func main() {
 	fmt.Println("  curl http://localhost:8080/blogs")
 	fmt.Println("\n  # Create a post under a blog (replace {uuid} with actual blog ID)")
 	fmt.Println("  curl -X POST http://localhost:8080/blogs/{uuid}/posts -H 'Content-Type: application/json' -d '{\"title\":\"First Post\",\"content\":\"Hello World\"}'")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }

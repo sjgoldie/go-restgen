@@ -1,0 +1,30 @@
+meta {
+  name: Include - Child Posts (Owner)
+  type: http
+  seq: 40
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{aliceBlogId}}?include=Posts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.posts: isDefined
+}
+
+tests {
+  test("Owner can include child Posts on Blog", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.posts).to.be.an('array');
+    expect(res.body.posts.length).to.be.greaterThan(0);
+    expect(res.body.posts[0].title).to.be.a('string');
+  });
+}

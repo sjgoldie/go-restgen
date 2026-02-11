@@ -1,0 +1,20 @@
+meta {
+  name: Include - Child Posts No Auth (Blocked)
+  type: http
+  seq: 45
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{aliceBlogId}}?include=Posts
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  Blog has ownership configured (AuthorID).
+  Accessing without auth returns 401 before include logic runs.
+}

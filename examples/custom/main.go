@@ -377,5 +377,9 @@ func main() {
 	fmt.Println("   DELETE /audit-logs/{id} -> Always returns error")
 	fmt.Println("\nTest user seeded: alice (external_id: alice)")
 
-	log.Fatal(http.ListenAndServe(":8080", r))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }

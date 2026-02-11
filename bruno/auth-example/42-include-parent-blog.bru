@@ -1,0 +1,29 @@
+meta {
+  name: Include - Parent Blog on Post (Owner)
+  type: http
+  seq: 42
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{aliceBlogId}}/posts/{{alicePostId}}?include=Blog
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isDefined
+  res.body.blog: isDefined
+}
+
+tests {
+  test("Owner can include parent Blog on Post", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.blog).to.be.an('object');
+    expect(res.body.blog.name).to.equal("Alice's Blog");
+  });
+}

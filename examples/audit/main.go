@@ -179,5 +179,9 @@ func main() {
 	fmt.Println("")
 	fmt.Println("  # View audit log again to see all operations")
 	fmt.Println("  curl http://localhost:8080/audit-logs")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }

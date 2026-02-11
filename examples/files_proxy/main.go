@@ -155,5 +155,9 @@ func main() {
 	fmt.Println(`  curl -X POST http://localhost:8080/posts/1/images \`)
 	fmt.Println(`    -F "file=@image.png" \`)
 	fmt.Println(`    -F 'metadata={"alt_text":"My image"}'`)
-	log.Fatal(http.ListenAndServe(":8080", r))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }

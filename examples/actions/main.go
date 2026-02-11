@@ -200,5 +200,9 @@ func main() {
 	fmt.Println("")
 	fmt.Println("  # Or complete the order")
 	fmt.Println("  curl -X POST http://localhost:8080/orders/1/complete")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }

@@ -142,5 +142,9 @@ func main() {
 	fmt.Println("  # Batch delete products (just need id)")
 	fmt.Println("  curl -X DELETE http://localhost:8080/products/batch -H 'Content-Type: application/json' \\")
 	fmt.Println("    -d '[{\"id\": 1}, {\"id\": 2}]'")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }

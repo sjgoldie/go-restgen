@@ -669,11 +669,20 @@ type IncludeTestAuthor struct {
 
 type IncludeTestPost struct {
 	bun.BaseModel `bun:"table:include_test_posts"`
-	ID            int                `bun:"id,pk,autoincrement"`
-	AuthorID      int                `bun:"author_id,notnull"`
-	Author        *IncludeTestAuthor `bun:"rel:belongs-to,join:author_id=id"`
-	OwnerID       string             `bun:"owner_id,notnull"`
-	Title         string             `bun:"title"`
+	ID            int                   `bun:"id,pk,autoincrement"`
+	AuthorID      int                   `bun:"author_id,notnull"`
+	Author        *IncludeTestAuthor    `bun:"rel:belongs-to,join:author_id=id"`
+	OwnerID       string                `bun:"owner_id,notnull"`
+	Title         string                `bun:"title"`
+	Comments      []*IncludeTestComment `bun:"rel:has-many,join:id=post_id"`
+}
+
+type IncludeTestComment struct {
+	bun.BaseModel `bun:"table:include_test_comments"`
+	ID            int              `bun:"id,pk,autoincrement"`
+	PostID        int              `bun:"post_id,notnull"`
+	Post          *IncludeTestPost `bun:"rel:belongs-to,join:post_id=id"`
+	Body          string           `bun:"body"`
 }
 
 // TestAuth_ChildAuthPopulated tests that ChildAuth is populated when WithRelationName is used
@@ -908,10 +917,692 @@ func TestAuth_ChildAuthNoAuth(t *testing.T) {
 	}
 
 	// The posts field should be nil/empty since user isn't authorized for includes
-	if posts, ok := response["posts"]; ok && posts != nil {
+	if posts, ok := response["Posts"]; ok && posts != nil {
 		postsSlice, isSlice := posts.([]interface{})
 		if isSlice && len(postsSlice) > 0 {
 			t.Errorf("expected no posts for unauthenticated user, got %v", posts)
+		}
+	}
+}
+
+// =============================================================================
+// Issue #42 Tests: Nested relation includes rejected by AllowedIncludes auth
+// =============================================================================
+
+func setupNestedIncludeTest(t *testing.T) *bun.DB {
+	ds, err := datastore.Get()
+	if err != nil {
+		t.Fatalf("failed to get datastore: %v", err)
+	}
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	if _, err := db.NewCreateTable().Model((*IncludeTestAuthor)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create authors table: %v", err)
+	}
+	if _, err := db.NewCreateTable().Model((*IncludeTestPost)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create posts table: %v", err)
+	}
+	if _, err := db.NewCreateTable().Model((*IncludeTestComment)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create comments table: %v", err)
+	}
+
+	_, _ = db.NewDelete().Model((*IncludeTestComment)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.NewDelete().Model((*IncludeTestPost)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.NewDelete().Model((*IncludeTestAuthor)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.Exec("DELETE FROM sqlite_sequence WHERE name IN ('include_test_authors', 'include_test_posts', 'include_test_comments')")
+
+	return db
+}
+
+func registerNestedIncludeRoutes(b *router.Builder, commentAuth router.AuthConfig) {
+	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
+		router.AllPublic(),
+		func(b *router.Builder) {
+			router.RegisterRoutes[IncludeTestPost](b, "/posts",
+				router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+				router.WithRelationName("Posts"),
+				func(b *router.Builder) {
+					router.RegisterRoutes[IncludeTestComment](b, "/comments",
+						commentAuth,
+						router.WithRelationName("Comments"),
+					)
+				},
+			)
+		},
+	)
+}
+
+func seedNestedIncludeData(t *testing.T, db *bun.DB) (author *IncludeTestAuthor, post *IncludeTestPost, comment *IncludeTestComment) {
+	ctx := context.Background()
+
+	author = &IncludeTestAuthor{Name: "Test Author"}
+	if _, err := db.NewInsert().Model(author).Returning("*").Exec(ctx); err != nil {
+		t.Fatalf("failed to create author: %v", err)
+	}
+
+	post = &IncludeTestPost{AuthorID: author.ID, OwnerID: "alice", Title: "Test Post"}
+	if _, err := db.NewInsert().Model(post).Returning("*").Exec(ctx); err != nil {
+		t.Fatalf("failed to create post: %v", err)
+	}
+
+	comment = &IncludeTestComment{PostID: post.ID, Body: "Test Comment"}
+	if _, err := db.NewInsert().Model(comment).Returning("*").Exec(ctx); err != nil {
+		t.Fatalf("failed to create comment: %v", err)
+	}
+
+	return
+}
+
+// TestAuth_NestedChildInclude tests that nested child includes (e.g., ?include=Posts.Comments)
+// work through the full middleware stack when all levels are authorized.
+func TestAuth_NestedChildInclude(t *testing.T) {
+	db := setupNestedIncludeTest(t)
+	author, _, _ := seedNestedIncludeData(t, db)
+
+	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
+	b := router.NewBuilder(r)
+	registerNestedIncludeRoutes(b, router.AllPublic())
+
+	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts.Comments"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	posts, ok := response["Posts"].([]interface{})
+	if !ok || len(posts) == 0 {
+		t.Fatalf("expected posts to be included in response, got: %s", w.Body.String())
+	}
+
+	firstPost, ok := posts[0].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected first post to be an object")
+	}
+
+	comments, ok := firstPost["Comments"].([]interface{})
+	if !ok || len(comments) == 0 {
+		t.Fatal("expected comments to be included in posts (nested child include)")
+	}
+}
+
+// TestAuth_NestedChildInclude_DeeperLevelBlocked tests that nested child includes are blocked
+// when a deeper level's auth check fails, even though the first level passes.
+func TestAuth_NestedChildInclude_DeeperLevelBlocked(t *testing.T) {
+	db := setupNestedIncludeTest(t)
+	author, _, _ := seedNestedIncludeData(t, db)
+
+	// Comments require "premium" scope; user only has "user"
+	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
+	b := router.NewBuilder(r)
+	registerNestedIncludeRoutes(b, router.AllScoped("premium"))
+
+	// Single-level Posts include should still work
+	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if posts, ok := response["Posts"].([]interface{}); !ok || len(posts) == 0 {
+		t.Fatal("expected single-level Posts include to work")
+	}
+
+	// Nested Posts.Comments should be blocked (user lacks "premium")
+	url = "/authors/" + strconv.Itoa(author.ID) + "?include=Posts.Comments"
+	req = httptest.NewRequest("GET", url, nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response2 map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response2); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// The whole Posts.Comments path should be dropped (not in AllowedIncludes)
+	if postsArr, ok := response2["Posts"].([]interface{}); ok && len(postsArr) > 0 {
+		firstPost, _ := postsArr[0].(map[string]interface{})
+		if comments, exists := firstPost["Comments"]; exists && comments != nil {
+			if commentsArr, isArr := comments.([]interface{}); isArr && len(commentsArr) > 0 {
+				t.Error("expected comments to be blocked (user lacks 'premium' scope)")
+			}
+		}
+	}
+}
+
+// TestAuth_NestedParentInclude tests that parent includes (e.g., ?include=Post.Author)
+// work through the full middleware stack when all levels are authorized.
+func TestAuth_NestedParentInclude(t *testing.T) {
+	db := setupNestedIncludeTest(t)
+	author, post, comment := seedNestedIncludeData(t, db)
+
+	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
+	b := router.NewBuilder(r)
+	registerNestedIncludeRoutes(b, router.AllPublic())
+
+	// GET comment with ?include=Post.Author
+	url := "/authors/" + strconv.Itoa(author.ID) +
+		"/posts/" + strconv.Itoa(post.ID) +
+		"/comments/" + strconv.Itoa(comment.ID) +
+		"?include=Post.Author"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	postObj, ok := response["Post"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected post to be included in response (parent include)")
+	}
+
+	authorObj, ok := postObj["Author"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected author to be included in post (nested parent include)")
+	}
+
+	if authorObj["Name"] != "Test Author" {
+		t.Errorf("expected author name 'Test Author', got %v", authorObj["Name"])
+	}
+}
+
+// TestAuth_ParentInclude_SingleLevel tests that single-level parent includes
+// (e.g., ?include=Post from Comment route) work through the full middleware stack.
+func TestAuth_ParentInclude_SingleLevel(t *testing.T) {
+	db := setupNestedIncludeTest(t)
+	author, post, comment := seedNestedIncludeData(t, db)
+
+	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
+	b := router.NewBuilder(r)
+	registerNestedIncludeRoutes(b, router.AllPublic())
+
+	url := "/authors/" + strconv.Itoa(author.ID) +
+		"/posts/" + strconv.Itoa(post.ID) +
+		"/comments/" + strconv.Itoa(comment.ID) +
+		"?include=Post"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	postObj, ok := response["Post"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected post to be included in response (single-level parent include)")
+	}
+
+	if postObj["Title"] != "Test Post" {
+		t.Errorf("expected post title 'Test Post', got %v", postObj["Title"])
+	}
+}
+
+// TestAuth_NestedParentInclude_DeeperLevelBlocked tests that nested parent includes
+// are blocked when a deeper level's auth check fails.
+// Setup: Author requires "admin", Post is ownership-based, Comment is public.
+// User without "admin" can include Post but not Post.Author.
+func TestAuth_NestedParentInclude_DeeperLevelBlocked(t *testing.T) {
+	db := setupNestedIncludeTest(t)
+	ctx := context.Background()
+
+	author := &IncludeTestAuthor{Name: "Test Author"}
+	if _, err := db.NewInsert().Model(author).Returning("*").Exec(ctx); err != nil {
+		t.Fatalf("failed to create author: %v", err)
+	}
+
+	post := &IncludeTestPost{AuthorID: author.ID, OwnerID: "alice", Title: "Test Post"}
+	if _, err := db.NewInsert().Model(post).Returning("*").Exec(ctx); err != nil {
+		t.Fatalf("failed to create post: %v", err)
+	}
+
+	comment := &IncludeTestComment{PostID: post.ID, Body: "Test Comment"}
+	if _, err := db.NewInsert().Model(comment).Returning("*").Exec(ctx); err != nil {
+		t.Fatalf("failed to create comment: %v", err)
+	}
+
+	// Author requires "admin" scope; user only has "user"
+	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
+	b := router.NewBuilder(r)
+
+	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
+		router.AllScoped("admin"),
+		func(b *router.Builder) {
+			router.RegisterRoutes[IncludeTestPost](b, "/posts",
+				router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+				router.WithRelationName("Posts"),
+				func(b *router.Builder) {
+					router.RegisterRoutes[IncludeTestComment](b, "/comments",
+						router.AllPublic(),
+						router.WithRelationName("Comments"),
+					)
+				},
+			)
+		},
+	)
+
+	// Single-level parent include (Post) should work
+	url := "/authors/" + strconv.Itoa(author.ID) +
+		"/posts/" + strconv.Itoa(post.ID) +
+		"/comments/" + strconv.Itoa(comment.ID) +
+		"?include=Post"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if _, ok := response["Post"].(map[string]interface{}); !ok {
+		t.Fatal("expected single-level Post parent include to work")
+	}
+
+	// Nested Post.Author should be blocked (Author requires "admin")
+	url = "/authors/" + strconv.Itoa(author.ID) +
+		"/posts/" + strconv.Itoa(post.ID) +
+		"/comments/" + strconv.Itoa(comment.ID) +
+		"?include=Post.Author"
+	req = httptest.NewRequest("GET", url, nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response2 map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response2); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if postObj, ok := response2["Post"].(map[string]interface{}); ok {
+		if authorObj, exists := postObj["Author"]; exists && authorObj != nil {
+			if authorMap, isMap := authorObj.(map[string]interface{}); isMap && len(authorMap) > 0 {
+				t.Error("expected Author to be blocked in Post.Author include (user lacks 'admin' scope)")
+			}
+		}
+	}
+}
+
+// TestAuth_SimpleChildInclude tests that single-level child includes work.
+func TestAuth_SimpleChildInclude(t *testing.T) {
+	db := setupNestedIncludeTest(t)
+	author, _, _ := seedNestedIncludeData(t, db)
+
+	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
+	b := router.NewBuilder(r)
+	registerNestedIncludeRoutes(b, router.AllPublic())
+
+	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	posts, ok := response["Posts"].([]interface{})
+	if !ok || len(posts) == 0 {
+		t.Fatal("expected Posts to be included in response")
+	}
+}
+
+// TestAuth_ChildInclude_NoAuth tests that scoped child includes are silently
+// dropped when the user is not authenticated.
+func TestAuth_ChildInclude_NoAuth(t *testing.T) {
+	db := setupNestedIncludeTest(t)
+	author, _, _ := seedNestedIncludeData(t, db)
+
+	// No auth middleware — unauthenticated request
+	r := chi.NewRouter()
+	b := router.NewBuilder(r)
+	registerNestedIncludeRoutes(b, router.AllPublic())
+
+	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 (author is public), got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Posts require ownership auth — should not be included for unauthenticated user
+	if posts, ok := response["Posts"].([]interface{}); ok && len(posts) > 0 {
+		t.Error("expected Posts to not be included for unauthenticated user")
+	}
+}
+
+// TestAuth_ChildInclude_WrongScope tests that child includes are silently
+// dropped when the user lacks the required scope.
+func TestAuth_ChildInclude_WrongScope(t *testing.T) {
+	db := setupNestedIncludeTest(t)
+	author, _, _ := seedNestedIncludeData(t, db)
+
+	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
+	b := router.NewBuilder(r)
+
+	// Posts require "premium" scope
+	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
+		router.AllPublic(),
+		func(b *router.Builder) {
+			router.RegisterRoutes[IncludeTestPost](b, "/posts",
+				router.AllScoped("premium"),
+				router.WithRelationName("Posts"),
+			)
+		},
+	)
+
+	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if posts, ok := response["Posts"].([]interface{}); ok && len(posts) > 0 {
+		t.Error("expected Posts to not be included (user lacks 'premium' scope)")
+	}
+}
+
+// TestAuth_ChildInclude_ScopeGrantsAccess tests that having the required scope
+// allows including a child relation that would otherwise be blocked.
+func TestAuth_ChildInclude_ScopeGrantsAccess(t *testing.T) {
+	db := setupNestedIncludeTest(t)
+	author, _, _ := seedNestedIncludeData(t, db)
+
+	// User has "premium" scope which matches the child's requirement
+	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user", "premium"})
+	b := router.NewBuilder(r)
+
+	// Author is public, Posts require "premium" scope
+	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
+		router.AllPublic(),
+		func(b *router.Builder) {
+			router.RegisterRoutes[IncludeTestPost](b, "/posts",
+				router.AllScoped("premium"),
+				router.WithRelationName("Posts"),
+			)
+		},
+	)
+
+	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	posts, ok := response["Posts"].([]interface{})
+	if !ok || len(posts) == 0 {
+		t.Fatal("expected Posts to be included (user has 'premium' scope)")
+	}
+}
+
+// TestAuth_ParentInclude_NoAuth tests that scoped parent includes are silently
+// dropped when the user is not authenticated.
+func TestAuth_ParentInclude_NoAuth(t *testing.T) {
+	db := setupNestedIncludeTest(t)
+	author, post, comment := seedNestedIncludeData(t, db)
+
+	r := chi.NewRouter()
+	b := router.NewBuilder(r)
+
+	// Author requires "admin" scope, Post requires "editor" scope, Comment is public.
+	// No ownership at any level — avoids issue #28 parent ownership check blocking the request.
+	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
+		router.AllScoped("admin"),
+		func(b *router.Builder) {
+			router.RegisterRoutes[IncludeTestPost](b, "/posts",
+				router.AllScoped("editor"),
+				router.WithRelationName("Posts"),
+				func(b *router.Builder) {
+					router.RegisterRoutes[IncludeTestComment](b, "/comments",
+						router.AllPublic(),
+						router.WithRelationName("Comments"),
+					)
+				},
+			)
+		},
+	)
+
+	// Comment GET is public, but Post parent include requires "editor" scope (no auth = dropped)
+	url := "/authors/" + strconv.Itoa(author.ID) +
+		"/posts/" + strconv.Itoa(post.ID) +
+		"/comments/" + strconv.Itoa(comment.ID) +
+		"?include=Post"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 (comment is public), got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Post include should be dropped (requires "editor" scope, user is unauthenticated)
+	if postObj, ok := response["Post"].(map[string]interface{}); ok && len(postObj) > 0 {
+		t.Error("expected Post to not be included for unauthenticated user")
+	}
+}
+
+// TestAuth_ParentInclude_WrongScope tests that parent includes are silently
+// dropped when the user lacks the required scope.
+func TestAuth_ParentInclude_WrongScope(t *testing.T) {
+	db := setupNestedIncludeTest(t)
+	author, post, comment := seedNestedIncludeData(t, db)
+
+	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
+	b := router.NewBuilder(r)
+
+	// Author requires "admin", Post is ownership, Comment is public
+	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
+		router.AllScoped("admin"),
+		func(b *router.Builder) {
+			router.RegisterRoutes[IncludeTestPost](b, "/posts",
+				router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+				router.WithRelationName("Posts"),
+				func(b *router.Builder) {
+					router.RegisterRoutes[IncludeTestComment](b, "/comments",
+						router.AllPublic(),
+						router.WithRelationName("Comments"),
+					)
+				},
+			)
+		},
+	)
+
+	// User has "user" scope, trying to include Post.Author where Author needs "admin"
+	url := "/authors/" + strconv.Itoa(author.ID) +
+		"/posts/" + strconv.Itoa(post.ID) +
+		"/comments/" + strconv.Itoa(comment.ID) +
+		"?include=Post.Author"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Post include should work (alice owns it), but Author should be dropped (needs admin)
+	if postObj, ok := response["Post"].(map[string]interface{}); ok {
+		if authorObj, exists := postObj["Author"]; exists && authorObj != nil {
+			if authorMap, isMap := authorObj.(map[string]interface{}); isMap && len(authorMap) > 0 {
+				t.Error("expected Author to be blocked in Post.Author include (user lacks 'admin' scope)")
+			}
+		}
+	}
+}
+
+// TestAuth_MixedPublicParent_ScopedChildInclude tests that a public parent endpoint
+// serves correctly while scoped child includes are silently dropped for unauthorized users.
+func TestAuth_MixedPublicParent_ScopedChildInclude(t *testing.T) {
+	db := setupNestedIncludeTest(t)
+	author, _, _ := seedNestedIncludeData(t, db)
+
+	// No auth — unauthenticated request
+	r := chi.NewRouter()
+	b := router.NewBuilder(r)
+
+	// Author is public, Posts require "premium" scope
+	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
+		router.AllPublic(),
+		func(b *router.Builder) {
+			router.RegisterRoutes[IncludeTestPost](b, "/posts",
+				router.AllScoped("premium"),
+				router.WithRelationName("Posts"),
+			)
+		},
+	)
+
+	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// Parent request should succeed (public)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 (author is public), got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Author data should be present
+	if response["Name"] != "Test Author" {
+		t.Errorf("expected author name 'Test Author', got %v", response["Name"])
+	}
+
+	// Posts should not be included (requires "premium", user has no auth)
+	if posts, ok := response["Posts"].([]interface{}); ok && len(posts) > 0 {
+		t.Error("expected Posts to not be included for unauthenticated user (requires 'premium' scope)")
+	}
+}
+
+// TestAuth_NestedChildInclude_MiddleLevelBlocked tests that when a middle level
+// in a child include chain fails auth, the entire deeper path is also blocked.
+func TestAuth_NestedChildInclude_MiddleLevelBlocked(t *testing.T) {
+	db := setupNestedIncludeTest(t)
+	author, _, _ := seedNestedIncludeData(t, db)
+
+	// User has "user" scope only
+	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
+	b := router.NewBuilder(r)
+
+	// Author is public, Posts require "editor" scope, Comments are public
+	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
+		router.AllPublic(),
+		func(b *router.Builder) {
+			router.RegisterRoutes[IncludeTestPost](b, "/posts",
+				router.AllScoped("editor"),
+				router.WithRelationName("Posts"),
+				func(b *router.Builder) {
+					router.RegisterRoutes[IncludeTestComment](b, "/comments",
+						router.AllPublic(),
+						router.WithRelationName("Comments"),
+					)
+				},
+			)
+		},
+	)
+
+	// Request Posts.Comments — Posts is blocked (user lacks "editor"),
+	// so Comments can't be reached either
+	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts.Comments"
+	req := httptest.NewRequest("GET", url, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Neither Posts nor Posts.Comments should be in AllowedIncludes
+	if posts, ok := response["Posts"].([]interface{}); ok && len(posts) > 0 {
+		t.Error("expected Posts to be blocked (user lacks 'editor' scope)")
+		firstPost, _ := posts[0].(map[string]interface{})
+		if comments, exists := firstPost["Comments"]; exists && comments != nil {
+			t.Error("expected Comments to also be blocked (parent Posts is blocked)")
 		}
 	}
 }

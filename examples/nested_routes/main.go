@@ -181,5 +181,9 @@ func main() {
 	fmt.Println("  POST /users/1/posts/1/comments")
 	fmt.Println("       {\"text\": \"Great post\", \"author\": \"Bob\"}")
 	fmt.Println("  GET /users/1/posts/1/comments")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }

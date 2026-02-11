@@ -115,5 +115,9 @@ func main() {
 	fmt.Println("\nAggregation:")
 	fmt.Println("  sum  - Sum numeric fields:  sum=Price,Stock")
 	fmt.Println("         Returns X-Sum-Price and X-Sum-Stock headers")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }

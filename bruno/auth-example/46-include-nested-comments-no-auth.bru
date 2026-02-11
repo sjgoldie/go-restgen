@@ -1,0 +1,21 @@
+meta {
+  name: Include - Nested Posts.Comments No Auth (Blocked)
+  type: http
+  seq: 46
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{aliceBlogId}}?include=Posts.Comments
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  Blog has ownership configured (AuthorID).
+  Accessing without auth returns 401 before nested include logic runs.
+  Even though Comments have PublicReadOnly(), the parent Blog blocks first.
+}

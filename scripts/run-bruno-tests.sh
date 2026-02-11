@@ -1,6 +1,7 @@
 #!/bin/bash
 # Bruno API test runner for go-restgen examples
 # Usage: ./scripts/run-bruno-tests.sh [simple|nested|auth|validator|audit|uuid|custom|relations|files-proxy|files-signed|actions|batch|query|all]
+# Set PORT env var to override the default port (8080), e.g.: PORT=9090 ./scripts/run-bruno-tests.sh all
 
 set -e
 
@@ -13,6 +14,9 @@ NC='\033[0m' # No Color
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Port configuration: use PORT env var, default to 8080
+TEST_PORT="${PORT:-8080}"
 
 # Default to running all tests
 TEST_SUITE="${1:-all}"
@@ -55,25 +59,23 @@ run_bruno() {
 # Start server and wait for it to be ready
 start_server() {
     local example_dir="$1"
-    local port="${2:-8080}"
 
     # Check if port is already in use
-    if lsof -ti :"$port" > /dev/null 2>&1; then
-        print_error "Port $port is already in use. Please stop the existing server first."
+    if lsof -ti :"$TEST_PORT" > /dev/null 2>&1; then
+        print_error "Port $TEST_PORT is already in use. Please stop the existing server first."
         exit 1
     fi
 
-    print_info "Starting server from $example_dir..."
+    print_info "Starting server from $example_dir on port $TEST_PORT..."
 
     cd "$PROJECT_ROOT/$example_dir"
-    go run . &
+    PORT="$TEST_PORT" go run . &
     SERVER_PID=$!
-    SERVER_PORT=$port
 
     # Wait for server to be ready (max 10 seconds)
     local max_attempts=20
     local attempt=0
-    while ! curl -s "http://localhost:$port/health" > /dev/null 2>&1; do
+    while ! curl -s "http://localhost:$TEST_PORT/health" > /dev/null 2>&1; do
         sleep 0.5
         attempt=$((attempt + 1))
         if [ $attempt -ge $max_attempts ]; then
@@ -94,9 +96,7 @@ stop_server() {
         kill $SERVER_PID 2>/dev/null || true
         # Also kill any process listening on the port (the compiled binary)
         # go run spawns the actual server as a child process
-        if [ -n "$SERVER_PORT" ]; then
-            lsof -ti :"$SERVER_PORT" | xargs kill 2>/dev/null || true
-        fi
+        lsof -ti :"$TEST_PORT" | xargs kill 2>/dev/null || true
         wait $SERVER_PID 2>/dev/null || true
         print_success "Server stopped"
     fi
@@ -113,14 +113,13 @@ run_tests() {
     local name="$1"
     local example_dir="$2"
     local bruno_dir="$3"
-    local port="${4:-8080}"
 
     print_header "Running $name Tests"
 
-    start_server "$example_dir" "$port"
+    start_server "$example_dir"
 
     cd "$PROJECT_ROOT/bruno"
-    if run_bruno run "$bruno_dir" --env local --format json --sandbox=developer; then
+    if run_bruno run "$bruno_dir" --env local --env-var "baseUrl=http://localhost:$TEST_PORT" --format json --sandbox=developer; then
         print_success "$name tests passed"
         RESULT=0
     else
@@ -130,7 +129,6 @@ run_tests() {
 
     stop_server
     SERVER_PID=""
-    SERVER_PORT=""
 
     return $RESULT
 }

@@ -61,7 +61,9 @@ db, err := datastore.NewPostgres("postgres://user:pass@localhost:5432/dbname?ssl
 if err != nil {
     log.Fatal(err)
 }
-datastore.Initialize(db)
+if err := datastore.Initialize(db); err != nil {
+    log.Fatal(err)
+}
 defer datastore.Cleanup()
 ```
 
@@ -75,7 +77,9 @@ db, err := datastore.NewSQLite(":memory:")
 if err != nil {
     log.Fatal(err)
 }
-datastore.Initialize(db)
+if err := datastore.Initialize(db); err != nil {
+    log.Fatal(err)
+}
 defer datastore.Cleanup()
 
 // Or file-based database
@@ -103,7 +107,9 @@ sqlDB.SetMaxIdleConns(5)
 
 // Pass to go-restgen
 db := datastore.NewPostgresWithDB(sqlDB)
-datastore.Initialize(db)
+if err := datastore.Initialize(db); err != nil {
+    log.Fatal(err)
+}
 
 // IMPORTANT: You own the connection - close it yourself when done
 defer sqlDB.Close()
@@ -164,6 +170,23 @@ type Post struct {
 ```
 
 See the [UUID example](./examples/uuid_pk) for a complete working example with UUID primary keys and nested routes.
+
+### Alternate Primary Key Field Name
+
+By convention, go-restgen assumes the primary key field is named `ID`. Use `WithAlternatePK` when your model uses a different field name:
+
+```go
+type MyModel struct {
+    bun.BaseModel `bun:"table:my_models"`
+    MyPK          int    `bun:"my_pk,pk,autoincrement" json:"my_pk"`
+    Name          string `bun:"name" json:"name"`
+}
+
+router.RegisterRoutes[MyModel](b, "/models",
+    router.AllPublic(),
+    router.WithAlternatePK("MyPK"),
+)
+```
 
 ## Nested Resources
 
@@ -267,7 +290,7 @@ router.RegisterRoutes[Author](b, "/authors",
 - **Unknown relation names are silently ignored** - for security, no error is returned
 - **Works with GET, LIST, and Actions** - `/authors/1?include=Posts`, `/authors?include=Posts`, and `/orders/1/complete?include=Items`
 - **Does not work with Batch operations** - batch create/update return items without relations (reload separately if needed)
-- **Nested includes not supported** - only direct children can be included
+- **Nested includes supported** - use dot notation for deeper relations: `?include=Posts.Comments`
 
 See the [relations example](./examples/relations) for a complete working example.
 
@@ -567,7 +590,10 @@ router.RegisterRoutes[Post](b, "/posts",
 
 ```go
 // HTTP Methods
-router.MethodGet, router.MethodPost, router.MethodPut, router.MethodDelete, router.MethodAll
+router.MethodGet     // Single item: GET /resources/{id}
+router.MethodList    // Collection: GET /resources
+router.MethodPost, router.MethodPut, router.MethodDelete
+router.MethodAll     // Expands to Get, List, Post, Put, Delete (excludes batch)
 
 // Special Scopes
 router.ScopePublic    // "__restgen_public__" - No auth required
@@ -575,6 +601,22 @@ router.ScopeAuthOnly  // "__restgen_auth_only__" - Auth required, no scope check
 
 // Context Key
 router.AuthInfoKey  // "authInfo" - Key for AuthInfo in context
+```
+
+### Auth Helper Functions
+
+```go
+router.AllPublic()                                          // All methods public
+router.AllScoped("admin")                                   // All methods require scope
+router.IsAuthenticated()                                    // All methods require auth, no scope check
+router.AllWithOwnershipUnless([]string{"UserID"}, "admin")  // Ownership with bypass
+
+router.PublicReadOnly()    // GET + LIST public
+router.PublicGet()         // GET single item public
+router.PublicList()        // LIST collection public
+
+router.AllPublicWithBatch()          // All methods + batch public
+router.AllScopedWithBatch("admin")   // All methods + batch require scope
 ```
 
 ## Query Parameters: Filtering, Sorting & Pagination
@@ -670,6 +712,37 @@ GET /users?limit=10&offset=20&count=true
 
 **Response Headers:**
 - `X-Total-Count` - Total number of records (before pagination)
+
+### Sum Aggregation
+
+Request sum totals for numeric fields using the `sum` query parameter:
+
+```go
+router.RegisterRoutes[Product](b, "/products",
+    router.AllPublic(),
+    router.WithFilters("Category", "Price"),
+    router.WithSums("Price", "Stock"),  // Allow summing these fields
+)
+```
+
+```bash
+# Sum a single field
+GET /products?sum=Price
+
+# Sum multiple fields
+GET /products?sum=Price,Stock
+
+# Combine with filters
+GET /products?filter[Category]=Electronics&sum=Price,Stock&count=true
+```
+
+**Response Headers:**
+- `X-Sum-Price` - Sum of the Price field across matching records
+- `X-Sum-Stock` - Sum of the Stock field across matching records
+
+Non-numeric fields (strings, bools) return 0 in the sum header. Fields not listed in `WithSums` are silently ignored.
+
+See the [query example](./examples/query) for a complete working example with all filter operators, sorting, pagination, and sum aggregation.
 
 ### Complete Example
 
@@ -966,7 +1039,7 @@ type CustomGetAllFunc[T any] func(
     svc *service.Common[T],
     meta *metadata.TypeMetadata,
     auth *metadata.AuthInfo,
-) ([]*T, int, error)
+) ([]*T, int, map[string]float64, error)
 
 // CustomCreateFunc - for POST /resource
 // Includes file parameters for file resource support (nil for regular JSON requests).
@@ -1044,14 +1117,14 @@ router.RegisterRoutes[Task](b, "/tasks",
 ### Example: Filter GetAll by Owner
 
 ```go
-func customGetMyTasks(ctx context.Context, svc *service.Common[Task], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*Task, int, error) {
+func customGetMyTasks(ctx context.Context, svc *service.Common[Task], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*Task, int, map[string]float64, error) {
     if auth == nil {
-        return nil, 0, fmt.Errorf("not authenticated")
+        return nil, 0, nil, fmt.Errorf("not authenticated")
     }
     // Return only tasks owned by current user
     tasks := []*Task{}
     err := db.GetDB().NewSelect().Model(&tasks).Where("owner_id = ?", auth.UserID).Scan(ctx)
-    return tasks, len(tasks), err
+    return tasks, len(tasks), nil, err
 }
 
 router.RegisterRoutes[Task](b, "/my-tasks",
@@ -1562,15 +1635,19 @@ Service Layer (Business Logic)
     ↓
 Datastore Layer (Database Operations)
     ↓
-Database (PostgreSQL via Bun ORM)
+Database (PostgreSQL / SQLite via Bun ORM)
 ```
 
 ### Packages
 
-- **`router`** - Convenience functions for registering routes
-- **`handler`** - HTTP handlers for CRUD operations
+- **`router`** - Route registration, auth middleware, query config helpers
+- **`handler`** - HTTP handlers for CRUD, batch, action, and file operations
 - **`service`** - Business logic and CRUD services
-- **`datastore`** - Generic database operations
+- **`datastore`** - Generic database operations with filtering, sorting, pagination
+- **`metadata`** - Type metadata, validation context, audit context
+- **`errors`** - Domain error types (ErrNotFound, ErrDuplicate, etc.)
+- **`filestore`** - File storage interface and FileFields embed
+- **`metrics`** - Optional OTEL metrics middleware
 
 ## Custom Database Implementation
 
@@ -1681,7 +1758,9 @@ import "github.com/sjgoldie/go-restgen/metrics"
 
 func main() {
     // Initialize with your meter provider (or nil for global)
-    metrics.Initialize(meterProvider)
+    if err := metrics.Initialize(meterProvider); err != nil {
+        log.Fatal(err)
+    }
 
     r := chi.NewRouter()
     r.Use(metrics.Middleware())
@@ -1710,7 +1789,8 @@ If OTEL is not configured, metrics are no-ops with negligible overhead.
 
 ```go
 // Register standard CRUD
-router.RegisterCRUD[User](r, "/users")
+b := router.NewBuilder(r)
+router.RegisterRoutes[User](b, "/users", router.AllPublic())
 
 // Add custom endpoints
 r.Post("/users/bulk", bulkCreateHandler)
@@ -1729,7 +1809,7 @@ func myCustomHandler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    users, err := svc.GetAll(r.Context(), []string{})
+    users, _, _, err := svc.GetAll(r.Context())
     // ... handle response
 }
 ```
@@ -1744,6 +1824,7 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[Authentication & Authorization](./examples/auth)** - Comprehensive auth patterns including scopes, ownership, admin bypass, and multi-ownership
 - **[Validation](./examples/validator)** - Business rule validation with state machine transitions
 - **[Audit](./examples/audit)** - Audit logging with transactional consistency
+- **[Query Parameters](./examples/query)** - Comprehensive filtering, sorting, pagination, and sum aggregation
 - **[Relations](./examples/relations)** - Loading related resources via `?include=` with auth
 - **[File Upload (Proxy)](./examples/files_proxy)** - File upload/download with proxy mode (files stream through server)
 - **[File Upload (Signed URL)](./examples/files_signed)** - File upload/download with signed URL mode (direct to storage)
@@ -1773,7 +1854,9 @@ func TestMyHandler(t *testing.T) {
     }
 
     // Initialize datastore
-    datastore.Initialize(db)
+    if err := datastore.Initialize(db); err != nil {
+        t.Fatal(err)
+    }
     defer datastore.Cleanup()
 
     // Create test tables
@@ -1791,11 +1874,17 @@ func TestMyHandler(t *testing.T) {
 Run tests (excluding examples):
 
 ```bash
-go test ./metadata ./datastore ./router ./service ./handler ./errors -coverprofile=/tmp/coverage.out
+go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore ./metrics -coverprofile=/tmp/coverage.out
 go tool cover -func=/tmp/coverage.out
 ```
 
-For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 58 comprehensive API tests covering filtering, sorting, pagination, and ownership.
+For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 246 API tests across 13 example applications.
+
+You can override the default port (8080) using the `PORT` environment variable:
+
+```bash
+PORT=9090 ./scripts/run-bruno-tests.sh all
+```
 
 ## Dependencies
 
@@ -1836,7 +1925,7 @@ cd go-restgen
 ./scripts/setup-hooks.sh
 
 # Run tests
-go test ./metadata ./datastore ./router ./service ./handler ./errors
+go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore ./metrics
 
 # Run linting
 golangci-lint run

@@ -46,8 +46,13 @@ func main() {
     logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
     slog.SetDefault(logger)
 
-    db, _ := datastore.NewSQLite(":memory:")
-    datastore.Initialize(db)
+    db, err := datastore.NewSQLite(":memory:")
+    if err != nil {
+        log.Fatal(err)
+    }
+    if err := datastore.Initialize(db); err != nil {
+        log.Fatal(err)
+    }
     defer datastore.Cleanup()
 
     db.GetDB().NewCreateTable().Model((*User)(nil)).IfNotExists().Exec(context.Background())
@@ -93,6 +98,7 @@ router.RegisterRoutes[Model](builder, "/path",
     router.AllPublic(),                    // No auth required
     router.AllScoped("admin"),             // Requires "admin" scope for all methods
     router.IsAuthenticated(),              // Just requires valid auth, no scope check
+    router.PublicList(),                   // Only LIST (collection GET) is public
 
     // Per-method auth
     router.AuthConfig{
@@ -116,6 +122,8 @@ router.RegisterRoutes[Model](builder, "/path",
     router.WithPagination(20, 100),
     router.WithDefaultSort("-CreatedAt"),
     router.WithRelationName("Posts"),  // enables ?include=Posts on parent
+    router.WithSums("Price", "Stock"),  // enables ?sum=Price,Stock with X-Sum-* headers
+    router.WithAlternatePK("MyPK"),     // when PK field isn't named "ID"
 
     // Custom handlers
     router.WithCustomGet(customGetFn),
@@ -216,7 +224,7 @@ func customGetAll(
     svc *service.Common[User],
     meta *metadata.TypeMetadata,
     auth *metadata.AuthInfo,
-) ([]*User, int, error) {
+) ([]*User, int, map[string]float64, error) {
     // Custom logic here
     return svc.GetAll(ctx)
 }
@@ -348,7 +356,8 @@ Built-in support on GetAll endpoints:
 | Limit | `?limit=10` | Max results |
 | Offset | `?offset=20` | Skip results |
 | Count | `?count=true` | Include X-Total-Count header |
-| Include | `?include=Posts` | Load relations (requires WithRelationName on child route) |
+| Include | `?include=Posts` or `?include=Posts.Comments` | Load relations (requires WithRelationName on child route). Dot notation for nested. |
+| Sum | `?sum=Price,Stock` | Sum numeric fields, returns X-Sum-Price, X-Sum-Stock headers (requires WithSums) |
 
 **Filter operator details:**
 - `in` - In list: `?filter[Status][in]=active,pending`
@@ -373,7 +382,7 @@ return nil, apperrors.NewValidationError("title cannot be empty")  // 400
 
 ## Logging
 
-Framework uses `slog`. Default level is Error (quiet).
+Framework uses context-aware `slog`. You configure the level in your application.
 
 ```go
 import "log/slog"
@@ -387,7 +396,7 @@ func main() {
 }
 ```
 
-Logs at Warn level: failed operations, missing parameters, decode errors.
+Log levels: Error (DB failures), Warn (auth rejections, validation), Debug (client 4xx errors).
 
 ## Testing Checklist
 
@@ -418,7 +427,9 @@ sqlDB.SetMaxIdleConns(5)
 
 // Pass to go-restgen
 db := datastore.NewPostgresWithDB(sqlDB)
-datastore.Initialize(db)
+if err := datastore.Initialize(db); err != nil {
+    log.Fatal(err)
+}
 
 // IMPORTANT: Cleanup() will NOT close your *sql.DB
 // You must close it yourself when done

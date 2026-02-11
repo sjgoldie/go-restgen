@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/sjgoldie/go-restgen/metadata"
 )
@@ -67,16 +68,19 @@ func wrapWithAuth(next http.Handler, config *AuthConfig) http.Handler {
 		// Extract AuthInfo from context (may be nil for unauthenticated requests)
 		authInfo, _ := ctx.Value(AuthInfoKey).(*AuthInfo)
 
-		// Build AllowedIncludes for child routes first
+		// Build AllowedIncludes for child and parent routes
 		// This must happen before the parent auth check so public parents still get child includes
+		allowedIncludes := make(metadata.AllowedIncludes)
+
 		if len(config.ChildAuth) > 0 {
-			allowedIncludes := make(metadata.AllowedIncludes)
-			for relationName, childConfig := range config.ChildAuth {
-				childResult := checkAuth(authInfo, childConfig)
-				if childResult.Status == authOK {
-					allowedIncludes[relationName] = childResult.ApplyOwnership
-				}
-			}
+			buildChildAllowedIncludes(authInfo, config.ChildAuth, "", false, allowedIncludes)
+		}
+
+		if config.ParentAuth != nil {
+			buildParentAllowedIncludes(authInfo, config, allowedIncludes)
+		}
+
+		if len(allowedIncludes) > 0 {
 			ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, allowedIncludes)
 		}
 
@@ -166,6 +170,55 @@ func checkParentOwnership(authInfo *AuthInfo, meta *metadata.TypeMetadata) paren
 	return parentOwnershipResult{
 		status:                  authOK,
 		parentsNeedingOwnership: parentsNeedingOwnership,
+	}
+}
+
+// buildChildAllowedIncludes recursively walks the ChildAuth tree, running checkAuth at each
+// level and building dotted paths for AllowedIncludes. Auth is cumulative (AND): a deeper
+// level is only reachable if its parent passes. Ownership flag is cumulative (OR): if any
+// level in the chain has ApplyOwnership, the dotted path gets true.
+func buildChildAllowedIncludes(authInfo *AuthInfo, childAuth map[string]*AuthConfig, prefix string, parentApplyOwnership bool, includes metadata.AllowedIncludes) {
+	for relationName, childConfig := range childAuth {
+		childResult := checkAuth(authInfo, childConfig)
+		if childResult.Status != authOK {
+			continue
+		}
+
+		path := relationName
+		if prefix != "" {
+			path = prefix + "." + relationName
+		}
+
+		applyOwnership := parentApplyOwnership || childResult.ApplyOwnership
+		includes[path] = applyOwnership
+
+		if len(childConfig.ChildAuth) > 0 {
+			buildChildAllowedIncludes(authInfo, childConfig.ChildAuth, path, applyOwnership, includes)
+		}
+	}
+}
+
+// buildParentAllowedIncludes walks the ParentAuth chain, running checkAuth at each level
+// and building dotted paths for parent includes (belongs-to direction).
+// Auth is cumulative (AND): stops at the first level that fails.
+// Ownership flag is cumulative (OR).
+func buildParentAllowedIncludes(authInfo *AuthInfo, config *AuthConfig, includes metadata.AllowedIncludes) {
+	var parts []string
+	var cumulativeOwnership bool
+	current := config
+
+	for current.ParentAuth != nil {
+		parentResult := checkAuth(authInfo, current.ParentAuth)
+		if parentResult.Status != authOK {
+			break
+		}
+
+		parts = append(parts, current.ParentIncludeName)
+		cumulativeOwnership = cumulativeOwnership || parentResult.ApplyOwnership
+		path := strings.Join(parts, ".")
+		includes[path] = cumulativeOwnership
+
+		current = current.ParentAuth
 	}
 }
 

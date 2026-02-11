@@ -33,11 +33,23 @@ The easiest way to run all Bruno tests is using the automated script:
 # Run all example tests
 ./scripts/run-bruno-tests.sh all
 
+# Override port (default 8080)
+PORT=9090 ./scripts/run-bruno-tests.sh all
+
 # Run specific example tests
 ./scripts/run-bruno-tests.sh simple
 ./scripts/run-bruno-tests.sh nested
-./scripts/run-bruno-tests.sh uuid
 ./scripts/run-bruno-tests.sh auth
+./scripts/run-bruno-tests.sh validator
+./scripts/run-bruno-tests.sh audit
+./scripts/run-bruno-tests.sh uuid
+./scripts/run-bruno-tests.sh custom
+./scripts/run-bruno-tests.sh relations
+./scripts/run-bruno-tests.sh files-proxy
+./scripts/run-bruno-tests.sh files-signed
+./scripts/run-bruno-tests.sh actions
+./scripts/run-bruno-tests.sh batch
+./scripts/run-bruno-tests.sh query
 ```
 
 The script automatically:
@@ -52,7 +64,7 @@ The script automatically:
 
 1. Start one of the example servers (see sections below)
 2. Open Bruno GUI
-3. Navigate to the example folder (simple-example, nested-example, or auth-example)
+3. Navigate to the desired example folder
 4. Click "Run Collection" to run all tests
 
 ### Using Bruno CLI (Manual)
@@ -77,6 +89,10 @@ bru run bruno/simple-example --env local
 bru run bruno/simple-example --env local --reporter json
 bru run bruno/simple-example --env local --reporter junit
 bru run bruno/simple-example --env local --reporter html
+
+# Note: Bruno v3+ defaults to safe sandbox mode.
+# Use --sandbox=developer for tests that use bru.setVar() or script blocks:
+bru run bruno/simple-example --env local --sandbox=developer
 ```
 
 ---
@@ -150,7 +166,7 @@ go run main.go
 - Open the `auth-example` folder
 - Click "Run Collection" to run all tests in sequence
 
-**Tests cover (25 tests):**
+**Tests cover (48 tests):**
 1. **Articles** - Public reads, publisher-only writes
 2. **Blogs** - Ownership filtering with query parameters:
    - Users see only their blogs, admin sees all
@@ -160,6 +176,12 @@ go run main.go
 3. **Posts** - Multi-ownership (accessible by author OR editor)
 4. **Comments** - Mixed auth (GET is public, POST/PUT/DELETE require auth)
 5. **Reports** - MethodList vs MethodGet differentiation
+6. **Parent ownership cascade** - Nested resources blocked when parent ownership fails
+7. **Relation includes with auth** - `?include=Posts`, `?include=Posts.Comments`, `?include=Blog`:
+   - Owner includes child/parent relations
+   - Admin bypasses ownership on includes
+   - No auth blocked (401)
+   - Nested includes through ownership chain
 
 **Test users (bearer tokens):**
 - `user:alice:user` - Regular user
@@ -218,9 +240,127 @@ go run main.go
 - Old and new state captured
 - Audit runs in same transaction
 
+### Query Example Tests
+
+Tests comprehensive filtering, sorting, pagination, and sum aggregation.
+
+**Start the server:**
+```bash
+cd examples/query
+go run main.go
+```
+
+**Tests cover (36 tests):**
+- All filter operators (eq, neq, gt, gte, lt, lte, like, in, nin, bt, nbt)
+- Combined filters with sort and pagination
+- Boolean and string edge cases
+- Sum aggregation (single, multiple, with filters, with count)
+- Sum of non-numeric fields (returns 0)
+- Sum of non-allowed and non-existent fields
+
+### Custom Handlers Example Tests
+
+Tests custom handler overrides for Get, GetAll, Create, Update, Delete.
+
+**Start the server:**
+```bash
+cd examples/custom
+go run main.go
+```
+
+**Tests cover (16 tests):**
+- Custom `/me` endpoint (get/update current user)
+- Custom GetAll filtering by owner
+- Custom update with validation logic
+- Custom delete prevention (audit logs)
+
+### Relations Example Tests
+
+Tests relation includes (`?include=`) and single routes (belongs-to).
+
+**Start the server:**
+```bash
+cd examples/relations
+go run main.go
+```
+
+**Tests cover (23 tests):**
+- Include child relations (has-many)
+- Include parent relations (belongs-to)
+- Multiple includes, invalid includes (silently ignored)
+- Ownership filtering on includes
+- Single routes (GET/PUT) for belongs-to relations
+- `/me` endpoint with custom get/update
+- Method restrictions on single routes (no POST/DELETE)
+
+### Files Proxy Example Tests
+
+Tests file upload/download with proxy mode (files stream through server).
+
+**Start the server:**
+```bash
+cd examples/files_proxy
+go run main.go
+```
+
+**Tests cover (13 tests):**
+- Upload files via multipart form
+- Get file metadata
+- List files
+- Download via `/download` endpoint (proxy mode)
+- Delete files
+
+### Files Signed URL Example Tests
+
+Tests file upload/download with signed URL mode (direct download from storage).
+
+**Start the server:**
+```bash
+cd examples/files_signed
+go run main.go
+```
+
+**Tests cover (13 tests):**
+- Upload files via multipart form
+- Get file metadata with `download_url` pointing to storage
+- Download via signed URL (direct)
+- Delete files
+
+### Actions Example Tests
+
+Tests custom action endpoints on resources.
+
+**Start the server:**
+```bash
+cd examples/actions
+go run main.go
+```
+
+**Tests cover (12 tests):**
+- Cancel and complete actions on orders
+- Invalid state transitions rejected
+- Action on non-existent resource (404)
+- Action with `?include=` on response
+
+### Batch Example Tests
+
+Tests bulk create, update, and delete operations.
+
+**Start the server:**
+```bash
+cd examples/batch
+go run main.go
+```
+
+**Tests cover (14 tests):**
+- Batch create, update, delete
+- Empty batch handling
+- Batch update/delete with non-existent IDs
+- Batch create with `?include=` on response
+
 ## Test Coverage
 
-**Total: 96 end-to-end API tests** across all example applications.
+**Total: 246 end-to-end API tests** across 13 example applications.
 
 These Bruno tests provide **end-to-end API coverage** for the example applications. They complement the unit tests by:
 

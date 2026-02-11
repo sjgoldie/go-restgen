@@ -1,0 +1,21 @@
+meta {
+  name: Include - Parent Post on Comment No Auth (Blocked)
+  type: http
+  seq: 48
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{aliceBlogId}}/posts/{{alicePostId}}/comments/{{commentId}}?include=Post
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  Even though Comment GET has PublicReadOnly(), parent ownership checks
+  cascade from Blog (AuthorID) and Post (AuthorID, EditorID).
+  Accessing without auth returns 401 due to parent chain ownership.
+}

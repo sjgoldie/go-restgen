@@ -16,7 +16,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.13'
 
       - name: Install golangci-lint v2
         run: |
@@ -35,7 +35,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.13'
 
       - name: Check formatting
         run: |
@@ -54,7 +54,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.13'
 
       - name: Run go vet
         run: go vet ./...
@@ -68,7 +68,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.11'
+          go-version: '1.24.13'
 
       - name: Check go mod tidy
         run: |

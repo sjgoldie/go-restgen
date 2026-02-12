@@ -317,7 +317,7 @@ func main() {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, db.GetDB())
 
 	// /me endpoint - single route with custom Get and Update using auth token
 	// AsSingleRouteWithPut("") creates GET /me and PUT /me (no {id} parameter)

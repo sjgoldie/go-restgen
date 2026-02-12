@@ -63,7 +63,7 @@ func main() {
         w.Write([]byte("OK"))
     })
 
-    b := router.NewBuilder(r)
+    b := router.NewBuilder(r, db.GetDB())
     router.RegisterRoutes[User](b, "/users", router.AllPublic())
 
     log.Fatal(http.ListenAndServe(":8080", r))
@@ -122,6 +122,7 @@ router.RegisterRoutes[Model](builder, "/path",
     router.WithPagination(20, 100),
     router.WithDefaultSort("-CreatedAt"),
     router.WithRelationName("Posts"),  // enables ?include=Posts on parent
+    router.WithJoinOn("NMI", "NMI"),  // custom join: child.NMI = parent.NMI (no belongs-to tag needed)
     router.WithSums("Price", "Stock"),  // enables ?sum=Price,Stock with X-Sum-* headers
     router.WithAlternatePK("MyPK"),     // when PK field isn't named "ID"
 
@@ -160,7 +161,7 @@ type Post struct {
     Title         string `bun:"title,notnull" json:"title"`
 }
 
-b := router.NewBuilder(r)
+b := router.NewBuilder(r, db.GetDB())
 router.RegisterRoutes[Blog](b, "/blogs", router.AllPublic(), func(b *router.Builder) {
     router.RegisterRoutes[Post](b, "/posts", router.AllPublic())
 })

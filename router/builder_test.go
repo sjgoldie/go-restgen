@@ -4,6 +4,7 @@ package router_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/sqlitedialect"
+	_ "github.com/uptrace/bun/driver/sqliteshim"
 
 	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/sjgoldie/go-restgen/filestore"
@@ -24,6 +27,16 @@ import (
 	"github.com/sjgoldie/go-restgen/router"
 	"github.com/sjgoldie/go-restgen/service"
 )
+
+func testDB(t *testing.T) *bun.DB {
+	t.Helper()
+	sqlDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sqlDB.Close() })
+	return bun.NewDB(sqlDB, sqlitedialect.New())
+}
 
 func TestMain(m *testing.M) {
 	// Initialize datastore for all tests
@@ -122,7 +135,7 @@ func setupBuilderTest(t *testing.T) (*chi.Mux, *bun.DB) {
 
 	// Create router with nested routes using Builder API
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 	router.RegisterRoutes[TestUser](b, "/users", router.AuthConfig{
 		Methods: []string{router.MethodAll},
 		Scopes:  []string{router.ScopePublic},
@@ -469,7 +482,7 @@ func TestMultiReg_SameModelRootAndNested(t *testing.T) {
 
 	// Setup router with Item at root AND nested under Project
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Root registration: /items (all items)
 	router.RegisterRoutes[MultiRegItem](b, "/items", router.AuthConfig{
@@ -574,7 +587,7 @@ func TestMultiReg_SameModelDifferentParents(t *testing.T) {
 
 	// Setup router with Item under both Project and User
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	router.RegisterRoutes[MultiRegProject](b, "/projects", router.AuthConfig{
 		Methods: []string{router.MethodAll},
@@ -671,7 +684,7 @@ func TestMultiReg_DifferentOwnershipPerRegistration(t *testing.T) {
 	// - /projects/{id}/items: ownership enforced (sees only own items)
 	r := chi.NewRouter()
 	addMultiRegAuthMiddleware(r, "alice", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Root: public, no ownership
 	router.RegisterRoutes[MultiRegItem](b, "/items", router.AuthConfig{
@@ -764,7 +777,7 @@ func TestMultiReg_DifferentBypassScopesPerRegistration(t *testing.T) {
 		// Admin can see all project items (bypass)
 		r := chi.NewRouter()
 		addMultiRegAuthMiddleware(r, "admin_user", []string{"admin"})
-		b := router.NewBuilder(r)
+		b := router.NewBuilder(r, testDB(t))
 
 		router.RegisterRoutes[MultiRegProject](b, "/projects", router.AuthConfig{
 			Methods: []string{router.MethodAll},
@@ -800,7 +813,7 @@ func TestMultiReg_DifferentBypassScopesPerRegistration(t *testing.T) {
 		// Admin does NOT bypass user items (different bypass scope)
 		r := chi.NewRouter()
 		addMultiRegAuthMiddleware(r, "admin_user", []string{"admin"})
-		b := router.NewBuilder(r)
+		b := router.NewBuilder(r, testDB(t))
 
 		router.RegisterRoutes[MultiRegUser](b, "/users", router.AuthConfig{
 			Methods: []string{router.MethodAll},
@@ -837,7 +850,7 @@ func TestMultiReg_DifferentBypassScopesPerRegistration(t *testing.T) {
 		// Moderator can see all user items (bypass)
 		r := chi.NewRouter()
 		addMultiRegAuthMiddleware(r, "mod_user", []string{"moderator"})
-		b := router.NewBuilder(r)
+		b := router.NewBuilder(r, testDB(t))
 
 		router.RegisterRoutes[MultiRegUser](b, "/users", router.AuthConfig{
 			Methods: []string{router.MethodAll},
@@ -891,7 +904,7 @@ func TestBuilder_QueryConfigOptions(t *testing.T) {
 
 	// Setup router with query config options
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	router.RegisterRoutes[MultiRegItem](b, "/items",
 		router.AuthConfig{
@@ -1071,7 +1084,7 @@ func TestBuilder_ValidationCreate(t *testing.T) {
 	setupJobTable()
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Register with validator: new jobs must have status "pending" and priority 1-5
 	router.RegisterRoutes[Job](b, "/jobs",
@@ -1149,7 +1162,7 @@ func TestBuilder_ValidationUpdate(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Validator: can only move to "in_progress" from "pending", and to "complete" from "in_progress"
 	router.RegisterRoutes[Job](b, "/jobs",
@@ -1229,7 +1242,7 @@ func TestBuilder_ValidationDelete(t *testing.T) {
 	_, _ = db.NewInsert().Model(inProgressJob).Returning("*").Exec(context.Background())
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Validator: can't delete jobs that are in_progress
 	router.RegisterRoutes[Job](b, "/jobs",
@@ -1286,7 +1299,7 @@ func TestBuilder_CustomHandlers(t *testing.T) {
 
 	// Setup router with ALL custom handler options
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	customGetCalled := false
 	customGetAllCalled := false
@@ -1437,7 +1450,7 @@ func TestWithAudit(t *testing.T) {
 
 	// Setup router with audit
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	router.RegisterRoutes[AuditedTask](b, "/tasks",
 		router.AuthConfig{

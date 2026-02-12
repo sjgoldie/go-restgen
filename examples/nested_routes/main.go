@@ -135,7 +135,7 @@ func main() {
 	})
 
 	// Register nested routes using the Builder API
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, db.GetDB())
 	router.RegisterRoutes[User](b, "/users", router.AllPublic(), func(b *router.Builder) {
 		router.RegisterRoutes[Post](b, "/posts", router.AllPublic(), func(b *router.Builder) {
 			router.RegisterRoutes[Comment](b, "/comments", router.AllPublic())

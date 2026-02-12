@@ -1,0 +1,19 @@
+meta {
+  name: Usage Data with Wrong Parent (404)
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/users/{{userId}}/accounts/{{account2Id}}/sites/{{site2Id}}/usage-data/{{usageId}}
+  body: none
+  auth: none
+}
+
+script:post-response {
+  // usageId belongs to NMI001 but we're querying under site2 (NMI002)
+  // This should return 404 because the NMI doesn't match
+  if (res.status !== 404) {
+    throw new Error(`Expected 404 for usage data under wrong NMI parent, got ${res.status}`);
+  }
+}

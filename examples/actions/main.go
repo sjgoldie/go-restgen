@@ -157,7 +157,7 @@ func main() {
 	})
 
 	// Register routes with actions
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, db.GetDB())
 	router.RegisterRoutes[Order](b, "/orders",
 		router.AllPublic(),
 		router.WithFilters("Status", "CustomerName"),

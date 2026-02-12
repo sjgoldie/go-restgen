@@ -547,6 +547,48 @@ jobs:
         working-directory: bruno
         run: bru run custom-example --env local --format json --sandbox=developer
 
+  custom-join-example-test:
+    name: Custom Join Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.13'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Server
+        working-directory: examples/custom_join
+        run: go build -o /tmp/custom-join-server .
+
+      - name: Start Server
+        run: /tmp/custom-join-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run custom-join-example --env local --format json --sandbox=developer
+
   query-example-test:
     name: Query Example Test
     runs-on: ubuntu-latest

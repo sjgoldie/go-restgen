@@ -193,7 +193,7 @@ func main() {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, db.GetDB())
 
 	// Users - public access
 	router.RegisterRoutes[User](b, "/users",

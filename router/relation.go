@@ -14,6 +14,21 @@ func WithRelationName(name string) RelationConfig {
 	}
 }
 
+// JoinOnConfig specifies custom join columns for non-FK relationships.
+// Use this when the child has no belongs-to tag pointing to the parent
+// and the join is on a shared attribute (e.g., NMI) rather than the parent's PK.
+type JoinOnConfig struct {
+	ChildCol  string // Column on child table (e.g., "nmi")
+	ParentCol string // Column on parent table (e.g., "nmi")
+}
+
+// WithJoinOn configures custom join columns for this child route.
+// Used when the relationship is through a shared attribute rather than a foreign key.
+// Example: WithJoinOn("NMI", "NMI") joins usage_data.nmi = sites.nmi
+func WithJoinOn(childCol, parentCol string) JoinOnConfig {
+	return JoinOnConfig{ChildCol: childCol, ParentCol: parentCol}
+}
+
 // SingleRouteConfig marks this route as a single-object route (not a collection)
 // Used for belongs-to relations like /posts/{id}/author
 // Only GET is registered; the ID is resolved from the parent's FK field

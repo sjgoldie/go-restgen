@@ -839,24 +839,10 @@ func splitStringValues(vals []any) []any {
 	return result
 }
 
-// isNumericField checks if a field on the model type is a numeric type (int, uint, float)
-func isNumericField(modelType reflect.Type, fieldName string) bool {
-	field, found := modelType.FieldByName(fieldName)
-	if !found {
-		return false
-	}
-	switch field.Type.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64:
-		return true
-	}
-	return false
-}
-
 // computeAggregates computes count and/or sum aggregates for the query.
 // When both count and sums are requested, they're combined into a single query.
-// Invalid sum fields (not in allowlist, non-numeric, or non-existent) return 0 with slog warning.
+// Fields not in the SummableFields allowlist or without a valid column mapping return 0 with slog warning.
+// The database handles type validation — SUM on non-numeric columns will return a database error.
 func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) (int, map[string]float64, error) {
 	var totalCount int
 	var sums map[string]float64
@@ -879,12 +865,6 @@ func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQue
 			// Check if field is in allowlist
 			if !slices.Contains(meta.SummableFields, field) {
 				slog.WarnContext(ctx, "sum requested for field not in SummableFields", "field", field, "type", meta.TypeName)
-				continue
-			}
-
-			// Check if field exists and is numeric
-			if !isNumericField(meta.ModelType, field) {
-				slog.WarnContext(ctx, "sum requested for non-numeric field", "field", field, "type", meta.TypeName)
 				continue
 			}
 

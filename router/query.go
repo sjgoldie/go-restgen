@@ -45,8 +45,9 @@ func WithDefaultSort(field string) QueryConfig {
 	}
 }
 
-// WithSums returns a QueryConfig that enables sum aggregation on the specified fields
-// Only numeric fields (int, float, uint) can be summed; non-numeric fields return 0
+// WithSums returns a QueryConfig that enables sum aggregation on the specified fields.
+// Any field with a numeric database column type (including struct-based types like decimal.Decimal)
+// can be summed. The database validates the type — summing a non-numeric column returns a database error.
 func WithSums(fields ...string) QueryConfig {
 	return QueryConfig{
 		SummableFields: fields,

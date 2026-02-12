@@ -2774,10 +2774,10 @@ func TestHandler_GetAll_SumHeaders(t *testing.T) {
 			},
 		},
 		{
-			name:        "bool field returns 0",
+			name:        "bool field sums true values",
 			queryString: "sum=InStock",
 			expectedHeaders: map[string]string{
-				"X-Sum-InStock": "0",
+				"X-Sum-InStock": "2", // Apple=true(1) + Banana=true(1) + Carrot=false(0) = 2
 			},
 		},
 		{

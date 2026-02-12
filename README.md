@@ -755,13 +755,13 @@ GET /users?limit=10&offset=20&count=true
 
 ### Sum Aggregation
 
-Request sum totals for numeric fields using the `sum` query parameter:
+Request sum totals using the `sum` query parameter. Any field with a numeric database column type can be summed, including struct-based types like `decimal.Decimal`:
 
 ```go
 router.RegisterRoutes[Product](b, "/products",
     router.AllPublic(),
     router.WithFilters("Category", "Price"),
-    router.WithSums("Price", "Stock"),  // Allow summing these fields
+    router.WithSums("Price", "Stock", "TotalAmount"),  // Allow summing these fields
 )
 ```
 
@@ -780,7 +780,7 @@ GET /products?filter[Category]=Electronics&sum=Price,Stock&count=true
 - `X-Sum-Price` - Sum of the Price field across matching records
 - `X-Sum-Stock` - Sum of the Stock field across matching records
 
-Non-numeric fields (strings, bools) return 0 in the sum header. Fields not listed in `WithSums` are silently ignored.
+Fields not listed in `WithSums` are silently ignored (returns 0). Bool fields return the count of `true` values. The database validates types — summing a non-numeric column (e.g. a string) returns a database error.
 
 See the [query example](./examples/query) for a complete working example with all filter operators, sorting, pagination, and sum aggregation.
 

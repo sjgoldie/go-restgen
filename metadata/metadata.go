@@ -108,6 +108,8 @@ type TypeMetadata struct {
 	ParentType      reflect.Type  // Go type of parent (nil if root)
 	ParentMeta      *TypeMetadata // Direct pointer to parent metadata (nil if root)
 	ForeignKeyCol   string        // Column in THIS table that references parent (e.g., "user_id")
+	ParentJoinCol   string        // Parent column for JOIN SQL (default: "id"). Overridden by WithJoinOn().
+	ParentJoinField string        // Parent Go field name for JOIN (default: "ID"). Used by setForeignKey for custom joins.
 	OwnershipFields []string      // Model field names for ownership validation (OR logic)
 	BypassScopes    []string      // Scopes that bypass ownership validation (e.g., "admin")
 
@@ -143,24 +145,26 @@ type TypeMetadata struct {
 // Slices and maps are fully copied; pointer fields (ParentMeta) reference the same object.
 func (m *TypeMetadata) Clone() *TypeMetadata {
 	result := &TypeMetadata{
-		TypeID:         m.TypeID,
-		TypeName:       m.TypeName,
-		TableName:      m.TableName,
-		URLParamUUID:   m.URLParamUUID,
-		PKField:        m.PKField,
-		ModelType:      m.ModelType,
-		ParentType:     m.ParentType,
-		ParentMeta:     m.ParentMeta, // Intentionally shared - parent is not owned by this metadata
-		ForeignKeyCol:  m.ForeignKeyCol,
-		RelationName:   m.RelationName,
-		ParentFKField:  m.ParentFKField,
-		DefaultSort:    m.DefaultSort,
-		DefaultLimit:   m.DefaultLimit,
-		MaxLimit:       m.MaxLimit,
-		Validator:      m.Validator,
-		Auditor:        m.Auditor,
-		IsFileResource: m.IsFileResource,
-		BatchLimit:     m.BatchLimit,
+		TypeID:          m.TypeID,
+		TypeName:        m.TypeName,
+		TableName:       m.TableName,
+		URLParamUUID:    m.URLParamUUID,
+		PKField:         m.PKField,
+		ModelType:       m.ModelType,
+		ParentType:      m.ParentType,
+		ParentMeta:      m.ParentMeta, // Intentionally shared - parent is not owned by this metadata
+		ForeignKeyCol:   m.ForeignKeyCol,
+		ParentJoinCol:   m.ParentJoinCol,
+		ParentJoinField: m.ParentJoinField,
+		RelationName:    m.RelationName,
+		ParentFKField:   m.ParentFKField,
+		DefaultSort:     m.DefaultSort,
+		DefaultLimit:    m.DefaultLimit,
+		MaxLimit:        m.MaxLimit,
+		Validator:       m.Validator,
+		Auditor:         m.Auditor,
+		IsFileResource:  m.IsFileResource,
+		BatchLimit:      m.BatchLimit,
 	}
 
 	// Deep copy slices

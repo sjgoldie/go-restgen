@@ -1,0 +1,27 @@
+meta {
+  name: Create Site with NMI002
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/users/{{userId}}/accounts/{{account2Id}}/sites
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "nmi": "NMI002",
+    "address": "456 Beach Rd"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.nmi: eq NMI002
+}
+
+script:post-response {
+  bru.setVar("site2Id", res.body.id);
+}

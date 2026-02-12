@@ -151,7 +151,7 @@ func main() {
 	})
 
 	// Register Task routes with validation
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, db.GetDB())
 	router.RegisterRoutes[Task](b, "/tasks",
 		router.AllPublic(),
 		router.WithFilters("Status", "Priority"),

@@ -56,7 +56,7 @@ func setupAuthTest(t *testing.T, registerFunc func(*router.Builder)) *chi.Mux {
 
 	// Create router
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 	registerFunc(b)
 
 	return r
@@ -132,7 +132,7 @@ func TestAuth_AuthOnlyRoute(t *testing.T) {
 
 	// Test with auth (any scopes) - create new router with auth middleware
 	r2 := addAuthMiddleware(chi.NewRouter(), "user123", []string{"random_scope"})
-	b := router.NewBuilder(r2)
+	b := router.NewBuilder(r2, testDB(t))
 	router.RegisterRoutes[AuthTestUser](b, "/users", router.AuthConfig{
 		Methods: []string{router.MethodAll},
 		Scopes:  []string{router.ScopeAuthOnly},
@@ -166,7 +166,7 @@ func TestAuth_ScopeRequired(t *testing.T) {
 
 	// With auth but wrong scope - 403
 	r = addAuthMiddleware(chi.NewRouter(), "user123", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 	router.RegisterRoutes[AuthTestUser](b, "/users", router.AuthConfig{
 		Methods: []string{router.MethodAll},
 		Scopes:  []string{"admin", "moderator"},
@@ -182,7 +182,7 @@ func TestAuth_ScopeRequired(t *testing.T) {
 
 	// With correct scope - 200
 	r = addAuthMiddleware(chi.NewRouter(), "user123", []string{"admin"})
-	b = router.NewBuilder(r)
+	b = router.NewBuilder(r, testDB(t))
 	router.RegisterRoutes[AuthTestUser](b, "/users", router.AuthConfig{
 		Methods: []string{router.MethodAll},
 		Scopes:  []string{"admin", "moderator"},
@@ -200,7 +200,7 @@ func TestAuth_ScopeRequired(t *testing.T) {
 func TestAuth_MethodSpecificAuth(t *testing.T) {
 	// Public reads, authenticated writes
 	r := addAuthMiddleware(chi.NewRouter(), "user123", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// First register without auth for GET/LIST (public reads)
 	router.RegisterRoutes[AuthTestUser](b, "/users",
@@ -216,7 +216,7 @@ func TestAuth_MethodSpecificAuth(t *testing.T) {
 
 	// GET /users (list) without auth - should succeed (public)
 	r2 := chi.NewRouter()
-	b2 := router.NewBuilder(r2)
+	b2 := router.NewBuilder(r2, testDB(t))
 	router.RegisterRoutes[AuthTestUser](b2, "/users",
 		router.AuthConfig{
 			Methods: []string{router.MethodGet, router.MethodList},
@@ -263,7 +263,7 @@ func TestAuth_MethodListVsMethodGet(t *testing.T) {
 	t.Run("PublicGet_AuthenticatedList", func(t *testing.T) {
 		// List requires auth, Get is public
 		r := chi.NewRouter()
-		b := router.NewBuilder(r)
+		b := router.NewBuilder(r, testDB(t))
 
 		router.RegisterRoutes[AuthTestPost](b, "/posts",
 			router.AuthConfig{
@@ -298,7 +298,7 @@ func TestAuth_MethodListVsMethodGet(t *testing.T) {
 	t.Run("PublicList_AuthenticatedGet", func(t *testing.T) {
 		// List is public, Get requires auth
 		r := chi.NewRouter()
-		b := router.NewBuilder(r)
+		b := router.NewBuilder(r, testDB(t))
 
 		router.RegisterRoutes[AuthTestPost](b, "/posts",
 			router.AuthConfig{
@@ -334,7 +334,7 @@ func TestAuth_MethodListVsMethodGet(t *testing.T) {
 func TestAuth_MethodAllOverride(t *testing.T) {
 	// MethodAll sets default, specific method overrides
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	router.RegisterRoutes[AuthTestUser](b, "/users",
 		router.AuthConfig{
@@ -370,7 +370,7 @@ func TestAuth_MethodAllOverride(t *testing.T) {
 func TestAuth_Ownership_Create(t *testing.T) {
 	// Setup with ownership on posts
 	r := addAuthMiddleware(chi.NewRouter(), "auth0|user123", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	router.RegisterRoutes[AuthTestPost](b, "/posts", router.AuthConfig{
 		Methods: []string{router.MethodAll},
@@ -422,7 +422,7 @@ func TestAuth_Ownership_List(t *testing.T) {
 
 	// User1 should only see their post
 	r := addAuthMiddleware(chi.NewRouter(), "user1", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	router.RegisterRoutes[AuthTestPost](b, "/posts", router.AuthConfig{
 		Methods: []string{router.MethodAll},
@@ -469,7 +469,7 @@ func TestAuth_Ownership_BypassScope(t *testing.T) {
 
 	// Admin with bypass scope should see all posts
 	r := addAuthMiddleware(chi.NewRouter(), "admin_user", []string{"admin"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	router.RegisterRoutes[AuthTestPost](b, "/posts", router.AuthConfig{
 		Methods: []string{router.MethodAll},
@@ -511,7 +511,7 @@ func TestAuth_Ownership_Get404(t *testing.T) {
 
 	// User2 tries to access user1's post - should get 404
 	r := addAuthMiddleware(chi.NewRouter(), "user2", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	router.RegisterRoutes[AuthTestPost](b, "/posts", router.AuthConfig{
 		Methods: []string{router.MethodAll},
@@ -723,7 +723,7 @@ func TestAuth_ChildAuthPopulated(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Register parent (public) with child (ownership-based) using WithRelationName
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
@@ -816,7 +816,7 @@ func TestAuth_ChildAuthWithBypass(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
 		router.AllPublic(),
@@ -874,7 +874,7 @@ func TestAuth_ChildAuthNoAuth(t *testing.T) {
 
 	// Create router WITHOUT auth middleware (unauthenticated)
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
 		router.AllPublic(),
@@ -1001,7 +1001,7 @@ func TestAuth_NestedChildInclude(t *testing.T) {
 	author, _, _ := seedNestedIncludeData(t, db)
 
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 	registerNestedIncludeRoutes(b, router.AllPublic())
 
 	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts.Comments"
@@ -1042,7 +1042,7 @@ func TestAuth_NestedChildInclude_DeeperLevelBlocked(t *testing.T) {
 
 	// Comments require "premium" scope; user only has "user"
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 	registerNestedIncludeRoutes(b, router.AllScoped("premium"))
 
 	// Single-level Posts include should still work
@@ -1097,7 +1097,7 @@ func TestAuth_NestedParentInclude(t *testing.T) {
 	author, post, comment := seedNestedIncludeData(t, db)
 
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 	registerNestedIncludeRoutes(b, router.AllPublic())
 
 	// GET comment with ?include=Post.Author
@@ -1140,7 +1140,7 @@ func TestAuth_ParentInclude_SingleLevel(t *testing.T) {
 	author, post, comment := seedNestedIncludeData(t, db)
 
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 	registerNestedIncludeRoutes(b, router.AllPublic())
 
 	url := "/authors/" + strconv.Itoa(author.ID) +
@@ -1195,7 +1195,7 @@ func TestAuth_NestedParentInclude_DeeperLevelBlocked(t *testing.T) {
 
 	// Author requires "admin" scope; user only has "user"
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
 		router.AllScoped("admin"),
@@ -1268,7 +1268,7 @@ func TestAuth_SimpleChildInclude(t *testing.T) {
 	author, _, _ := seedNestedIncludeData(t, db)
 
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 	registerNestedIncludeRoutes(b, router.AllPublic())
 
 	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts"
@@ -1299,7 +1299,7 @@ func TestAuth_ChildInclude_NoAuth(t *testing.T) {
 
 	// No auth middleware — unauthenticated request
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 	registerNestedIncludeRoutes(b, router.AllPublic())
 
 	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts"
@@ -1329,7 +1329,7 @@ func TestAuth_ChildInclude_WrongScope(t *testing.T) {
 	author, _, _ := seedNestedIncludeData(t, db)
 
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Posts require "premium" scope
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
@@ -1369,7 +1369,7 @@ func TestAuth_ChildInclude_ScopeGrantsAccess(t *testing.T) {
 
 	// User has "premium" scope which matches the child's requirement
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user", "premium"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Author is public, Posts require "premium" scope
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
@@ -1409,7 +1409,7 @@ func TestAuth_ParentInclude_NoAuth(t *testing.T) {
 	author, post, comment := seedNestedIncludeData(t, db)
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Author requires "admin" scope, Post requires "editor" scope, Comment is public.
 	// No ownership at any level — avoids issue #28 parent ownership check blocking the request.
@@ -1460,7 +1460,7 @@ func TestAuth_ParentInclude_WrongScope(t *testing.T) {
 	author, post, comment := seedNestedIncludeData(t, db)
 
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Author requires "admin", Post is ownership, Comment is public
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
@@ -1515,7 +1515,7 @@ func TestAuth_MixedPublicParent_ScopedChildInclude(t *testing.T) {
 
 	// No auth — unauthenticated request
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Author is public, Posts require "premium" scope
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
@@ -1562,7 +1562,7 @@ func TestAuth_NestedChildInclude_MiddleLevelBlocked(t *testing.T) {
 
 	// User has "user" scope only
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Author is public, Posts require "editor" scope, Comments are public
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
@@ -1662,7 +1662,7 @@ func TestAuth_Issue24_OwnershipWithEmptyUserID(t *testing.T) {
 
 	// Create router with middleware that sets empty UserID (simulating dhe pattern)
 	r := addAuthMiddlewareEmptyUserID(chi.NewRouter())
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Register route with ownership but no explicit scopes (the problematic pattern)
 	router.RegisterRoutes[AuthTestPost](b, "/posts", router.AuthConfig{
@@ -1702,7 +1702,7 @@ func TestAuth_Issue24_ScopeAuthOnlyWithEmptyUserID(t *testing.T) {
 
 	// Create router with middleware that sets empty UserID
 	r := addAuthMiddlewareEmptyUserID(chi.NewRouter())
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	// Register route with ScopeAuthOnly
 	router.RegisterRoutes[AuthTestUser](b, "/users", router.AuthConfig{
@@ -1772,7 +1772,7 @@ func TestAuth_Issue28_ParentOwnershipNoAuth(t *testing.T) {
 
 	// Create router WITHOUT auth (simulating public child under owned parent)
 	r := chi.NewRouter()
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	router.RegisterRoutes[OwnershipTestProject](b, "/projects",
 		router.AuthConfig{
@@ -1835,7 +1835,7 @@ func TestAuth_Issue28_ParentOwnershipFiltering(t *testing.T) {
 			}
 
 			r := addAuthMiddleware(chi.NewRouter(), tt.authUser, []string{"user"})
-			b := router.NewBuilder(r)
+			b := router.NewBuilder(r, testDB(t))
 
 			router.RegisterRoutes[OwnershipTestProject](b, "/projects",
 				router.AuthConfig{
@@ -1895,7 +1895,7 @@ func TestAuth_Issue28_ParentOwnershipBypass(t *testing.T) {
 
 	// Create router with Admin (has bypass scope)
 	r := addAuthMiddleware(chi.NewRouter(), "admin", []string{"user", "admin"})
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, testDB(t))
 
 	router.RegisterRoutes[OwnershipTestProject](b, "/projects",
 		router.AuthConfig{

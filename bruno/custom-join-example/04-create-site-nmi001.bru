@@ -1,0 +1,29 @@
+meta {
+  name: Create Site with NMI001
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/users/{{userId}}/accounts/{{accountId}}/sites
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "nmi": "NMI001",
+    "address": "123 Main St"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.account_id: eq {{accountId}}
+  res.body.nmi: eq NMI001
+}
+
+script:post-response {
+  bru.setVar("siteId", res.body.id);
+}

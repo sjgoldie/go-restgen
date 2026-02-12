@@ -83,7 +83,7 @@ func main() {
 
 	// Register CRUD routes using Builder API (public for this simple example)
 	// Configure filtering, sorting, and pagination
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, db.GetDB())
 	router.RegisterRoutes[User](b, "/users",
 		router.AllPublic(),
 		router.WithFilters("Name", "Email"),            // Allow filtering by Name and Email

@@ -32,6 +32,12 @@ if ! command -v goimports &> /dev/null; then
     go install golang.org/x/tools/cmd/goimports@latest
 fi
 
+# Install go-licence-detector
+if ! command -v go-licence-detector &> /dev/null; then
+    echo "Installing go-licence-detector..."
+    go install go.elastic.co/go-licence-detector@latest
+fi
+
 # Install Bruno CLI (optional)
 if command -v npm &> /dev/null; then
     echo "Installing Bruno CLI..."

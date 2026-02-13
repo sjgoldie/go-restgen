@@ -95,7 +95,7 @@ func main() {
 
 	// Register routes with batch operations enabled
 	// AllPublicWithBatch enables all CRUD + batch operations as public
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, db.GetDB())
 	router.RegisterRoutes[Product](b, "/products",
 		router.AllPublicWithBatch(), // Enable batch operations
 		router.WithBatchLimit(100),  // Optional: limit batch size to 100 items

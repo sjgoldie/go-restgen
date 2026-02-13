@@ -1,0 +1,28 @@
+meta {
+  name: List Usage Data for Site (NMI join)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/users/{{userId}}/accounts/{{accountId}}/sites/{{siteId}}/usage-data
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+script:post-response {
+  if (res.body.length !== 5) {
+    throw new Error(`Expected 5 usage records for NMI001, got ${res.body.length}`);
+  }
+  for (const record of res.body) {
+    if (record.nmi !== "NMI001") {
+      throw new Error(`Expected NMI001, got ${record.nmi}`);
+    }
+  }
+  bru.setVar("usageId", res.body[0].id);
+}

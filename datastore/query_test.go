@@ -2,10 +2,12 @@ package datastore_test
 
 import (
 	"context"
+	"math"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/uptrace/bun"
 
 	"github.com/sjgoldie/go-restgen/datastore"
@@ -1429,7 +1431,7 @@ var testQueryProductMetaWithSums = &metadata.TypeMetadata{
 	ModelType:        reflect.TypeOf(TestQueryProduct{}),
 	FilterableFields: []string{"Name", "Category", "Price", "InStock"},
 	SortableFields:   []string{"Name", "Price", "CreatedAt"},
-	SummableFields:   []string{"Price", "Name", "InStock"}, // Price is numeric, Name is string, InStock is bool
+	SummableFields:   []string{"Price", "Name", "InStock"},
 	DefaultLimit:     10,
 	MaxLimit:         100,
 }
@@ -1468,7 +1470,7 @@ func TestQuery_Sum_MultipleFields(t *testing.T) {
 	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
 	seedQueryProducts(t, wrapper, ctx)
 
-	// Request sum of Price (numeric) and Name (string - should return 0)
+	// Request sum of Price (int) and Name (varchar — SQLite returns 0 for non-numeric text)
 	opts := &metadata.QueryOptions{
 		Sums: []string{"Price", "Name"},
 	}
@@ -1479,15 +1481,14 @@ func TestQuery_Sum_MultipleFields(t *testing.T) {
 		t.Fatal("GetAll failed:", err)
 	}
 
-	// Price sum should be 410
 	expectedPriceSum := 410.0
 	if sums["Price"] != expectedPriceSum {
 		t.Errorf("Expected sum of Price to be %v, got %v", expectedPriceSum, sums["Price"])
 	}
 
-	// Name (string) sum should be 0 (non-numeric)
+	// SQLite: non-numeric text sums to 0
 	if sums["Name"] != 0 {
-		t.Errorf("Expected sum of Name (string) to be 0, got %v", sums["Name"])
+		t.Errorf("Expected sum of Name (varchar) to be 0, got %v", sums["Name"])
 	}
 }
 
@@ -1558,7 +1559,7 @@ func TestQuery_Sum_WithCount(t *testing.T) {
 	}
 }
 
-func TestQuery_Sum_NonNumericField(t *testing.T) {
+func TestQuery_Sum_VarcharField_NoPanic(t *testing.T) {
 	db, cleanup := setupQueryTestDB(t)
 	defer cleanup()
 
@@ -1566,7 +1567,8 @@ func TestQuery_Sum_NonNumericField(t *testing.T) {
 	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
 	seedQueryProducts(t, wrapper, ctx)
 
-	// Request sum of Name (string field in allowlist)
+	// Summing a varchar field should not panic.
+	// SQLite returns 0 for non-numeric text; PostgreSQL would return a database error.
 	opts := &metadata.QueryOptions{
 		Sums: []string{"Name"},
 	}
@@ -1574,12 +1576,13 @@ func TestQuery_Sum_NonNumericField(t *testing.T) {
 
 	_, _, sums, err := wrapper.GetAll(ctx)
 	if err != nil {
-		t.Fatal("GetAll failed:", err)
+		// Database error is acceptable (PostgreSQL rejects SUM on text)
+		return
 	}
 
-	// String field should return 0 (with slog warning)
+	// SQLite: non-numeric text values sum to 0
 	if sums["Name"] != 0 {
-		t.Errorf("Expected sum of Name (string) to be 0, got %v", sums["Name"])
+		t.Errorf("Expected sum of Name (varchar) to be 0, got %v", sums["Name"])
 	}
 }
 
@@ -1591,7 +1594,7 @@ func TestQuery_Sum_BoolField(t *testing.T) {
 	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
 	seedQueryProducts(t, wrapper, ctx)
 
-	// Request sum of InStock (bool field in allowlist)
+	// Bool fields are now passed to the database — SUM counts true values (stored as 1)
 	opts := &metadata.QueryOptions{
 		Sums: []string{"InStock"},
 	}
@@ -1602,9 +1605,10 @@ func TestQuery_Sum_BoolField(t *testing.T) {
 		t.Fatal("GetAll failed:", err)
 	}
 
-	// Bool field should return 0 (with slog warning)
-	if sums["InStock"] != 0 {
-		t.Errorf("Expected sum of InStock (bool) to be 0, got %v", sums["InStock"])
+	// 4 products with InStock=true, 1 with false → SUM = 4
+	expectedSum := 4.0
+	if sums["InStock"] != expectedSum {
+		t.Errorf("Expected sum of InStock (bool) to be %v, got %v", expectedSum, sums["InStock"])
 	}
 }
 
@@ -1666,7 +1670,7 @@ func TestQuery_Sum_MixedValidAndInvalid(t *testing.T) {
 	ctx := ctxWithQueryMeta(testQueryProductMetaWithSums)
 	seedQueryProducts(t, wrapper, ctx)
 
-	// Request sum of Price (valid numeric) and Name (invalid string in allowlist)
+	// Price (int) and Name (varchar) — both pass to DB; Name sums to 0 in SQLite
 	opts := &metadata.QueryOptions{
 		Sums: []string{"Price", "Name"},
 	}
@@ -1677,15 +1681,13 @@ func TestQuery_Sum_MixedValidAndInvalid(t *testing.T) {
 		t.Fatal("GetAll failed:", err)
 	}
 
-	// Price should have valid sum
 	expectedPriceSum := 410.0
 	if sums["Price"] != expectedPriceSum {
 		t.Errorf("Expected sum of Price to be %v, got %v", expectedPriceSum, sums["Price"])
 	}
 
-	// Name should be 0 but still present in response
 	if sums["Name"] != 0 {
-		t.Errorf("Expected sum of Name to be 0, got %v", sums["Name"])
+		t.Errorf("Expected sum of Name (varchar) to be 0, got %v", sums["Name"])
 	}
 }
 
@@ -1709,5 +1711,169 @@ func TestQuery_Sum_NoSumsRequested(t *testing.T) {
 	// Should return nil or empty map when no sums requested
 	if len(sums) > 0 {
 		t.Errorf("Expected nil or empty sums map when no sums requested, got %v", sums)
+	}
+}
+
+// TestDecimalProduct is a test model with shopspring/decimal fields to verify
+// that struct-based numeric types work with WithSums (issue #50)
+type TestDecimalProduct struct {
+	bun.BaseModel `bun:"table:decimal_products"`
+	ID            int             `bun:"id,pk,autoincrement" json:"id"`
+	Name          string          `bun:"name,notnull" json:"name"`
+	Category      string          `bun:"category,notnull" json:"category"`
+	UnitPrice     decimal.Decimal `bun:"unit_price,notnull,type:decimal(10,2)" json:"unitPrice"`
+	TaxAmount     decimal.Decimal `bun:"tax_amount,notnull,type:decimal(10,2)" json:"taxAmount"`
+}
+
+var testDecimalProductMeta = &metadata.TypeMetadata{
+	TypeID:           "decimal_product_id",
+	TypeName:         "TestDecimalProduct",
+	TableName:        "decimal_products",
+	URLParamUUID:     "productId",
+	ModelType:        reflect.TypeOf(TestDecimalProduct{}),
+	FilterableFields: []string{"Name", "Category"},
+	SortableFields:   []string{"Name", "UnitPrice"},
+	SummableFields:   []string{"UnitPrice", "TaxAmount"},
+	DefaultLimit:     10,
+	MaxLimit:         100,
+}
+
+func setupDecimalTestDB(t *testing.T) (*datastore.SQLite, func()) {
+	return setupTestDBWithModel(t, (*TestDecimalProduct)(nil), (*TestDecimalProduct)(nil))
+}
+
+func seedDecimalProducts(t *testing.T, wrapper *datastore.Wrapper[TestDecimalProduct], ctx context.Context) {
+	t.Helper()
+
+	products := []TestDecimalProduct{
+		{Name: "Widget", Category: "Hardware", UnitPrice: decimal.NewFromFloat(29.99), TaxAmount: decimal.NewFromFloat(3.00)},
+		{Name: "Gadget", Category: "Hardware", UnitPrice: decimal.NewFromFloat(49.95), TaxAmount: decimal.NewFromFloat(5.00)},
+		{Name: "Service", Category: "Software", UnitPrice: decimal.NewFromFloat(199.00), TaxAmount: decimal.NewFromFloat(19.90)},
+		{Name: "License", Category: "Software", UnitPrice: decimal.NewFromFloat(99.50), TaxAmount: decimal.NewFromFloat(9.95)},
+	}
+
+	for _, p := range products {
+		_, err := wrapper.Create(ctx, p)
+		if err != nil {
+			t.Fatal("Failed to seed decimal product:", err)
+		}
+	}
+}
+
+func TestQuery_Sum_DecimalField(t *testing.T) {
+	db, cleanup := setupDecimalTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestDecimalProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testDecimalProductMeta)
+	seedDecimalProducts(t, wrapper, ctx)
+
+	opts := &metadata.QueryOptions{
+		Sums: []string{"UnitPrice"},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	_, _, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// 29.99 + 49.95 + 199.00 + 99.50 = 378.44
+	expectedSum := 378.44
+	if sums["UnitPrice"] != expectedSum {
+		t.Errorf("Expected sum of UnitPrice to be %v, got %v", expectedSum, sums["UnitPrice"])
+	}
+}
+
+func TestQuery_Sum_MultipleDecimalFields(t *testing.T) {
+	db, cleanup := setupDecimalTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestDecimalProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testDecimalProductMeta)
+	seedDecimalProducts(t, wrapper, ctx)
+
+	opts := &metadata.QueryOptions{
+		Sums: []string{"UnitPrice", "TaxAmount"},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	_, _, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	expectedPrice := 378.44
+	if sums["UnitPrice"] != expectedPrice {
+		t.Errorf("Expected sum of UnitPrice to be %v, got %v", expectedPrice, sums["UnitPrice"])
+	}
+
+	// 3.00 + 5.00 + 19.90 + 9.95 = 37.85
+	expectedTax := 37.85
+	if math.Abs(sums["TaxAmount"]-expectedTax) > 0.001 {
+		t.Errorf("Expected sum of TaxAmount to be %v, got %v", expectedTax, sums["TaxAmount"])
+	}
+}
+
+func TestQuery_Sum_DecimalField_WithFilter(t *testing.T) {
+	db, cleanup := setupDecimalTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestDecimalProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testDecimalProductMeta)
+	seedDecimalProducts(t, wrapper, ctx)
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Category": {Value: "Software", Operator: metadata.OpEq},
+		},
+		Sums: []string{"UnitPrice"},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	_, _, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Software only: Service=199.00 + License=99.50 = 298.50
+	expectedSum := 298.50
+	if sums["UnitPrice"] != expectedSum {
+		t.Errorf("Expected sum of UnitPrice (filtered) to be %v, got %v", expectedSum, sums["UnitPrice"])
+	}
+}
+
+func TestQuery_Sum_DecimalField_WithCount(t *testing.T) {
+	db, cleanup := setupDecimalTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestDecimalProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testDecimalProductMeta)
+	seedDecimalProducts(t, wrapper, ctx)
+
+	opts := &metadata.QueryOptions{
+		CountTotal: true,
+		Sums:       []string{"UnitPrice"},
+		Limit:      2,
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	results, count, sums, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(results) != 2 {
+		t.Errorf("Expected 2 results, got %d", len(results))
+	}
+
+	if count != 4 {
+		t.Errorf("Expected count of 4, got %d", count)
+	}
+
+	// Sum should be for all items, not just paginated
+	expectedSum := 378.44
+	if sums["UnitPrice"] != expectedSum {
+		t.Errorf("Expected sum of UnitPrice to be %v, got %v", expectedSum, sums["UnitPrice"])
 	}
 }

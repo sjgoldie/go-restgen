@@ -1,5 +1,5 @@
 meta {
-  name: Sum Bool Field - Returns 0
+  name: Sum Bool Field - Counts True Values
   type: http
   seq: 45
 }
@@ -16,8 +16,9 @@ assert {
 }
 
 tests {
-  test("X-Sum-Active header returns 0 for bool field", function() {
-    // Bool fields cannot be summed, should return 0
-    expect(res.headers['x-sum-active']).to.equal('0');
+  test("X-Sum-Active header returns count of true values", function() {
+    // Bool fields are passed to the database — SUM counts true values (stored as 1)
+    // 5 products with active=true, 2 with active=false → SUM = 5
+    expect(res.headers['x-sum-active']).to.equal('5');
   });
 }

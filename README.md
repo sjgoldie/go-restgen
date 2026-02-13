@@ -201,6 +201,46 @@ go-restgen automatically handles parent-child relationships with full chain vali
 
 See the [nested routes example](./examples/nested_routes) for a complete working example with 3-level nesting.
 
+## Custom Join Columns
+
+By default, go-restgen discovers parent-child relationships from Bun `rel:belongs-to` tags. For relationships that join on a non-primary-key column (e.g., a shared NMI identifier), use `WithJoinOn()`:
+
+```go
+type Site struct {
+    bun.BaseModel `bun:"table:sites"`
+    ID            int    `bun:"id,pk,autoincrement" json:"id"`
+    NMI           string `bun:"nmi,notnull" json:"nmi"`
+    Name          string `bun:"name" json:"name"`
+}
+
+type UsageData struct {
+    bun.BaseModel `bun:"table:usage_data"`
+    ID            int    `bun:"id,pk,autoincrement" json:"id"`
+    NMI           string `bun:"nmi,notnull" json:"nmi"`
+    Reading       int    `bun:"reading" json:"reading"`
+}
+
+b := router.NewBuilder(r, db.GetDB())
+router.RegisterRoutes[Site](b, "/sites", router.AllPublic(), func(b *router.Builder) {
+    router.RegisterRoutes[UsageData](b, "/usage",
+        router.AllPublic(),
+        router.WithJoinOn("NMI", "NMI"),  // child.NMI = parent.NMI
+    )
+})
+```
+
+This creates routes:
+- `GET/POST /sites/{siteId}/usage` — filtered by `usage_data.nmi = sites.nmi`
+- `GET/PUT/DELETE /sites/{siteId}/usage/{usageId}` — validated against parent NMI
+
+**When to use `WithJoinOn`:**
+- The child model has no `rel:belongs-to` tag pointing to the parent
+- The relationship joins on a shared attribute rather than the parent's primary key
+
+Both field names are Go struct field names (e.g., `"NMI"`, not `"nmi"`). The framework resolves them to SQL column names via the Bun schema.
+
+See the [custom join example](./examples/custom_join) for a complete working example.
+
 ## Relation Includes
 
 Load related resources in a single request using the `?include=` query parameter. This avoids N+1 queries when you need parent and child data together.
@@ -715,13 +755,13 @@ GET /users?limit=10&offset=20&count=true
 
 ### Sum Aggregation
 
-Request sum totals for numeric fields using the `sum` query parameter:
+Request sum totals using the `sum` query parameter. Any field with a numeric database column type can be summed, including struct-based types like `decimal.Decimal`:
 
 ```go
 router.RegisterRoutes[Product](b, "/products",
     router.AllPublic(),
     router.WithFilters("Category", "Price"),
-    router.WithSums("Price", "Stock"),  // Allow summing these fields
+    router.WithSums("Price", "Stock", "TotalAmount"),  // Allow summing these fields
 )
 ```
 
@@ -740,7 +780,7 @@ GET /products?filter[Category]=Electronics&sum=Price,Stock&count=true
 - `X-Sum-Price` - Sum of the Price field across matching records
 - `X-Sum-Stock` - Sum of the Stock field across matching records
 
-Non-numeric fields (strings, bools) return 0 in the sum header. Fields not listed in `WithSums` are silently ignored.
+Fields not listed in `WithSums` are silently ignored (returns 0). Bool fields return the count of `true` values. The database validates types — summing a non-numeric column (e.g. a string) returns a database error.
 
 See the [query example](./examples/query) for a complete working example with all filter operators, sorting, pagination, and sum aggregation.
 
@@ -774,7 +814,7 @@ type Item struct {
     Name          string `bun:"name" json:"name"`
 }
 
-b := router.NewBuilder(r)
+b := router.NewBuilder(r, db.GetDB())
 
 // Root registration - public read, admin write
 router.RegisterRoutes[Item](b, "/items",
@@ -1535,7 +1575,7 @@ if err := filestore.Initialize(storage); err != nil {
 }
 
 // Register parent with nested file resource
-b := router.NewBuilder(r)
+b := router.NewBuilder(r, db.GetDB())
 router.RegisterRoutes[Post](b, "/posts",
     router.AllPublic(),
     func(b *router.Builder) {
@@ -1789,7 +1829,7 @@ If OTEL is not configured, metrics are no-ops with negligible overhead.
 
 ```go
 // Register standard CRUD
-b := router.NewBuilder(r)
+b := router.NewBuilder(r, db.GetDB())
 router.RegisterRoutes[User](b, "/users", router.AllPublic())
 
 // Add custom endpoints
@@ -1831,6 +1871,7 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[Action Endpoints](./examples/actions)** - Custom actions on resources (cancel, complete)
 - **[Batch Operations](./examples/batch)** - Bulk create, update, and delete operations
 - **[Custom Handlers](./examples/custom)** - Override default CRUD behavior with custom handler functions
+- **[Custom Join Columns](./examples/custom_join)** - Non-FK relationships using `WithJoinOn` for shared attribute joins
 
 All examples include comprehensive Bruno API tests. See [`bruno/README.md`](./bruno/README.md) for details.
 
@@ -1908,6 +1949,7 @@ go-restgen builds on these excellent projects:
 - [x] File upload/download with pluggable storage (proxy and signed URL modes)
 - [x] Action endpoints for custom operations (`POST /resource/{id}/action`)
 - [x] Batch operations for bulk create/update/delete (`/resource/batch`)
+- [x] Custom join columns via `WithJoinOn` for non-FK relationships
 - [ ] MySQL support
 - [ ] OpenAPI/Swagger generation
 - [ ] Standalone examples (separate go.mod per example to avoid polluting main module)

@@ -165,8 +165,14 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 			return nil, err
 		}
 
-		// Set the foreign key field on the item using the parent's actual PK value
-		if err := w.setForeignKey(&item, meta.ForeignKeyCol, parentItem, parentMeta.PKField); err != nil {
+		// Set the foreign key field on the item using the parent's join field value.
+		// For standard FK relationships (ParentJoinField="ID"), this copies parent.ID into child.FK.
+		// For custom joins (e.g., ParentJoinField="NMI"), this copies parent.NMI into child.NMI.
+		parentField := meta.ParentJoinField
+		if parentField == "" {
+			parentField = parentMeta.PKField
+		}
+		if err := w.setForeignKey(&item, meta.ForeignKeyCol, parentItem, parentField); err != nil {
 			return nil, err
 		}
 	}
@@ -417,11 +423,11 @@ func (w *Wrapper[T]) getWithMeta(ctx context.Context, meta *metadata.TypeMetadat
 // parentItem is the parent object from which we extract the primary key value.
 // parentPKField specifies the parent's primary key field name (from parentMeta.PKField).
 func (w *Wrapper[T]) setForeignKey(item *T, foreignKeyCol string, parentItem interface{}, parentPKField string) error {
-	// Convert column name to field name (e.g., "author_id" -> "AuthorID")
-	fieldName := fieldNameFromColumn(foreignKeyCol)
-
-	// Use reflection to set the field
 	itemValue := reflect.ValueOf(item).Elem()
+	fieldName := w.goNameFromColumn(itemValue.Type(), foreignKeyCol)
+	if fieldName == "" {
+		return fmt.Errorf("no field found for column %s", foreignKeyCol)
+	}
 	fkField := itemValue.FieldByName(fieldName)
 	if !fkField.IsValid() || !fkField.CanSet() {
 		return fmt.Errorf("cannot set foreign key field %s", fieldName)
@@ -462,31 +468,21 @@ func (w *Wrapper[T]) setForeignKey(item *T, foreignKeyCol string, parentItem int
 	return nil
 }
 
-// hasField checks if a type has a field matching the given column name
-func hasField(t reflect.Type, colName string) bool {
+// hasColumn checks if a model type has a field matching the given SQL column name.
+func (w *Wrapper[T]) hasColumn(t reflect.Type, colName string) bool {
 	if colName == "" {
 		return false
 	}
-	fieldName := fieldNameFromColumn(colName)
-	_, found := t.FieldByName(fieldName)
-	return found
+	return w.Store.GetDB().Table(t).HasField(colName)
 }
 
-// fieldNameFromColumn converts a database column name to a Go field name
-// e.g., "author_id" -> "AuthorID", "post_id" -> "PostID"
-func fieldNameFromColumn(col string) string {
-	parts := strings.Split(col, "_")
-	for i, part := range parts {
-		if len(part) > 0 {
-			// Special case for "id" -> "ID"
-			if strings.ToLower(part) == "id" {
-				parts[i] = "ID"
-			} else {
-				parts[i] = strings.ToUpper(part[:1]) + part[1:]
-			}
-		}
+// goNameFromColumn resolves a SQL column name to its Go struct field name using Bun's schema.
+func (w *Wrapper[T]) goNameFromColumn(t reflect.Type, colName string) string {
+	field := w.Store.GetDB().Table(t).LookupField(colName)
+	if field == nil {
+		return ""
 	}
-	return strings.Join(parts, "")
+	return field.GoName
 }
 
 // applyParentFiltersWithMeta applies parent ID filters and JOINs using metadata chain
@@ -513,6 +509,7 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 		childType     reflect.Type
 		childTable    string
 		childFKCol    string
+		parentJoinCol string
 		parentTable   string
 		parentURLUUID string
 		parentMeta    *metadata.TypeMetadata
@@ -524,10 +521,15 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 
 	// Walk up the chain using ParentMeta pointers
 	for parentMeta != nil {
+		parentJoinCol := childMeta.ParentJoinCol
+		if parentJoinCol == "" {
+			parentJoinCol = "id"
+		}
 		joins = append(joins, joinInfo{
 			childType:     childMeta.ModelType,
 			childTable:    childMeta.TableName,
 			childFKCol:    childMeta.ForeignKeyCol,
+			parentJoinCol: parentJoinCol,
 			parentTable:   parentMeta.TableName,
 			parentURLUUID: parentMeta.URLParamUUID,
 			parentMeta:    parentMeta,
@@ -558,38 +560,38 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 		}
 
 		// Determine if FK is on child or parent by checking if child has the FK field
-		fkOnChild := hasField(join.childType, join.childFKCol)
+		fkOnChild := w.hasColumn(join.childType, join.childFKCol)
 
 		// Check if child is the base model being queried
 		if join.childType == baseType {
 			// Child is the base model, use ?TableAlias
 			if fkOnChild {
-				// Normal case: child.FK = parent.id
+				// Normal case: child.FK = parent.joinCol
 				query = query.Join("JOIN ? ON ?TableAlias.? = ?.?",
 					bun.Ident(join.parentTable),
 					bun.Ident(join.childFKCol),
-					bun.Ident(join.parentTable), bun.Ident("id"))
+					bun.Ident(join.parentTable), bun.Ident(join.parentJoinCol))
 			} else {
-				// Inverted case: parent.FK = child.id
+				// Inverted case: parent.FK = child.joinCol
 				query = query.Join("JOIN ? ON ?.? = ?TableAlias.?",
 					bun.Ident(join.parentTable),
 					bun.Ident(join.parentTable), bun.Ident(join.childFKCol),
-					bun.Ident("id"))
+					bun.Ident(join.parentJoinCol))
 			}
 		} else {
 			// Child is a previously joined table, use table name
 			if fkOnChild {
-				// Normal case: child.FK = parent.id
+				// Normal case: child.FK = parent.joinCol
 				query = query.Join("JOIN ? ON ?.? = ?.?",
 					bun.Ident(join.parentTable),
 					bun.Ident(join.childTable), bun.Ident(join.childFKCol),
-					bun.Ident(join.parentTable), bun.Ident("id"))
+					bun.Ident(join.parentTable), bun.Ident(join.parentJoinCol))
 			} else {
-				// Inverted case: parent.FK = child.id
+				// Inverted case: parent.FK = child.joinCol
 				query = query.Join("JOIN ? ON ?.? = ?.?",
 					bun.Ident(join.parentTable),
 					bun.Ident(join.parentTable), bun.Ident(join.childFKCol),
-					bun.Ident(join.childTable), bun.Ident("id"))
+					bun.Ident(join.childTable), bun.Ident(join.parentJoinCol))
 			}
 		}
 
@@ -599,7 +601,7 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 
 		// Issue #28 fix: Apply ownership filter for this parent if needed
 		if slices.Contains(parentsNeedingOwnership, join.parentMeta) && ownershipUserID != "" {
-			query = applyParentOwnershipFilter(query, join.parentMeta, ownershipUserID)
+			query = w.applyParentOwnershipFilter(query, join.parentMeta, ownershipUserID)
 		}
 	}
 
@@ -607,7 +609,7 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 }
 
 // applyParentOwnershipFilter adds ownership WHERE clause for a parent table
-func applyParentOwnershipFilter(query *bun.SelectQuery, parentMeta *metadata.TypeMetadata, userID string) *bun.SelectQuery {
+func (w *Wrapper[T]) applyParentOwnershipFilter(query *bun.SelectQuery, parentMeta *metadata.TypeMetadata, userID string) *bun.SelectQuery {
 	if len(parentMeta.OwnershipFields) == 0 {
 		return query
 	}
@@ -621,7 +623,7 @@ func applyParentOwnershipFilter(query *bun.SelectQuery, parentMeta *metadata.Typ
 	// Build WHERE clause for ownership: parent_table.ownership_field = userID
 	// For multiple fields, use OR logic (same as applyOwnershipFilterWithMeta)
 	for i, fieldName := range parentMeta.OwnershipFields {
-		colName, err := fieldToColumnName(parentType, fieldName)
+		colName, err := w.columnFromGoName(parentType, fieldName)
 		if err != nil {
 			continue
 		}
@@ -680,7 +682,7 @@ func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bu
 	// Use ?TableAlias to properly qualify columns when JOINs are present
 	if len(meta.OwnershipFields) == 1 {
 		// Single field - simple WHERE clause
-		colName, err := fieldToColumnName(itemType, meta.OwnershipFields[0])
+		colName, err := w.columnFromGoName(itemType, meta.OwnershipFields[0])
 		if err != nil {
 			return nil, fmt.Errorf("failed to get column name for ownership field: %w", err)
 		}
@@ -688,7 +690,7 @@ func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bu
 	} else {
 		// Multiple fields - OR logic
 		for i, fieldName := range meta.OwnershipFields {
-			colName, err := fieldToColumnName(itemType, fieldName)
+			colName, err := w.columnFromGoName(itemType, fieldName)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get column name for ownership field: %w", err)
 			}
@@ -745,26 +747,15 @@ func (w *Wrapper[T]) setOwnershipField(ctx context.Context, item *T) error {
 	return nil
 }
 
-// fieldToColumnName converts a Go field name to database column name using bun tags
-// Returns error if field doesn't exist or lacks proper bun tag (required for ownership security)
-func fieldToColumnName(tType reflect.Type, fieldName string) (string, error) {
-	field, found := tType.FieldByName(fieldName)
-	if !found {
-		return "", fmt.Errorf("field %s not found on type %s", fieldName, tType.Name())
+// columnFromGoName resolves a Go field name to its SQL column name using Bun's schema.
+func (w *Wrapper[T]) columnFromGoName(tType reflect.Type, fieldName string) (string, error) {
+	table := w.Store.GetDB().Table(tType)
+	for _, field := range table.Fields {
+		if field.GoName == fieldName {
+			return field.Name, nil
+		}
 	}
-
-	// Check bun tag for column name
-	bunTag := field.Tag.Get("bun")
-	if bunTag == "" {
-		return "", fmt.Errorf("field %s on type %s must have bun tag with column name", fieldName, tType.Name())
-	}
-
-	parts := strings.Split(bunTag, ",")
-	if len(parts) == 0 || parts[0] == "" || parts[0] == "-" {
-		return "", fmt.Errorf("field %s on type %s has invalid bun tag: column name required", fieldName, tType.Name())
-	}
-
-	return parts[0], nil
+	return "", fmt.Errorf("field %s not found on type %s", fieldName, tType.Name())
 }
 
 // convertFilterValues converts a string filter value to the appropriate Go type(s)
@@ -848,24 +839,10 @@ func splitStringValues(vals []any) []any {
 	return result
 }
 
-// isNumericField checks if a field on the model type is a numeric type (int, uint, float)
-func isNumericField(modelType reflect.Type, fieldName string) bool {
-	field, found := modelType.FieldByName(fieldName)
-	if !found {
-		return false
-	}
-	switch field.Type.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64:
-		return true
-	}
-	return false
-}
-
 // computeAggregates computes count and/or sum aggregates for the query.
 // When both count and sums are requested, they're combined into a single query.
-// Invalid sum fields (not in allowlist, non-numeric, or non-existent) return 0 with slog warning.
+// Fields not in the SummableFields allowlist or without a valid column mapping return 0 with slog warning.
+// The database handles type validation — SUM on non-numeric columns will return a database error.
 func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) (int, map[string]float64, error) {
 	var totalCount int
 	var sums map[string]float64
@@ -891,14 +868,8 @@ func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQue
 				continue
 			}
 
-			// Check if field exists and is numeric
-			if !isNumericField(meta.ModelType, field) {
-				slog.WarnContext(ctx, "sum requested for non-numeric field", "field", field, "type", meta.TypeName)
-				continue
-			}
-
 			// Get column name
-			colName, err := fieldToColumnName(meta.ModelType, field)
+			colName, err := w.columnFromGoName(meta.ModelType, field)
 			if err != nil {
 				slog.WarnContext(ctx, "sum requested for field with invalid column mapping", "field", field, "type", meta.TypeName, "error", err)
 				continue
@@ -1010,7 +981,7 @@ func (w *Wrapper[T]) applyQueryFilters(ctx context.Context, query *bun.SelectQue
 			continue
 		}
 
-		colName, err := fieldToColumnName(meta.ModelType, field)
+		colName, err := w.columnFromGoName(meta.ModelType, field)
 		if err != nil {
 			continue
 		}
@@ -1089,7 +1060,7 @@ func (w *Wrapper[T]) applyQuerySorting(query *bun.SelectQuery, opts *metadata.Qu
 				continue // skip invalid sort fields
 			}
 
-			colName, err := fieldToColumnName(meta.ModelType, sort.Field)
+			colName, err := w.columnFromGoName(meta.ModelType, sort.Field)
 			if err != nil {
 				continue
 			}
@@ -1112,7 +1083,7 @@ func (w *Wrapper[T]) applyQuerySorting(query *bun.SelectQuery, opts *metadata.Qu
 			field = field[1:]
 		}
 
-		colName, err := fieldToColumnName(meta.ModelType, field)
+		colName, err := w.columnFromGoName(meta.ModelType, field)
 		if err == nil {
 			if desc {
 				query = query.OrderExpr("?TableAlias.? DESC", bun.Ident(colName))
@@ -1470,7 +1441,11 @@ func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 				if err != nil {
 					return err
 				}
-				if err := w.setForeignKey(item, meta.ForeignKeyCol, parentItem, parentMeta.PKField); err != nil {
+				parentField := meta.ParentJoinField
+				if parentField == "" {
+					parentField = parentMeta.PKField
+				}
+				if err := w.setForeignKey(item, meta.ForeignKeyCol, parentItem, parentField); err != nil {
 					return err
 				}
 			}
@@ -1686,7 +1661,7 @@ func (w *Wrapper[T]) applyParentFieldFilter(ctx context.Context, query *bun.Sele
 		return query
 	}
 
-	colName, err := fieldToColumnName(targetMeta.ModelType, path.field)
+	colName, err := w.columnFromGoName(targetMeta.ModelType, path.field)
 	if err != nil {
 		return query
 	}
@@ -1733,38 +1708,46 @@ func (w *Wrapper[T]) buildParentJoins(query *bun.SelectQuery, baseMeta *metadata
 	}
 
 	// First join: from base table using ?TableAlias
-	fkOnChild := hasField(baseMeta.ModelType, baseMeta.ForeignKeyCol)
+	fkOnChild := w.hasColumn(baseMeta.ModelType, baseMeta.ForeignKeyCol)
 	query = w.joinParentFromBase(query, baseMeta, chain[0], fkOnChild)
 
 	// Remaining joins: from previously joined tables
 	for i := 1; i < len(chain); i++ {
 		child, parent := chain[i-1], chain[i]
-		fkOnChild := hasField(child.ModelType, child.ForeignKeyCol)
+		fkOnChild := w.hasColumn(child.ModelType, child.ForeignKeyCol)
 		query = w.joinParentFromTable(query, child, parent, fkOnChild)
 	}
 	return query
 }
 
 func (w *Wrapper[T]) joinParentFromBase(query *bun.SelectQuery, child, parent *metadata.TypeMetadata, fkOnChild bool) *bun.SelectQuery {
+	parentJoinCol := child.ParentJoinCol
+	if parentJoinCol == "" {
+		parentJoinCol = "id"
+	}
 	if fkOnChild {
 		return query.Join("JOIN ? ON ?TableAlias.? = ?.?",
 			bun.Ident(parent.TableName), bun.Ident(child.ForeignKeyCol),
-			bun.Ident(parent.TableName), bun.Ident("id"))
+			bun.Ident(parent.TableName), bun.Ident(parentJoinCol))
 	}
 	return query.Join("JOIN ? ON ?.? = ?TableAlias.?",
 		bun.Ident(parent.TableName), bun.Ident(parent.TableName),
-		bun.Ident(child.ForeignKeyCol), bun.Ident("id"))
+		bun.Ident(child.ForeignKeyCol), bun.Ident(parentJoinCol))
 }
 
 func (w *Wrapper[T]) joinParentFromTable(query *bun.SelectQuery, child, parent *metadata.TypeMetadata, fkOnChild bool) *bun.SelectQuery {
+	parentJoinCol := child.ParentJoinCol
+	if parentJoinCol == "" {
+		parentJoinCol = "id"
+	}
 	if fkOnChild {
 		return query.Join("JOIN ? ON ?.? = ?.?",
 			bun.Ident(parent.TableName), bun.Ident(child.TableName),
-			bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident("id"))
+			bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident(parentJoinCol))
 	}
 	return query.Join("JOIN ? ON ?.? = ?.?",
 		bun.Ident(parent.TableName), bun.Ident(parent.TableName),
-		bun.Ident(child.ForeignKeyCol), bun.Ident(child.TableName), bun.Ident("id"))
+		bun.Ident(child.ForeignKeyCol), bun.Ident(child.TableName), bun.Ident(parentJoinCol))
 }
 
 // applyChildFieldFilter applies a filter on a child relation field using EXISTS subqueries
@@ -1779,7 +1762,7 @@ func (w *Wrapper[T]) applyChildFieldFilter(ctx context.Context, query *bun.Selec
 		return query
 	}
 
-	colName, err := fieldToColumnName(targetMeta.ModelType, path.field)
+	colName, err := w.columnFromGoName(targetMeta.ModelType, path.field)
 	if err != nil {
 		return query
 	}
@@ -1852,8 +1835,12 @@ func (w *Wrapper[T]) wrapInExists(baseMeta *metadata.TypeMetadata, chain []*meta
 	sql := innerCondition
 	for i := len(chain) - 1; i >= 0; i-- {
 		child := chain[i]
-		sql = fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = %s.id AND %s)",
-			child.TableName, child.TableName, child.ForeignKeyCol, parents[i], sql)
+		parentJoinCol := child.ParentJoinCol
+		if parentJoinCol == "" {
+			parentJoinCol = "id"
+		}
+		sql = fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = %s.%s AND %s)",
+			child.TableName, child.TableName, child.ForeignKeyCol, parents[i], parentJoinCol, sql)
 	}
 	return sql
 }

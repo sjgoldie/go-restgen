@@ -1,0 +1,17 @@
+meta {
+  name: Get Site
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/users/{{userId}}/accounts/{{accountId}}/sites/{{siteId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.nmi: eq NMI001
+  res.body.address: eq 123 Main St
+}

@@ -1,0 +1,17 @@
+meta {
+  name: Get Single Usage Data Record
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/users/{{userId}}/accounts/{{accountId}}/sites/{{siteId}}/usage-data/{{usageId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{usageId}}
+  res.body.nmi: eq NMI001
+}

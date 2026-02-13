@@ -63,7 +63,7 @@ func main() {
         w.Write([]byte("OK"))
     })
 
-    b := router.NewBuilder(r)
+    b := router.NewBuilder(r, db.GetDB())
     router.RegisterRoutes[User](b, "/users", router.AllPublic())
 
     log.Fatal(http.ListenAndServe(":8080", r))
@@ -122,7 +122,8 @@ router.RegisterRoutes[Model](builder, "/path",
     router.WithPagination(20, 100),
     router.WithDefaultSort("-CreatedAt"),
     router.WithRelationName("Posts"),  // enables ?include=Posts on parent
-    router.WithSums("Price", "Stock"),  // enables ?sum=Price,Stock with X-Sum-* headers
+    router.WithJoinOn("NMI", "NMI"),  // custom join: child.NMI = parent.NMI (no belongs-to tag needed)
+    router.WithSums("Price", "Stock"),  // enables ?sum=Price,Stock with X-Sum-* headers (works with any DB-numeric type including decimal.Decimal)
     router.WithAlternatePK("MyPK"),     // when PK field isn't named "ID"
 
     // Custom handlers
@@ -160,7 +161,7 @@ type Post struct {
     Title         string `bun:"title,notnull" json:"title"`
 }
 
-b := router.NewBuilder(r)
+b := router.NewBuilder(r, db.GetDB())
 router.RegisterRoutes[Blog](b, "/blogs", router.AllPublic(), func(b *router.Builder) {
     router.RegisterRoutes[Post](b, "/posts", router.AllPublic())
 })
@@ -357,7 +358,7 @@ Built-in support on GetAll endpoints:
 | Offset | `?offset=20` | Skip results |
 | Count | `?count=true` | Include X-Total-Count header |
 | Include | `?include=Posts` or `?include=Posts.Comments` | Load relations (requires WithRelationName on child route). Dot notation for nested. |
-| Sum | `?sum=Price,Stock` | Sum numeric fields, returns X-Sum-Price, X-Sum-Stock headers (requires WithSums) |
+| Sum | `?sum=Price,Stock` | Sum fields, returns X-Sum-Price, X-Sum-Stock headers (requires WithSums). Works with any DB-numeric type including `decimal.Decimal`. Bool fields return count of `true` values. DB validates types — non-numeric columns return a database error. |
 
 **Filter operator details:**
 - `in` - In list: `?filter[Status][in]=active,pending`

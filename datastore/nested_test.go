@@ -48,39 +48,45 @@ type TestComment struct {
 
 // Nested test metadata with parent chain
 var testAuthorMeta = &metadata.TypeMetadata{
-	TypeID:        "test_author_id",
-	TypeName:      "TestAuthor",
-	TableName:     "authors",
-	URLParamUUID:  "authorId",
-	PKField:       "ID",
-	ModelType:     reflect.TypeOf(TestAuthor{}),
-	ParentType:    nil,
-	ParentMeta:    nil,
-	ForeignKeyCol: "",
+	TypeID:          "test_author_id",
+	TypeName:        "TestAuthor",
+	TableName:       "authors",
+	URLParamUUID:    "authorId",
+	PKField:         "ID",
+	ModelType:       reflect.TypeOf(TestAuthor{}),
+	ParentType:      nil,
+	ParentMeta:      nil,
+	ForeignKeyCol:   "",
+	ParentJoinCol:   "id",
+	ParentJoinField: "ID",
 }
 
 var testArticleMeta = &metadata.TypeMetadata{
-	TypeID:        "test_article_id",
-	TypeName:      "TestArticle",
-	TableName:     "articles",
-	URLParamUUID:  "articleId",
-	PKField:       "ID",
-	ModelType:     reflect.TypeOf(TestArticle{}),
-	ParentType:    reflect.TypeOf(TestAuthor{}),
-	ParentMeta:    testAuthorMeta,
-	ForeignKeyCol: "author_id",
+	TypeID:          "test_article_id",
+	TypeName:        "TestArticle",
+	TableName:       "articles",
+	URLParamUUID:    "articleId",
+	PKField:         "ID",
+	ModelType:       reflect.TypeOf(TestArticle{}),
+	ParentType:      reflect.TypeOf(TestAuthor{}),
+	ParentMeta:      testAuthorMeta,
+	ForeignKeyCol:   "author_id",
+	ParentJoinCol:   "id",
+	ParentJoinField: "ID",
 }
 
 var testCommentMeta = &metadata.TypeMetadata{
-	TypeID:        "test_comment_id",
-	TypeName:      "TestComment",
-	TableName:     "comments",
-	URLParamUUID:  "commentId",
-	PKField:       "ID",
-	ModelType:     reflect.TypeOf(TestComment{}),
-	ParentType:    reflect.TypeOf(TestArticle{}),
-	ParentMeta:    testArticleMeta,
-	ForeignKeyCol: "article_id",
+	TypeID:          "test_comment_id",
+	TypeName:        "TestComment",
+	TableName:       "comments",
+	URLParamUUID:    "commentId",
+	PKField:         "ID",
+	ModelType:       reflect.TypeOf(TestComment{}),
+	ParentType:      reflect.TypeOf(TestArticle{}),
+	ParentMeta:      testArticleMeta,
+	ForeignKeyCol:   "article_id",
+	ParentJoinCol:   "id",
+	ParentJoinField: "ID",
 }
 
 // ctxWithNestedMeta creates a context with the given metadata
@@ -392,5 +398,270 @@ func TestWrapper_Nested_Delete(t *testing.T) {
 	_, err = articleWrapper.Get(ctx, itoa(article.ID))
 	if err == nil {
 		t.Error("Expected error when getting deleted article")
+	}
+}
+
+// Custom join test models — Site -> UsageData joined on NMI (not FK)
+type TestSite struct {
+	bun.BaseModel `bun:"table:sites"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	AccountID     int    `bun:"account_id,notnull"`
+	NMI           string `bun:"nmi,notnull"`
+}
+
+type TestUsageData struct {
+	bun.BaseModel `bun:"table:usage_data"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	NMI           string `bun:"nmi,notnull"`
+	Reading       int    `bun:"reading"`
+}
+
+var testSiteMeta = &metadata.TypeMetadata{
+	TypeID:          "test_site_id",
+	TypeName:        "TestSite",
+	TableName:       "sites",
+	URLParamUUID:    "siteId",
+	PKField:         "ID",
+	ModelType:       reflect.TypeOf(TestSite{}),
+	ParentType:      nil,
+	ParentMeta:      nil,
+	ForeignKeyCol:   "",
+	ParentJoinCol:   "id",
+	ParentJoinField: "ID",
+}
+
+var testUsageDataMeta = &metadata.TypeMetadata{
+	TypeID:          "test_usage_data_id",
+	TypeName:        "TestUsageData",
+	TableName:       "usage_data",
+	URLParamUUID:    "usageDataId",
+	PKField:         "ID",
+	ModelType:       reflect.TypeOf(TestUsageData{}),
+	ParentType:      reflect.TypeOf(TestSite{}),
+	ParentMeta:      testSiteMeta,
+	ForeignKeyCol:   "nmi",
+	ParentJoinCol:   "nmi",
+	ParentJoinField: "NMI",
+}
+
+func setupCustomJoinTestDB(t *testing.T) (*datastore.SQLite, func()) {
+	t.Helper()
+
+	db, err := datastore.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal("Failed to create test database:", err)
+	}
+
+	if err := datastore.Initialize(db); err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to initialize datastore:", err)
+	}
+
+	ctx := context.Background()
+	_, err = db.GetDB().NewCreateTable().Model((*TestSite)(nil)).IfNotExists().Exec(ctx)
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create sites table:", err)
+	}
+
+	_, err = db.GetDB().NewCreateTable().Model((*TestUsageData)(nil)).IfNotExists().Exec(ctx)
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create usage_data table:", err)
+	}
+
+	cleanup := func() {
+		_, _ = db.GetDB().NewDropTable().Model((*TestUsageData)(nil)).IfExists().Exec(ctx)
+		_, _ = db.GetDB().NewDropTable().Model((*TestSite)(nil)).IfExists().Exec(ctx)
+		datastore.Cleanup()
+		db.Cleanup()
+	}
+
+	return db, cleanup
+}
+
+func TestCustomJoin_ListFiltersByParentJoinCol(t *testing.T) {
+	db, cleanup := setupCustomJoinTestDB(t)
+	defer cleanup()
+
+	// Create a site with NMI "ABC123"
+	siteWrapper := &datastore.Wrapper[TestSite]{Store: db}
+	ctxSite := ctxWithNestedMeta(testSiteMeta)
+	site, err := siteWrapper.Create(ctxSite, TestSite{AccountID: 1, NMI: "ABC123"})
+	if err != nil {
+		t.Fatal("Failed to create site:", err)
+	}
+
+	// Insert usage data directly — some matching NMI, some not
+	ctx := context.Background()
+	_, _ = db.GetDB().NewInsert().Model(&TestUsageData{NMI: "ABC123", Reading: 100}).Exec(ctx)
+	_, _ = db.GetDB().NewInsert().Model(&TestUsageData{NMI: "ABC123", Reading: 200}).Exec(ctx)
+	_, _ = db.GetDB().NewInsert().Model(&TestUsageData{NMI: "XYZ999", Reading: 300}).Exec(ctx)
+
+	// List usage data scoped to site — should only return NMI="ABC123" rows
+	usageWrapper := &datastore.Wrapper[TestUsageData]{Store: db}
+	ctxList := ctxWithNestedMeta(testUsageDataMeta)
+	ctxList = context.WithValue(ctxList, metadata.ParentIDsKey, map[string]string{
+		"siteId": itoa(site.ID),
+	})
+	results, _, _, err := usageWrapper.GetAll(ctxList)
+	if err != nil {
+		t.Fatal("Failed to list usage data:", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("Expected 2 usage records for NMI ABC123, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.NMI != "ABC123" {
+			t.Errorf("Expected NMI 'ABC123', got '%s'", r.NMI)
+		}
+	}
+}
+
+func TestCustomJoin_GetValidatesParentJoinCol(t *testing.T) {
+	db, cleanup := setupCustomJoinTestDB(t)
+	defer cleanup()
+
+	// Create two sites with different NMIs
+	siteWrapper := &datastore.Wrapper[TestSite]{Store: db}
+	ctxSite := ctxWithNestedMeta(testSiteMeta)
+	site1, _ := siteWrapper.Create(ctxSite, TestSite{AccountID: 1, NMI: "ABC123"})
+	site2, _ := siteWrapper.Create(ctxSite, TestSite{AccountID: 1, NMI: "XYZ999"})
+
+	// Insert usage data for site1's NMI
+	ctx := context.Background()
+	usage := &TestUsageData{NMI: "ABC123", Reading: 100}
+	_, _ = db.GetDB().NewInsert().Model(usage).Exec(ctx)
+
+	usageWrapper := &datastore.Wrapper[TestUsageData]{Store: db}
+
+	// Get with correct parent (site1, NMI=ABC123) — should succeed
+	ctxCorrect := ctxWithNestedMeta(testUsageDataMeta)
+	ctxCorrect = context.WithValue(ctxCorrect, metadata.ParentIDsKey, map[string]string{
+		"siteId": itoa(site1.ID),
+	})
+	retrieved, err := usageWrapper.Get(ctxCorrect, itoa(usage.ID))
+	if err != nil {
+		t.Fatal("Failed to get usage data with correct parent:", err)
+	}
+	if retrieved.Reading != 100 {
+		t.Errorf("Expected reading 100, got %d", retrieved.Reading)
+	}
+
+	// Get with wrong parent (site2, NMI=XYZ999) — should fail (404)
+	ctxWrong := ctxWithNestedMeta(testUsageDataMeta)
+	ctxWrong = context.WithValue(ctxWrong, metadata.ParentIDsKey, map[string]string{
+		"siteId": itoa(site2.ID),
+	})
+	_, err = usageWrapper.Get(ctxWrong, itoa(usage.ID))
+	if err == nil {
+		t.Error("Expected error when getting usage data with wrong parent NMI")
+	}
+}
+
+func TestCustomJoin_CreateSetsJoinCol(t *testing.T) {
+	db, cleanup := setupCustomJoinTestDB(t)
+	defer cleanup()
+
+	// Create site
+	siteWrapper := &datastore.Wrapper[TestSite]{Store: db}
+	ctxSite := ctxWithNestedMeta(testSiteMeta)
+	site, err := siteWrapper.Create(ctxSite, TestSite{AccountID: 1, NMI: "ABC123"})
+	if err != nil {
+		t.Fatal("Failed to create site:", err)
+	}
+
+	// Create usage data under the site — NMI should be auto-set
+	usageWrapper := &datastore.Wrapper[TestUsageData]{Store: db}
+	ctxCreate := ctxWithNestedMeta(testUsageDataMeta)
+	ctxCreate = context.WithValue(ctxCreate, metadata.ParentIDsKey, map[string]string{
+		"siteId": itoa(site.ID),
+	})
+	created, err := usageWrapper.Create(ctxCreate, TestUsageData{Reading: 500})
+	if err != nil {
+		t.Fatal("Failed to create usage data:", err)
+	}
+	if created.NMI != "ABC123" {
+		t.Errorf("Expected NMI 'ABC123' auto-set from parent, got '%s'", created.NMI)
+	}
+}
+
+func TestCustomJoin_MultipleParentsShareJoinCol(t *testing.T) {
+	db, cleanup := setupCustomJoinTestDB(t)
+	defer cleanup()
+
+	// Two sites with the same NMI (different accounts, same physical meter)
+	siteWrapper := &datastore.Wrapper[TestSite]{Store: db}
+	ctxSite := ctxWithNestedMeta(testSiteMeta)
+	site1, _ := siteWrapper.Create(ctxSite, TestSite{AccountID: 1, NMI: "SHARED_NMI"})
+	site2, _ := siteWrapper.Create(ctxSite, TestSite{AccountID: 2, NMI: "SHARED_NMI"})
+
+	// Insert usage data for the shared NMI
+	ctx := context.Background()
+	_, _ = db.GetDB().NewInsert().Model(&TestUsageData{NMI: "SHARED_NMI", Reading: 100}).Exec(ctx)
+	_, _ = db.GetDB().NewInsert().Model(&TestUsageData{NMI: "SHARED_NMI", Reading: 200}).Exec(ctx)
+
+	usageWrapper := &datastore.Wrapper[TestUsageData]{Store: db}
+
+	// Both sites should see the same usage data
+	ctxSite1 := ctxWithNestedMeta(testUsageDataMeta)
+	ctxSite1 = context.WithValue(ctxSite1, metadata.ParentIDsKey, map[string]string{
+		"siteId": itoa(site1.ID),
+	})
+	results1, _, _, err := usageWrapper.GetAll(ctxSite1)
+	if err != nil {
+		t.Fatal("Failed to list usage data for site1:", err)
+	}
+
+	ctxSite2 := ctxWithNestedMeta(testUsageDataMeta)
+	ctxSite2 = context.WithValue(ctxSite2, metadata.ParentIDsKey, map[string]string{
+		"siteId": itoa(site2.ID),
+	})
+	results2, _, _, err := usageWrapper.GetAll(ctxSite2)
+	if err != nil {
+		t.Fatal("Failed to list usage data for site2:", err)
+	}
+
+	if len(results1) != 2 {
+		t.Errorf("Expected 2 usage records for site1, got %d", len(results1))
+	}
+	if len(results2) != 2 {
+		t.Errorf("Expected 2 usage records for site2, got %d", len(results2))
+	}
+}
+
+func TestCustomJoin_StandardFKUnchanged(t *testing.T) {
+	db, cleanup := setupNestedTestDB(t)
+	defer cleanup()
+
+	// Standard FK flow: Author -> Article
+	authorWrapper := &datastore.Wrapper[TestAuthor]{Store: db}
+	ctxAuthor := ctxWithNestedMeta(testAuthorMeta)
+	author, _ := authorWrapper.Create(ctxAuthor, TestAuthor{Name: "Author", Email: "a@example.com"})
+
+	articleWrapper := &datastore.Wrapper[TestArticle]{Store: db}
+	ctxCreate := ctxWithNestedMeta(testArticleMeta)
+	ctxCreate = context.WithValue(ctxCreate, metadata.ParentIDsKey, map[string]string{
+		"authorId": itoa(author.ID),
+	})
+	article, err := articleWrapper.Create(ctxCreate, TestArticle{Title: "Test", Content: "Content"})
+	if err != nil {
+		t.Fatal("Standard FK create failed:", err)
+	}
+	if article.AuthorID != author.ID {
+		t.Errorf("Expected AuthorID %d, got %d", author.ID, article.AuthorID)
+	}
+
+	// Verify get still works
+	ctxGet := ctxWithNestedMeta(testArticleMeta)
+	ctxGet = context.WithValue(ctxGet, metadata.ParentIDsKey, map[string]string{
+		"authorId": itoa(author.ID),
+	})
+	retrieved, err := articleWrapper.Get(ctxGet, itoa(article.ID))
+	if err != nil {
+		t.Fatal("Standard FK get failed:", err)
+	}
+	if retrieved.Title != "Test" {
+		t.Errorf("Expected title 'Test', got '%s'", retrieved.Title)
 	}
 }

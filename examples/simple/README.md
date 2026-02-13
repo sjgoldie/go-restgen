@@ -82,7 +82,7 @@ This example shows:
 2. **Model with timestamps** - Automatic `created_at` and `updated_at` handling via `BeforeAppendModel` hook
 3. **Builder API** - Register routes with support for nesting:
    ```go
-   b := router.NewBuilder(r)
+   b := router.NewBuilder(r, db.GetDB())
    router.RegisterRoutes[User](b, "/users",
        router.AllPublic(),
        router.WithFilters("Name", "Email"),

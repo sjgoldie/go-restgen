@@ -68,9 +68,14 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
 	// Create local file storage
 	uploadDir := "./uploads"
-	storage, err := NewLocalStorage(uploadDir, "http://localhost:8080/files")
+	storage, err := NewLocalStorage(uploadDir, "http://localhost:"+port+"/files")
 	if err != nil {
 		log.Fatal("Failed to create storage:", err)
 	}
@@ -120,7 +125,7 @@ func main() {
 	r.Handle("/files/*", http.StripPrefix("/files/", fileServer))
 
 	// Register routes
-	b := router.NewBuilder(r)
+	b := router.NewBuilder(r, db.GetDB())
 
 	// Posts with nested images
 	router.RegisterRoutes[Post](b, "/posts",
@@ -140,29 +145,26 @@ func main() {
 	)
 
 	// Start server
-	fmt.Println("Server starting on :8080")
+	base := "http://localhost:" + port
+	fmt.Println("Server starting on :" + port)
 	fmt.Println("Using SQLite in-memory database")
 	fmt.Println("Using local file storage:", uploadDir)
 	fmt.Println("\nFile download mode: SIGNED URL (direct access via /files)")
 	fmt.Println("\nAvailable endpoints:")
-	fmt.Println("  POST   http://localhost:8080/posts")
-	fmt.Println("  GET    http://localhost:8080/posts")
-	fmt.Println("  GET    http://localhost:8080/posts/{id}")
-	fmt.Println("  PUT    http://localhost:8080/posts/{id}")
-	fmt.Println("  DELETE http://localhost:8080/posts/{id}")
+	fmt.Println("  POST   " + base + "/posts")
+	fmt.Println("  GET    " + base + "/posts")
+	fmt.Println("  GET    " + base + "/posts/{id}")
+	fmt.Println("  PUT    " + base + "/posts/{id}")
+	fmt.Println("  DELETE " + base + "/posts/{id}")
 	fmt.Println("")
-	fmt.Println("  POST   http://localhost:8080/posts/{id}/images  (multipart upload)")
-	fmt.Println("  GET    http://localhost:8080/posts/{id}/images")
-	fmt.Println("  GET    http://localhost:8080/posts/{id}/images/{id}")
-	fmt.Println("  DELETE http://localhost:8080/posts/{id}/images/{id}")
+	fmt.Println("  POST   " + base + "/posts/{id}/images  (multipart upload)")
+	fmt.Println("  GET    " + base + "/posts/{id}/images")
+	fmt.Println("  GET    " + base + "/posts/{id}/images/{id}")
+	fmt.Println("  DELETE " + base + "/posts/{id}/images/{id}")
 	fmt.Println("\n  NOTE: No /download endpoint - download_url points to /files/{key}")
 	fmt.Println("\nUpload example:")
-	fmt.Println(`  curl -X POST http://localhost:8080/posts/1/images \`)
+	fmt.Printf("  curl -X POST %s/posts/1/images \\\n", base)
 	fmt.Println(`    -F "file=@image.png" \`)
 	fmt.Println(`    -F 'metadata={"alt_text":"My image"}'`)
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
 	log.Fatal(http.ListenAndServe(":"+port, r))
 }

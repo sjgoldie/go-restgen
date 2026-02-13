@@ -1,0 +1,27 @@
+meta {
+  name: List Usage Data for NMI002 Site
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/users/{{userId}}/accounts/{{account2Id}}/sites/{{site2Id}}/usage-data
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+script:post-response {
+  if (res.body.length !== 3) {
+    throw new Error(`Expected 3 usage records for NMI002, got ${res.body.length}`);
+  }
+  for (const record of res.body) {
+    if (record.nmi !== "NMI002") {
+      throw new Error(`Expected NMI002, got ${record.nmi}`);
+    }
+  }
+}

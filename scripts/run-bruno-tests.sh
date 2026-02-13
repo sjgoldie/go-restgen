@@ -1,6 +1,6 @@
 #!/bin/bash
 # Bruno API test runner for go-restgen examples
-# Usage: ./scripts/run-bruno-tests.sh [simple|nested|auth|validator|audit|uuid|custom|relations|files-proxy|files-signed|actions|batch|query|all]
+# Usage: ./scripts/run-bruno-tests.sh [simple|nested|auth|validator|audit|uuid|custom|relations|files-proxy|files-signed|actions|batch|query|custom-join|all]
 # Set PORT env var to override the default port (8080), e.g.: PORT=9090 ./scripts/run-bruno-tests.sh all
 
 set -e
@@ -178,6 +178,9 @@ case "$TEST_SUITE" in
     query)
         run_tests "Query Example" "examples/query" "query-example" || FAILED=1
         ;;
+    custom-join)
+        run_tests "Custom Join Example" "examples/custom_join" "custom-join-example" || FAILED=1
+        ;;
     all)
         run_tests "Simple Example" "examples/simple" "simple-example" || FAILED=1
         run_tests "Nested Example" "examples/nested_routes" "nested-example" || FAILED=1
@@ -192,9 +195,10 @@ case "$TEST_SUITE" in
         run_tests "Actions Example" "examples/actions" "actions-example" || FAILED=1
         run_tests "Batch Example" "examples/batch" "batch-example" || FAILED=1
         run_tests "Query Example" "examples/query" "query-example" || FAILED=1
+        run_tests "Custom Join Example" "examples/custom_join" "custom-join-example" || FAILED=1
         ;;
     *)
-        echo "Usage: $0 [simple|nested|auth|validator|audit|uuid|custom|relations|files-proxy|files-signed|actions|batch|query|all]"
+        echo "Usage: $0 [simple|nested|auth|validator|audit|uuid|custom|relations|files-proxy|files-signed|actions|batch|query|custom-join|all]"
         exit 1
         ;;
 esac

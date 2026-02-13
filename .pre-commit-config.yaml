@@ -56,3 +56,10 @@ repos:
         language: system
         files: go\.(mod|sum)$
         pass_filenames: false
+
+      - id: go-licence-detector
+        name: go licence detector
+        entry: bash -c 'go list -m -json all | go-licence-detector -noticeTemplate=scripts/templates/NOTICE.txt.tmpl -noticeOut=THIRD_PARTY_NOTICES -includeIndirect && git add THIRD_PARTY_NOTICES'
+        language: system
+        files: go\.(mod|sum)$
+        pass_filenames: false

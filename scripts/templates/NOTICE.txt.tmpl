@@ -1,0 +1,24 @@
+{{- define "depInfo" -}}
+{{- range $i, $dep := . }}
+{{ "-" | line }}
+Module  : {{ $dep.Name }}
+Version : {{ $dep.Version }}
+Time    : {{ $dep.VersionTime }}
+Licence : {{ $dep.LicenceType }}
+
+{{ $dep | licenceText }}
+{{ end }}
+{{- end -}}
+
+{{ "=" | line }}
+Third party libraries used by go-restgen
+{{ "=" | line }}
+
+{{ template "depInfo" .Direct }}
+
+{{ if .Indirect }}
+{{ "=" | line }}
+Indirect dependencies
+
+{{ template "depInfo" .Indirect }}
+{{ end }}

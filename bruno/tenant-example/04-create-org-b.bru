@@ -1,0 +1,28 @@
+meta {
+  name: Create Organization B (Beta Inc)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/organizations
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:charlie:org-b:user
+}
+
+body:json {
+  {
+    "id": "org-b",
+    "name": "Beta Inc"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: eq org-b
+  res.body.name: eq Beta Inc
+}

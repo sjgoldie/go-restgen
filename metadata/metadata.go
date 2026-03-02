@@ -56,8 +56,9 @@ type AuditFunc[T any] func(AuditContext[T]) any
 // AuthInfo contains authentication and authorization information.
 // Developers populate this in their auth middleware and add to context.
 type AuthInfo struct {
-	UserID string   // External user ID (e.g., Auth0 ID, Firebase UID, JWT sub claim)
-	Scopes []string // List of scopes/permissions the user has
+	UserID   string   // External user ID (e.g., Auth0 ID, Firebase UID, JWT sub claim)
+	TenantID string   // Tenant/organisation ID (e.g., Auth0 org_id). Used with WithTenantScope.
+	Scopes   []string // List of scopes/permissions the user has
 }
 
 // authInfoKeyType is the context key type for storing AuthInfo
@@ -97,6 +98,25 @@ type parentOwnershipKeyType string
 // Value is []*TypeMetadata - list of parent types in the chain that require ownership checks
 const ParentOwnershipKey parentOwnershipKeyType = "restgen_parent_ownership"
 
+// tenantScopedKeyType is the context key type for tenant scoping enforcement flag
+type tenantScopedKeyType string
+
+// TenantScopedKey is the context key for whether tenant scoping is active
+const TenantScopedKey tenantScopedKeyType = "restgen_tenant_scoped"
+
+// tenantIDValueKeyType is the context key type for the active tenant ID value
+type tenantIDValueKeyType string
+
+// TenantIDValueKey is the context key for the active tenant ID from AuthInfo
+const TenantIDValueKey tenantIDValueKeyType = "restgen_tenant_id_value"
+
+// parentTenantKeyType is the context key type for parent tenant metadata
+type parentTenantKeyType string
+
+// ParentTenantKey is the context key for storing parent metadata that need tenant filtering
+// Value is []*TypeMetadata - list of parent types in the chain that require tenant checks
+const ParentTenantKey parentTenantKeyType = "restgen_parent_tenant"
+
 // TypeMetadata contains all metadata for a registered type
 type TypeMetadata struct {
 	TypeID          string        // Unique UUID for this type
@@ -112,6 +132,10 @@ type TypeMetadata struct {
 	ParentJoinField string        // Parent Go field name for JOIN (default: "ID"). Used by setForeignKey for custom joins.
 	OwnershipFields []string      // Model field names for ownership validation (OR logic)
 	BypassScopes    []string      // Scopes that bypass ownership validation (e.g., "admin")
+
+	// Multi-tenant scoping
+	TenantField   string // Go field name holding tenant ID (e.g., "OrgID"). Set by WithTenantScope, inherited by children.
+	IsTenantTable bool   // If true, this IS the tenant entity — filter by PK instead of TenantField.
 
 	// Child routes for relation loading via ?include=
 	ChildMeta map[string]*TypeMetadata // relation name -> child type metadata
@@ -165,6 +189,8 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 		Auditor:         m.Auditor,
 		IsFileResource:  m.IsFileResource,
 		BatchLimit:      m.BatchLimit,
+		TenantField:     m.TenantField,
+		IsTenantTable:   m.IsTenantTable,
 	}
 
 	// Deep copy slices

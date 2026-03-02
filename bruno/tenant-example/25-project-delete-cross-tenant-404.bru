@@ -1,0 +1,26 @@
+meta {
+  name: Delete Project - Cross-Tenant 404
+  type: http
+  seq: 25
+}
+
+delete {
+  url: {{baseUrl}}/projects/{{aliceProjectId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:charlie:org-b:user
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # Cross-Tenant DELETE Returns 404
+  Charlie (org-b) tries to delete Alice's project (org-a).
+  The delete handler fetches the record first with tenant filtering.
+  Project is invisible → 404. No cross-tenant modification possible.
+}

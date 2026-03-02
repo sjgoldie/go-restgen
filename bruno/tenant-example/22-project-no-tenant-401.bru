@@ -1,0 +1,32 @@
+meta {
+  name: Projects - No TenantID Returns 401
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{baseUrl}}/projects
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:diana::user
+}
+
+body:json {
+  {
+    "name": "Should Fail",
+    "description": "Diana has no TenantID"
+  }
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  # Missing TenantID → 401
+  Diana is authenticated (has UserID and scopes) but her token has no TenantID.
+  Tenant-scoped routes require TenantID — returns 401 Unauthorized.
+}

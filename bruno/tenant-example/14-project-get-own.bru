@@ -1,0 +1,22 @@
+meta {
+  name: Get Project - Own Tenant
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/projects/{{aliceProjectId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:org-a:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{aliceProjectId}}
+  res.body.name: eq Alpha Project
+  res.body.org_id: eq org-a
+}

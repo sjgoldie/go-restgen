@@ -98,6 +98,8 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 	var isFileResource bool
 	var pkField string
 	var joinOn *JoinOnConfig
+	var tenantField string
+	var isTenantTable bool
 
 	for _, opt := range options {
 		switch v := opt.(type) {
@@ -139,17 +141,21 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			pkField = v.FieldName
 		case JoinOnConfig:
 			joinOn = &v
+		case TenantConfig:
+			tenantField = v.Field
+		case TenantTableConfig:
+			isTenantTable = true
 		case func(*Builder):
 			nested = v
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, relationName, singleRoute, isFileResource, pkField, joinOn)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, relationName, singleRoute, isFileResource, pkField, joinOn, tenantField, isTenantTable)
 }
 
 // prepareMetadata assembles type metadata and auth configuration before route registration.
 // This extracts the setup phase from registerRoutesWithBuilder to reduce cyclomatic complexity.
-func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig) (string, *metadataSetup) {
+func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool) (string, *metadataSetup) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -288,6 +294,16 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 		meta.BypassScopes = bypassScopes
 	}
 
+	// Set tenant scoping
+	switch {
+	case isTenantTable:
+		meta.IsTenantTable = true
+	case tenantField != "":
+		meta.TenantField = tenantField
+	case b.parentMeta != nil && b.parentMeta.TenantField != "":
+		meta.TenantField = b.parentMeta.TenantField
+	}
+
 	// Merge query configs (last wins for each setting)
 	meta = mergeQueryConfigs(meta, queryConfigs)
 
@@ -326,8 +342,8 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig) {
-	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn)
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool) {
+	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, isTenantTable)
 	meta := setup.meta
 	authMap := setup.authMap
 	metadataMiddleware := setup.metadataMiddleware

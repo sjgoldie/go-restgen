@@ -1,0 +1,27 @@
+meta {
+  name: IsTenantTable - View Own Org
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/organizations/org-a
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:org-a:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq org-a
+  res.body.name: eq Acme Corp
+}
+
+docs {
+  # IsTenantTable: View Own Organization
+  IsTenantTable routes filter by WHERE id = tenantID.
+  Alice (org-a) can view her own organization.
+}

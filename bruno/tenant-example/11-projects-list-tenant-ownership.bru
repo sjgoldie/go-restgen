@@ -1,0 +1,37 @@
+meta {
+  name: List Projects - Alice (tenant + ownership filter)
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/projects
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:org-a:user
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Alice sees only her own project in org-a (tenant + ownership)", function() {
+    expect(res.body).to.be.an('array');
+    expect(res.body.length).to.equal(1);
+    expect(res.body[0].name).to.equal("Alpha Project");
+    expect(res.body[0].org_id).to.equal("org-a");
+    expect(res.body[0].owner_id).to.equal("alice");
+  });
+}
+
+docs {
+  # Tenant + Ownership: Both Filters Apply
+  Alice has the 'user' scope. With ownership enabled, she only sees projects
+  where owner_id='alice'. Tenant filtering also applies, so only org-a data.
+  Result: 1 project (Alpha Project).
+}

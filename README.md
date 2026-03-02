@@ -5,6 +5,10 @@
 [![codecov](https://codecov.io/github/sjgoldie/go-restgen/graph/badge.svg?token=Q2FFGVF0WH)](https://codecov.io/github/sjgoldie/go-restgen)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+<p align="center">
+  <img src="restgen-gopher.png" alt="go-restgen gopher" width="300">
+</p>
+
 A lightweight, type-safe REST API framework for Go that leverages generics to automatically generate CRUD endpoints. Build production-ready REST APIs with minimal boilerplate while maintaining full type safety.
 
 ## Disclosure
@@ -21,6 +25,7 @@ I have leaned heavily on Claude Code (https://www.claude.com/product/claude-code
 - 🏗️ **Production-ready** - Built on battle-tested libraries (Chi router, Bun ORM)
 - 📦 **Composable** - Mix generated routes with custom handlers
 - 🧪 **Testable** - SQLite in-memory database for fast tests
+- 🏢 **Multi-tenant** - Automatic data isolation with tenant scoping and cross-tenant protection
 - 🛡️ **Secure by default** - Blocked unless explicitly configured, path IDs always take precedence
 
 ## Installation
@@ -447,8 +452,9 @@ func authMiddleware(next http.Handler) http.Handler {
 
         // Populate AuthInfo for the framework
         authInfo := &router.AuthInfo{
-            UserID: userID,  // External user ID (e.g., "auth0|123", Firebase UID)
-            Scopes: scopes,  // User's permissions/scopes
+            UserID:   userID,   // External user ID (e.g., "auth0|123", Firebase UID)
+            TenantID: tenantID, // Tenant/org ID for multi-tenant isolation (optional)
+            Scopes:   scopes,   // User's permissions/scopes
         }
 
         ctx := context.WithValue(r.Context(), router.AuthInfoKey, authInfo)
@@ -658,6 +664,121 @@ router.PublicList()        // LIST collection public
 router.AllPublicWithBatch()          // All methods + batch public
 router.AllScopedWithBatch("admin")   // All methods + batch require scope
 ```
+
+## Multi-Tenant Data Isolation
+
+go-restgen supports automatic multi-tenant data isolation, ensuring each tenant's data is completely invisible to other tenants. This is a hard security boundary — not a filter you can bypass.
+
+### How It Works
+
+Multi-tenancy is configured per-route using two options:
+
+- **`WithTenantScope(field)`** — Scopes all queries by the tenant ID stored in the named field. Auto-sets the field on create and update. Child routes inherit automatically.
+- **`IsTenantTable()`** — Marks the route as the tenant entity itself (e.g., Organization). The model's primary key IS the tenant ID, so queries use `WHERE id = tenantID`.
+
+The tenant ID comes from `AuthInfo.TenantID`, which you populate in your auth middleware.
+
+### Defining Models
+
+```go
+// The tenant entity itself
+type Organization struct {
+    bun.BaseModel `bun:"table:organizations"`
+    ID            string    `bun:"id,pk" json:"id"`
+    Name          string    `bun:"name,notnull" json:"name"`
+}
+
+// A tenant-scoped resource
+type Project struct {
+    bun.BaseModel `bun:"table:projects"`
+    ID            int       `bun:"id,pk,autoincrement" json:"id"`
+    OrgID         string    `bun:"org_id,notnull" json:"org_id"`       // Tenant field
+    OwnerID       string    `bun:"owner_id,notnull" json:"owner_id"`   // Ownership field
+    Name          string    `bun:"name,notnull" json:"name"`
+}
+
+// Child inherits tenant scope from parent
+type Task struct {
+    bun.BaseModel `bun:"table:tasks"`
+    ID            int       `bun:"id,pk,autoincrement" json:"id"`
+    ProjectID     int       `bun:"project_id,notnull,skipupdate" json:"project_id"`
+    Project       *Project  `bun:"rel:belongs-to,join:project_id=id" json:"-"`
+    OrgID         string    `bun:"org_id,notnull" json:"org_id"`       // Same tenant field
+    Title         string    `bun:"title,notnull" json:"title"`
+}
+```
+
+### Registering Routes
+
+```go
+b := router.NewBuilder(r, db.GetDB())
+
+// Tenant entity: PK = tenant ID, filtered by WHERE id = tenantID
+router.RegisterRoutes[Organization](b, "/organizations",
+    router.IsTenantTable(),
+    router.IsAuthenticated(),
+)
+
+// Tenant-scoped resource with ownership
+router.RegisterRoutes[Project](b, "/projects",
+    router.WithTenantScope("OrgID"),
+    router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+    func(b *router.Builder) {
+        // Child inherits tenant scope automatically
+        router.RegisterRoutes[Task](b, "/tasks",
+            router.IsAuthenticated(),
+            router.WithRelationName("Tasks"),
+        )
+    },
+)
+```
+
+### Auth Middleware
+
+Populate `TenantID` in your auth middleware:
+
+```go
+func authMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        userID, tenantID, scopes := validateToken(r)
+
+        if userID != "" {
+            authInfo := &router.AuthInfo{
+                UserID:   userID,
+                TenantID: tenantID,  // Required for tenant-scoped routes
+                Scopes:   scopes,
+            }
+            ctx := context.WithValue(r.Context(), router.AuthInfoKey, authInfo)
+            r = r.WithContext(ctx)
+        }
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+### Security Guarantees
+
+| Operation | Behavior |
+|-----------|----------|
+| **CREATE** | Tenant field auto-set from `AuthInfo.TenantID` (ignores JSON body value) |
+| **GET/LIST** | Auto-applies `WHERE org_id = <tenantID>` filter |
+| **UPDATE** | Re-enforces tenant field (prevents cross-tenant moves via PUT) |
+| **DELETE** | Validates resource belongs to tenant before deletion |
+| **Cross-tenant access** | Returns 404 (doesn't leak existence) |
+| **Missing TenantID** | Returns 401 Unauthorized |
+| **Child routes** | Inherit tenant scope from parent automatically |
+
+### Combining with Other Features
+
+Tenant scoping works with all other go-restgen features:
+
+- **Ownership** — Tenant filter + ownership filter stack (e.g., Alice in org-a only sees her projects in org-a)
+- **Nested routes** — Children inherit tenant scope; parent chain validation includes tenant filtering
+- **Relation includes** — `?include=Tasks` respects tenant boundaries
+- **Batch operations** — Tenant field enforced on every item in batch create/update
+- **Query parameters** — Filters, sorts, and pagination apply within tenant scope
+
+See the [tenant example](./examples/tenant) for a complete working example with organizations, projects, tasks, and comprehensive cross-tenant isolation tests.
 
 ## Query Parameters: Filtering, Sorting & Pagination
 
@@ -1872,6 +1993,7 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[Batch Operations](./examples/batch)** - Bulk create, update, and delete operations
 - **[Custom Handlers](./examples/custom)** - Override default CRUD behavior with custom handler functions
 - **[Custom Join Columns](./examples/custom_join)** - Non-FK relationships using `WithJoinOn` for shared attribute joins
+- **[Multi-Tenant](./examples/tenant)** - Multi-tenant data isolation with organizations, tenant-scoped projects, child task inheritance, and cross-tenant security tests
 
 All examples include comprehensive Bruno API tests. See [`bruno/README.md`](./bruno/README.md) for details.
 
@@ -1919,7 +2041,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 go tool cover -func=/tmp/coverage.out
 ```
 
-For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 246 API tests across 13 example applications.
+For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 271 API tests across 15 example applications.
 
 You can override the default port (8080) using the `PORT` environment variable:
 
@@ -1950,6 +2072,7 @@ go-restgen builds on these excellent projects:
 - [x] Action endpoints for custom operations (`POST /resource/{id}/action`)
 - [x] Batch operations for bulk create/update/delete (`/resource/batch`)
 - [x] Custom join columns via `WithJoinOn` for non-FK relationships
+- [x] Multi-tenant data isolation with `WithTenantScope` and `IsTenantTable`
 - [ ] MySQL support
 - [ ] OpenAPI/Swagger generation
 - [ ] Standalone examples (separate go.mod per example to avoid polluting main module)

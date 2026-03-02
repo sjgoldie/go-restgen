@@ -1,0 +1,48 @@
+meta {
+  name: Create Task - Under Alice's Project
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/projects/{{aliceProjectId}}/tasks
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:org-a:user
+}
+
+body:json {
+  {
+    "title": "Implement feature X",
+    "status": "open"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.title: eq Implement feature X
+}
+
+tests {
+  test("Task inherits tenant field from parent route", function() {
+    expect(res.body.org_id).to.equal("org-a");
+  });
+  test("Task has correct parent project ID", function() {
+    var expectedId = parseInt(bru.getVar("aliceProjectId"));
+    expect(res.body.project_id).to.equal(expectedId);
+  });
+}
+
+script:post-response {
+  bru.setVar("aliceTaskId", res.body.id);
+}
+
+docs {
+  # Child Inherits Tenant Scope
+  Task route is a child of Project. It inherits WithTenantScope("OrgID").
+  org_id is auto-set on create from AuthInfo.TenantID.
+}

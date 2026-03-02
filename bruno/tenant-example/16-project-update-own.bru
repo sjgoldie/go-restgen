@@ -1,0 +1,31 @@
+meta {
+  name: Update Project - Own Tenant
+  type: http
+  seq: 16
+}
+
+put {
+  url: {{baseUrl}}/projects/{{aliceProjectId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:org-a:user
+}
+
+body:json {
+  {
+    "id": {{aliceProjectId}},
+    "owner_id": "alice",
+    "name": "Alpha Project (Updated)",
+    "description": "Updated description"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.name: eq Alpha Project (Updated)
+  res.body.org_id: eq org-a
+  res.body.owner_id: eq alice
+}

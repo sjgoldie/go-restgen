@@ -21,6 +21,8 @@ examples/files_proxy/files_proxy
 examples/files_signed/files_signed
 examples/batch/batch
 examples/actions/actions
+examples/tenant/tenant
+examples/custom_join/custom_join
 /simple
 /nested_routes
 /auth
@@ -33,6 +35,8 @@ examples/actions/actions
 /files_signed
 /batch
 /actions
+/tenant
+/custom_join
 
 # File upload directories
 examples/files_proxy/uploads/

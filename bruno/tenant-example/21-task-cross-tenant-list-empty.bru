@@ -1,0 +1,33 @@
+meta {
+  name: List Tasks - Cross-Tenant Returns Empty
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/projects/{{aliceProjectId}}/tasks
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:charlie:org-b:user
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("Cross-tenant task list returns empty array", function() {
+    expect(res.body).to.be.an('array');
+    expect(res.body.length).to.equal(0);
+  });
+}
+
+docs {
+  # Cross-Tenant Child List
+  Charlie (org-b) accesses tasks under Alice's project (org-a).
+  The task query filters by org_id='org-b', finding no matching tasks.
+  Returns 200 with empty array — no data leakage.
+}

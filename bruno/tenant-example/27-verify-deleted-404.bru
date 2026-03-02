@@ -1,0 +1,19 @@
+meta {
+  name: Verify Deleted Project Returns 404
+  type: http
+  seq: 27
+}
+
+get {
+  url: {{baseUrl}}/projects/{{bobProjectId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:org-a:user,admin
+}
+
+assert {
+  res.status: eq 404
+}

@@ -124,6 +124,22 @@ func wrapWithAuth(next http.Handler, config *AuthConfig) http.Handler {
 			}
 		}
 
+		// Issue #64: Multi-tenant scoping
+		if meta != nil && (meta.TenantField != "" || meta.IsTenantTable) {
+			if authInfo == nil || authInfo.TenantID == "" {
+				slog.WarnContext(ctx, "auth rejected: tenant-scoped route requires TenantID", "path", r.URL.Path, "method", r.Method, "type", meta.TypeName)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			ctx = applyTenantContext(ctx, authInfo.TenantID)
+
+			// Walk parent chain for tenant filtering (same pattern as parent ownership)
+			parentsNeedingTenant := checkParentTenant(meta)
+			if len(parentsNeedingTenant) > 0 {
+				ctx = context.WithValue(ctx, metadata.ParentTenantKey, parentsNeedingTenant)
+			}
+		}
+
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -228,6 +244,27 @@ func blockUnauthorized(next http.Handler) http.Handler {
 		slog.WarnContext(r.Context(), "auth rejected: no auth config", "path", r.URL.Path, "method", r.Method)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	})
+}
+
+// applyTenantContext sets tenant scoping context keys for the datastore layer
+func applyTenantContext(ctx context.Context, tenantID string) context.Context {
+	ctx = context.WithValue(ctx, metadata.TenantScopedKey, true)
+	ctx = context.WithValue(ctx, metadata.TenantIDValueKey, tenantID)
+	return ctx
+}
+
+// checkParentTenant walks the parent metadata chain and collects parents that have tenant scoping.
+// The datastore layer uses this to JOIN and filter parent tables by tenant ID.
+func checkParentTenant(meta *metadata.TypeMetadata) []*metadata.TypeMetadata {
+	var parentsNeedingTenant []*metadata.TypeMetadata
+
+	for parent := meta.ParentMeta; parent != nil; parent = parent.ParentMeta {
+		if parent.TenantField != "" {
+			parentsNeedingTenant = append(parentsNeedingTenant, parent)
+		}
+	}
+
+	return parentsNeedingTenant
 }
 
 // applyOwnershipContext sets ownership context flags for all authenticated users

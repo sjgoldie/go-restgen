@@ -1,0 +1,34 @@
+meta {
+  name: Icon Colors - Global Route With Tenant Auth
+  type: http
+  seq: 29
+}
+
+get {
+  url: {{baseUrl}}/iconcolors
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:org-a:user
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Global route unaffected by tenant auth - all colors visible", function() {
+    expect(res.body).to.be.an('array');
+    expect(res.body.length).to.equal(3);
+  });
+}
+
+docs {
+  # Global Routes Unaffected by Tenant Auth
+  Even when the request includes tenant auth info (alice@org-a),
+  global routes (AllPublic, no WithTenantScope) work normally.
+  Tenant filtering only applies to routes configured with WithTenantScope or IsTenantTable.
+}

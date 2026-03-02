@@ -1,0 +1,32 @@
+meta {
+  name: Create Project - Bob (org-a admin)
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/projects
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:org-a:user,admin
+}
+
+body:json {
+  {
+    "name": "Beta Project",
+    "description": "Bob's project in org-a"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.org_id: eq org-a
+  res.body.owner_id: eq bob
+}
+
+script:post-response {
+  bru.setVar("bobProjectId", res.body.id);
+}

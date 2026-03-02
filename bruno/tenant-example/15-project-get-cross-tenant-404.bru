@@ -1,0 +1,26 @@
+meta {
+  name: Get Project - Cross-Tenant 404
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/projects/{{aliceProjectId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:charlie:org-b:user
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # Cross-Tenant GET Returns 404
+  Charlie (org-b) tries to GET Alice's project (org-a).
+  Tenant filtering makes it invisible. Returns 404, not 403.
+  This prevents information leakage about resource existence.
+}

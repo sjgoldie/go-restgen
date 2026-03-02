@@ -140,6 +140,10 @@ router.RegisterRoutes[Model](builder, "/path",
     router.AllScopedWithBatch("admin"),  // all methods + batch for admin scope
     router.WithBatchLimit(100),          // optional: limit items per batch
 
+    // Multi-tenant isolation
+    router.WithTenantScope("OrgID"),  // auto-filter + auto-set tenant field from AuthInfo.TenantID
+    router.IsTenantTable(),           // marks route as the tenant entity (PK = tenant ID)
+
     // Custom actions
     router.WithAction("publish", publishFn, router.AuthConfig{Scopes: []string{"user"}}),
 )
@@ -184,8 +188,9 @@ func authMiddleware(next http.Handler) http.Handler {
         userID, scopes := validateToken(r.Header.Get("Authorization"))
         if userID != "" {
             authInfo := &router.AuthInfo{
-                UserID: userID,
-                Scopes: scopes,
+                UserID:   userID,
+                TenantID: tenantID, // For multi-tenant isolation (optional)
+                Scopes:   scopes,
             }
             ctx := context.WithValue(r.Context(), router.AuthInfoKey, authInfo)
             r = r.WithContext(ctx)
@@ -203,6 +208,53 @@ router.RegisterRoutes[Post](b, "/posts",
 ```
 
 Users only see/modify posts where `AuthorID` matches their auth `UserID`. Admins bypass.
+
+## Pattern: Multi-Tenant Isolation
+
+```go
+// Tenant entity (PK = tenant ID)
+type Organization struct {
+    bun.BaseModel `bun:"table:organizations"`
+    ID            string `bun:"id,pk" json:"id"`
+    Name          string `bun:"name,notnull" json:"name"`
+}
+
+// Tenant-scoped model (has OrgID field)
+type Project struct {
+    bun.BaseModel `bun:"table:projects"`
+    ID            int    `bun:"id,pk,autoincrement" json:"id"`
+    OrgID         string `bun:"org_id,notnull" json:"org_id"`
+    OwnerID       string `bun:"owner_id,notnull" json:"owner_id"`
+    Name          string `bun:"name,notnull" json:"name"`
+}
+
+// Tenant entity route: WHERE id = tenantID
+router.RegisterRoutes[Organization](b, "/organizations",
+    router.IsTenantTable(),
+    router.IsAuthenticated(),
+)
+
+// Tenant-scoped route: auto-filters by OrgID, auto-sets on create/update
+router.RegisterRoutes[Project](b, "/projects",
+    router.WithTenantScope("OrgID"),
+    router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+    func(b *router.Builder) {
+        // Children inherit tenant scope automatically
+        router.RegisterRoutes[Task](b, "/tasks", router.IsAuthenticated())
+    },
+)
+```
+
+Auth middleware must set `TenantID`:
+```go
+authInfo := &router.AuthInfo{
+    UserID:   userID,
+    TenantID: tenantID,  // Required for WithTenantScope / IsTenantTable routes
+    Scopes:   scopes,
+}
+```
+
+Behaviour: CREATE auto-sets tenant field, GET/LIST auto-filters, UPDATE re-enforces tenant field, cross-tenant returns 404, missing TenantID returns 401. Children inherit from parent.
 
 ## Pattern: Custom Handlers
 
@@ -411,6 +463,7 @@ For each resource:
 - [ ] Ownership filters work correctly
 - [ ] Nested routes validate parent exists
 - [ ] Query params (filter, sort, limit) work
+- [ ] Tenant isolation prevents cross-tenant access (if using WithTenantScope/IsTenantTable)
 
 ## External Database Connections
 

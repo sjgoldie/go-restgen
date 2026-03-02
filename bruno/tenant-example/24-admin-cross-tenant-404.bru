@@ -1,0 +1,26 @@
+meta {
+  name: Admin Cannot Cross Tenant Boundary
+  type: http
+  seq: 24
+}
+
+get {
+  url: {{baseUrl}}/projects/{{charlieProjectId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:org-a:user,admin
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # Admin Scope Does NOT Bypass Tenant
+  Bob is admin in org-a. He can bypass ownership (see all org-a projects).
+  But admin scope does NOT bypass tenant filtering. Charlie's project (org-b)
+  is completely invisible to Bob. This is a hard security boundary.
+}

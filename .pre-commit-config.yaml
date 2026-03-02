@@ -10,6 +10,7 @@ repos:
       - id: check-yaml
       - id: check-added-large-files
         args: ['--maxkb=500']
+        exclude: 'restgen-gopher\.png'
       - id: check-merge-conflict
       - id: check-case-conflict
 
@@ -59,7 +60,7 @@ repos:
 
       - id: go-licence-detector
         name: go licence detector
-        entry: bash -c 'go list -m -json all | go-licence-detector -noticeTemplate=scripts/templates/NOTICE.txt.tmpl -noticeOut=THIRD_PARTY_NOTICES -includeIndirect && git add THIRD_PARTY_NOTICES'
+        entry: bash -c 'go list -m -json all | go-licence-detector -rules=scripts/licence-rules.json -noticeTemplate=scripts/templates/NOTICE.txt.tmpl -noticeOut=THIRD_PARTY_NOTICES -includeIndirect && git add THIRD_PARTY_NOTICES'
         language: system
         files: go\.(mod|sum)$
         pass_filenames: false

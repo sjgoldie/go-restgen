@@ -1,0 +1,25 @@
+meta {
+  name: Organizations - No TenantID Returns 401
+  type: http
+  seq: 23
+}
+
+get {
+  url: {{baseUrl}}/organizations
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:diana::user
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  # IsTenantTable Also Requires TenantID
+  Even IsTenantTable routes (Organization) require TenantID.
+  Without it, the route can't determine which tenant to filter by.
+}

@@ -407,8 +407,10 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 		// Parse request body - either multipart form or JSON
 		contentType := r.Header.Get("Content-Type")
 		if strings.HasPrefix(contentType, "multipart/form-data") {
-			// Parse multipart form
-			if err := r.ParseMultipartForm(32 << 20); err != nil {
+			// Limit request body size to prevent memory exhaustion
+			const maxUploadSize = 32 << 20 // 32 MB
+			r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+			if err := r.ParseMultipartForm(maxUploadSize); err != nil {
 				slog.DebugContext(ctx, "failed to parse multipart form", "error", err)
 				http.Error(w, "bad request: failed to parse multipart form", http.StatusBadRequest)
 				return

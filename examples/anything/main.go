@@ -44,7 +44,7 @@ func (o *Order) BeforeAppendModel(_ context.Context, query bun.Query) error {
 	return nil
 }
 
-// WorkflowStatus is a non-model return type for the anything func
+// WorkflowStatus is a non-model return type for the endpoint
 type WorkflowStatus struct {
 	OrderID string `json:"order_id"`
 	State   string `json:"state"`
@@ -57,7 +57,7 @@ type Step struct {
 	Completed bool   `json:"completed"`
 }
 
-// SystemInfo is the return type for the root func
+// SystemInfo is the return type for the root endpoint
 type SystemInfo struct {
 	Version string `json:"version"`
 	Uptime  string `json:"uptime"`
@@ -65,7 +65,7 @@ type SystemInfo struct {
 
 var startTime = time.Now()
 
-// getWorkflowStatus is an item-level anything func — GET /orders/{id}/wf-status
+// getWorkflowStatus is an item-level endpoint — GET /orders/{id}/wf-status
 // Returns a WorkflowStatus (not an Order), demonstrating non-model return types.
 func getWorkflowStatus(
 	ctx context.Context,
@@ -88,7 +88,7 @@ func getWorkflowStatus(
 	}, http.StatusOK, nil
 }
 
-// processPayment is an item-level anything func — POST /orders/{id}/pay
+// processPayment is an item-level endpoint — POST /orders/{id}/pay
 // Accepts a JSON payload with payment details and returns a receipt.
 func processPayment(
 	ctx context.Context,
@@ -142,7 +142,7 @@ func streamOrderEvents(
 	return nil
 }
 
-// getSystemInfo is a root-level anything func — GET /system/info
+// getSystemInfo is a root-level endpoint — GET /system/info
 func getSystemInfo(
 	ctx context.Context,
 	auth *metadata.AuthInfo,
@@ -154,13 +154,13 @@ func getSystemInfo(
 	}, http.StatusOK, nil
 }
 
-// handleWebhook is a root-level anything func — POST /webhooks/notify
+// handleWebhook is a root-level endpoint — POST /webhooks/notify
 func handleWebhook(
 	ctx context.Context,
 	auth *metadata.AuthInfo,
 	r *http.Request,
 ) (any, int, error) {
-	return map[string]string{"received": "true"}, http.StatusAccepted, nil
+	return map[string]any{"received": true}, http.StatusAccepted, nil
 }
 
 // streamSystemEvents is a root-level SSE func — GET /events/system
@@ -209,13 +209,13 @@ func main() {
 
 	b := router.NewBuilder(r, db.GetDB())
 
-	// Item-level anything funcs and SSE on orders
+	// Item-level endpoints and SSE on orders
 	router.RegisterRoutes[Order](b, "/orders",
 		router.AllPublic(),
-		router.WithFunc("GET", "wf-status", getWorkflowStatus, router.AuthConfig{
+		router.WithEndpoint("GET", "wf-status", getWorkflowStatus, router.AuthConfig{
 			Scopes: []string{router.ScopePublic},
 		}),
-		router.WithFunc("POST", "pay", processPayment, router.AuthConfig{
+		router.WithEndpoint("POST", "pay", processPayment, router.AuthConfig{
 			Scopes: []string{router.ScopePublic},
 		}),
 		router.WithSSE("events", streamOrderEvents, router.AuthConfig{
@@ -223,9 +223,9 @@ func main() {
 		}),
 	)
 
-	// Root-level anything funcs
-	router.RegisterRootFunc(b, "GET", "/system/info", getSystemInfo, router.AllPublic())
-	router.RegisterRootFunc(b, "POST", "/webhooks/notify", handleWebhook, router.AllPublic())
+	// Root-level endpoints
+	router.RegisterRootEndpoint(b, "GET", "/system/info", getSystemInfo, router.AllPublic())
+	router.RegisterRootEndpoint(b, "POST", "/webhooks/notify", handleWebhook, router.AllPublic())
 
 	// Root-level SSE
 	router.RegisterRootSSE(b, "/events/system", streamSystemEvents, router.AllPublic())
@@ -234,11 +234,11 @@ func main() {
 	fmt.Println("Server starting on :8080")
 	fmt.Println("\nEndpoints:")
 	fmt.Println("  CRUD   /orders                        Standard CRUD")
-	fmt.Println("  GET    /orders/{id}/wf-status          Workflow status (anything func)")
-	fmt.Println("  POST   /orders/{id}/pay                Process payment (anything func)")
+	fmt.Println("  GET    /orders/{id}/wf-status          Workflow status (endpoint)")
+	fmt.Println("  POST   /orders/{id}/pay                Process payment (endpoint)")
 	fmt.Println("  GET    /orders/{id}/events              SSE event stream")
-	fmt.Println("  GET    /system/info                    System info (root func)")
-	fmt.Println("  POST   /webhooks/notify                Webhook receiver (root func)")
+	fmt.Println("  GET    /system/info                    System info (root endpoint)")
+	fmt.Println("  POST   /webhooks/notify                Webhook receiver (root endpoint)")
 	fmt.Println("  GET    /events/system                  System SSE stream (root SSE)")
 
 	port := os.Getenv("PORT")

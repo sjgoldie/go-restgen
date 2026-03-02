@@ -23,7 +23,7 @@ type WorkflowStatus struct {
 	Steps  int    `json:"steps"`
 }
 
-func TestFunc_Success(t *testing.T) {
+func TestEndpoint_Success(t *testing.T) {
 	cleanTable(t)
 
 	db := testDB.GetDB()
@@ -40,7 +40,7 @@ func TestFunc_Success(t *testing.T) {
 	r := chi.NewRouter()
 	r.Route("/users/{id}", func(r chi.Router) {
 		r.Use(withMeta(userMeta))
-		r.Get("/wf-status", handler.Func[TestUser](funcHandler))
+		r.Get("/wf-status", handler.Endpoint[TestUser](funcHandler))
 	})
 
 	req := httptest.NewRequest("GET", "/users/1/wf-status", nil)
@@ -67,7 +67,7 @@ func TestFunc_Success(t *testing.T) {
 	}
 }
 
-func TestFunc_NoContent(t *testing.T) {
+func TestEndpoint_NoContent(t *testing.T) {
 	cleanTable(t)
 
 	db := testDB.GetDB()
@@ -84,7 +84,7 @@ func TestFunc_NoContent(t *testing.T) {
 	r := chi.NewRouter()
 	r.Route("/users/{id}", func(r chi.Router) {
 		r.Use(withMeta(userMeta))
-		r.Post("/trigger", handler.Func[TestUser](funcHandler))
+		r.Post("/trigger", handler.Endpoint[TestUser](funcHandler))
 	})
 
 	req := httptest.NewRequest("POST", "/users/1/trigger", nil)
@@ -100,7 +100,7 @@ func TestFunc_NoContent(t *testing.T) {
 	}
 }
 
-func TestFunc_CustomStatusCode(t *testing.T) {
+func TestEndpoint_CustomStatusCode(t *testing.T) {
 	cleanTable(t)
 
 	db := testDB.GetDB()
@@ -117,7 +117,7 @@ func TestFunc_CustomStatusCode(t *testing.T) {
 	r := chi.NewRouter()
 	r.Route("/users/{id}", func(r chi.Router) {
 		r.Use(withMeta(userMeta))
-		r.Post("/create-wf", handler.Func[TestUser](funcHandler))
+		r.Post("/create-wf", handler.Endpoint[TestUser](funcHandler))
 	})
 
 	req := httptest.NewRequest("POST", "/users/1/create-wf", nil)
@@ -129,7 +129,7 @@ func TestFunc_CustomStatusCode(t *testing.T) {
 	}
 }
 
-func TestFunc_DefaultStatusCode(t *testing.T) {
+func TestEndpoint_DefaultStatusCode(t *testing.T) {
 	cleanTable(t)
 
 	db := testDB.GetDB()
@@ -146,7 +146,7 @@ func TestFunc_DefaultStatusCode(t *testing.T) {
 	r := chi.NewRouter()
 	r.Route("/users/{id}", func(r chi.Router) {
 		r.Use(withMeta(userMeta))
-		r.Get("/status", handler.Func[TestUser](funcHandler))
+		r.Get("/status", handler.Endpoint[TestUser](funcHandler))
 	})
 
 	req := httptest.NewRequest("GET", "/users/1/status", nil)
@@ -158,7 +158,7 @@ func TestFunc_DefaultStatusCode(t *testing.T) {
 	}
 }
 
-func TestFunc_NotFound(t *testing.T) {
+func TestEndpoint_NotFound(t *testing.T) {
 	cleanTable(t)
 
 	funcHandler := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, item *TestUser, payload []byte) (any, int, error) {
@@ -168,7 +168,7 @@ func TestFunc_NotFound(t *testing.T) {
 	r := chi.NewRouter()
 	r.Route("/users/{id}", func(r chi.Router) {
 		r.Use(withMeta(userMeta))
-		r.Get("/status", handler.Func[TestUser](funcHandler))
+		r.Get("/status", handler.Endpoint[TestUser](funcHandler))
 	})
 
 	req := httptest.NewRequest("GET", "/users/999/status", nil)
@@ -180,7 +180,7 @@ func TestFunc_NotFound(t *testing.T) {
 	}
 }
 
-func TestFunc_WithPayload(t *testing.T) {
+func TestEndpoint_WithPayload(t *testing.T) {
 	cleanTable(t)
 
 	db := testDB.GetDB()
@@ -200,7 +200,7 @@ func TestFunc_WithPayload(t *testing.T) {
 	r := chi.NewRouter()
 	r.Route("/users/{id}", func(r chi.Router) {
 		r.Use(withMeta(userMeta))
-		r.Post("/trigger", handler.Func[TestUser](funcHandler))
+		r.Post("/trigger", handler.Endpoint[TestUser](funcHandler))
 	})
 
 	body := `{"action": "start"}`
@@ -217,7 +217,7 @@ func TestFunc_WithPayload(t *testing.T) {
 	}
 }
 
-func TestFunc_WithAuth(t *testing.T) {
+func TestEndpoint_WithAuth(t *testing.T) {
 	cleanTable(t)
 
 	db := testDB.GetDB()
@@ -247,7 +247,7 @@ func TestFunc_WithAuth(t *testing.T) {
 	r.Route("/users/{id}", func(r chi.Router) {
 		r.Use(withMeta(userMeta))
 		r.Use(withAuth)
-		r.Get("/status", handler.Func[TestUser](funcHandler))
+		r.Get("/status", handler.Endpoint[TestUser](funcHandler))
 	})
 
 	req := httptest.NewRequest("GET", "/users/1/status", nil)
@@ -265,7 +265,7 @@ func TestFunc_WithAuth(t *testing.T) {
 	}
 }
 
-func TestFunc_HandlerError(t *testing.T) {
+func TestEndpoint_HandlerError(t *testing.T) {
 	cleanTable(t)
 
 	db := testDB.GetDB()
@@ -282,7 +282,7 @@ func TestFunc_HandlerError(t *testing.T) {
 	r := chi.NewRouter()
 	r.Route("/users/{id}", func(r chi.Router) {
 		r.Use(withMeta(userMeta))
-		r.Get("/status", handler.Func[TestUser](funcHandler))
+		r.Get("/status", handler.Endpoint[TestUser](funcHandler))
 	})
 
 	req := httptest.NewRequest("GET", "/users/1/status", nil)
@@ -294,7 +294,7 @@ func TestFunc_HandlerError(t *testing.T) {
 	}
 }
 
-func TestFunc_NoMetadata(t *testing.T) {
+func TestEndpoint_NoMetadata(t *testing.T) {
 	cleanTable(t)
 
 	funcHandler := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, item *TestUser, payload []byte) (any, int, error) {
@@ -302,7 +302,7 @@ func TestFunc_NoMetadata(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	r.Get("/users/{id}/status", handler.Func[TestUser](funcHandler))
+	r.Get("/users/{id}/status", handler.Endpoint[TestUser](funcHandler))
 
 	req := httptest.NewRequest("GET", "/users/1/status", nil)
 	w := httptest.NewRecorder()
@@ -313,7 +313,36 @@ func TestFunc_NoMetadata(t *testing.T) {
 	}
 }
 
-func TestFunc_ItemPassedThrough(t *testing.T) {
+func TestEndpoint_BodyReadError(t *testing.T) {
+	cleanTable(t)
+
+	db := testDB.GetDB()
+	user := &TestUser{Name: "Test User", Email: "test@example.com"}
+	_, err := db.NewInsert().Model(user).Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test user:", err)
+	}
+
+	funcHandler := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, item *TestUser, payload []byte) (any, int, error) {
+		return nil, http.StatusOK, nil
+	}
+
+	r := chi.NewRouter()
+	r.Route("/users/{id}", func(r chi.Router) {
+		r.Use(withMeta(userMeta))
+		r.Post("/trigger", handler.Endpoint[TestUser](funcHandler))
+	})
+
+	req := httptest.NewRequest("POST", "/users/1/trigger", &failReader{})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestEndpoint_ItemPassedThrough(t *testing.T) {
 	cleanTable(t)
 
 	db := testDB.GetDB()
@@ -334,7 +363,7 @@ func TestFunc_ItemPassedThrough(t *testing.T) {
 	r := chi.NewRouter()
 	r.Route("/users/{id}", func(r chi.Router) {
 		r.Use(withMeta(userMeta))
-		r.Get("/status", handler.Func[TestUser](funcHandler))
+		r.Get("/status", handler.Endpoint[TestUser](funcHandler))
 	})
 
 	req := httptest.NewRequest("GET", "/users/1/status", nil)
@@ -353,13 +382,13 @@ func TestFunc_ItemPassedThrough(t *testing.T) {
 	}
 }
 
-func TestRootFunc_Success(t *testing.T) {
+func TestRootEndpoint_Success(t *testing.T) {
 	funcHandler := func(ctx context.Context, auth *metadata.AuthInfo, r *http.Request) (any, int, error) {
 		return &WorkflowStatus{Status: "healthy", Steps: 0}, http.StatusOK, nil
 	}
 
 	r := chi.NewRouter()
-	r.Get("/health", handler.RootFunc(funcHandler))
+	r.Get("/health", handler.RootEndpoint(funcHandler))
 
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
@@ -379,13 +408,13 @@ func TestRootFunc_Success(t *testing.T) {
 	}
 }
 
-func TestRootFunc_NoContent(t *testing.T) {
+func TestRootEndpoint_NoContent(t *testing.T) {
 	funcHandler := func(ctx context.Context, auth *metadata.AuthInfo, r *http.Request) (any, int, error) {
 		return nil, 0, nil
 	}
 
 	r := chi.NewRouter()
-	r.Post("/webhook", handler.RootFunc(funcHandler))
+	r.Post("/webhook", handler.RootEndpoint(funcHandler))
 
 	req := httptest.NewRequest("POST", "/webhook", nil)
 	w := httptest.NewRecorder()
@@ -396,7 +425,7 @@ func TestRootFunc_NoContent(t *testing.T) {
 	}
 }
 
-func TestRootFunc_WithAuth(t *testing.T) {
+func TestRootEndpoint_WithAuth(t *testing.T) {
 	var capturedAuth *metadata.AuthInfo
 
 	funcHandler := func(ctx context.Context, auth *metadata.AuthInfo, r *http.Request) (any, int, error) {
@@ -414,7 +443,7 @@ func TestRootFunc_WithAuth(t *testing.T) {
 
 	r := chi.NewRouter()
 	r.Use(withAuth)
-	r.Get("/health", handler.RootFunc(funcHandler))
+	r.Get("/health", handler.RootEndpoint(funcHandler))
 
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
@@ -431,13 +460,13 @@ func TestRootFunc_WithAuth(t *testing.T) {
 	}
 }
 
-func TestRootFunc_HandlerError(t *testing.T) {
+func TestRootEndpoint_HandlerError(t *testing.T) {
 	funcHandler := func(ctx context.Context, auth *metadata.AuthInfo, r *http.Request) (any, int, error) {
 		return nil, 0, &testError{msg: "webhook failed"}
 	}
 
 	r := chi.NewRouter()
-	r.Post("/webhook", handler.RootFunc(funcHandler))
+	r.Post("/webhook", handler.RootEndpoint(funcHandler))
 
 	req := httptest.NewRequest("POST", "/webhook", nil)
 	w := httptest.NewRecorder()
@@ -448,7 +477,7 @@ func TestRootFunc_HandlerError(t *testing.T) {
 	}
 }
 
-func TestRootFunc_RequestPassedThrough(t *testing.T) {
+func TestRootEndpoint_RequestPassedThrough(t *testing.T) {
 	var capturedHeader string
 
 	funcHandler := func(ctx context.Context, auth *metadata.AuthInfo, r *http.Request) (any, int, error) {
@@ -457,7 +486,7 @@ func TestRootFunc_RequestPassedThrough(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	r.Post("/webhook", handler.RootFunc(funcHandler))
+	r.Post("/webhook", handler.RootEndpoint(funcHandler))
 
 	req := httptest.NewRequest("POST", "/webhook", strings.NewReader(`{"event":"test"}`))
 	req.Header.Set("X-Webhook-Signature", "sha256=abc123")

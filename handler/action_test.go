@@ -135,20 +135,21 @@ func TestAction_NotFound(t *testing.T) {
 	}
 }
 
-// TestAction_BadRequest tests action with invalid ID
-func TestAction_BadRequest(t *testing.T) {
+// TestAction_MissingURLParam tests action with empty URLParamUUID.
+// When URLParamUUID is empty, setupRequest skips ID parsing (single-route support),
+// so StandardGet is called with an empty ID which returns 404.
+func TestAction_MissingURLParam(t *testing.T) {
 	cleanTable(t)
 
 	actionFn := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, item *TestUser, payload []byte) (*TestUser, error) {
 		return item, nil
 	}
 
-	// Use metadata with empty URLParamUUID to simulate missing ID
 	badMeta := &metadata.TypeMetadata{
 		TypeID:       "test_user_id",
 		TypeName:     "TestUser",
 		TableName:    "users",
-		URLParamUUID: "", // Empty to simulate bad request
+		URLParamUUID: "",
 		ModelType:    userMeta.ModelType,
 	}
 
@@ -163,8 +164,8 @@ func TestAction_BadRequest(t *testing.T) {
 
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -307,6 +308,13 @@ type testError struct {
 
 func (e *testError) Error() string {
 	return e.msg
+}
+
+// failReader is an io.Reader that always returns an error
+type failReader struct{}
+
+func (f *failReader) Read([]byte) (int, error) {
+	return 0, &testError{msg: "read failed"}
 }
 
 // TestAction_NoMetadata tests action without metadata in context

@@ -166,28 +166,28 @@ func WithAlternatePK(fieldName string) PKFieldConfig {
 	return PKFieldConfig{FieldName: fieldName}
 }
 
-// FuncConfig holds anything func endpoint configuration for route registration.
-// Anything funcs are like actions but support any HTTP method and any return type.
+// EndpointConfig holds custom endpoint configuration for route registration.
+// Endpoints are like actions but support any HTTP method and any return type.
 // Registered as METHOD /resource/{id}/{name} endpoints.
-type FuncConfig[T any] struct {
+type EndpointConfig[T any] struct {
 	Method string
 	Name   string
-	Fn     handler.FuncHandler[T]
+	Fn     handler.EndpointHandler[T]
 	Auth   AuthConfig
 }
 
-// WithFunc creates a FuncConfig for use in RegisterRoutes.
-// The func handler receives the pre-fetched item and raw request body,
+// WithEndpoint creates an EndpointConfig for use in RegisterRoutes.
+// The endpoint handler receives the pre-fetched item and raw request body,
 // and can return any type with an explicit HTTP status code.
 //
 // Example:
 //
 //	router.RegisterRoutes[Organisation](b, "/organisations",
 //	    router.AllScoped("admin"),
-//	    router.WithFunc("GET", "wf-status", getWorkflowStatus, router.AllScoped("admin")),
+//	    router.WithEndpoint("GET", "wf-status", getWorkflowStatus, router.AllScoped("admin")),
 //	)
-func WithFunc[T any](method, name string, fn handler.FuncHandler[T], auth AuthConfig) FuncConfig[T] {
-	return FuncConfig[T]{Method: method, Name: name, Fn: fn, Auth: auth}
+func WithEndpoint[T any](method, name string, fn handler.EndpointHandler[T], auth AuthConfig) EndpointConfig[T] {
+	return EndpointConfig[T]{Method: method, Name: name, Fn: fn, Auth: auth}
 }
 
 // SSEConfig holds SSE endpoint configuration for route registration.

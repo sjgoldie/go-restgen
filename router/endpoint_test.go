@@ -82,7 +82,7 @@ func getOrderStatus(ctx context.Context, svc *service.Common[FuncTestOrder], met
 	}, http.StatusOK, nil
 }
 
-func TestWithFunc_Registration(t *testing.T) {
+func TestWithEndpoint_Registration(t *testing.T) {
 	setupFuncTestTable(t)
 	cleanFuncTestTable(t)
 
@@ -98,7 +98,7 @@ func TestWithFunc_Registration(t *testing.T) {
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
-		router.WithFunc("GET", "status", getOrderStatus, router.AuthConfig{
+		router.WithEndpoint("GET", "status", getOrderStatus, router.AuthConfig{
 			Scopes: []string{router.ScopePublic},
 		}),
 	)
@@ -124,7 +124,7 @@ func TestWithFunc_Registration(t *testing.T) {
 	}
 }
 
-func TestWithFunc_DifferentHTTPMethods(t *testing.T) {
+func TestWithEndpoint_DifferentHTTPMethods(t *testing.T) {
 	setupFuncTestTable(t)
 	cleanFuncTestTable(t)
 
@@ -144,10 +144,10 @@ func TestWithFunc_DifferentHTTPMethods(t *testing.T) {
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
-		router.WithFunc("GET", "status", getOrderStatus, router.AuthConfig{
+		router.WithEndpoint("GET", "status", getOrderStatus, router.AuthConfig{
 			Scopes: []string{router.ScopePublic},
 		}),
-		router.WithFunc("POST", "trigger", postFunc, router.AuthConfig{
+		router.WithEndpoint("POST", "trigger", postFunc, router.AuthConfig{
 			Scopes: []string{router.ScopePublic},
 		}),
 	)
@@ -171,7 +171,7 @@ func TestWithFunc_DifferentHTTPMethods(t *testing.T) {
 	}
 }
 
-func TestWithFunc_WithAuth(t *testing.T) {
+func TestWithEndpoint_WithAuth(t *testing.T) {
 	setupFuncTestTable(t)
 	cleanFuncTestTable(t)
 
@@ -199,7 +199,7 @@ func TestWithFunc_WithAuth(t *testing.T) {
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
-		router.WithFunc("GET", "status", getOrderStatus, router.AuthConfig{
+		router.WithEndpoint("GET", "status", getOrderStatus, router.AuthConfig{
 			Scopes: []string{"admin"},
 		}),
 	)
@@ -224,7 +224,7 @@ func TestWithFunc_WithAuth(t *testing.T) {
 	}
 }
 
-func TestWithFunc_Forbidden(t *testing.T) {
+func TestWithEndpoint_Forbidden(t *testing.T) {
 	setupFuncTestTable(t)
 	cleanFuncTestTable(t)
 
@@ -248,7 +248,7 @@ func TestWithFunc_Forbidden(t *testing.T) {
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
-		router.WithFunc("GET", "status", getOrderStatus, router.AuthConfig{
+		router.WithEndpoint("GET", "status", getOrderStatus, router.AuthConfig{
 			Scopes: []string{"admin"},
 		}),
 	)
@@ -262,7 +262,7 @@ func TestWithFunc_Forbidden(t *testing.T) {
 	}
 }
 
-func TestWithFunc_CRUDStillWorks(t *testing.T) {
+func TestWithEndpoint_CRUDStillWorks(t *testing.T) {
 	setupFuncTestTable(t)
 	cleanFuncTestTable(t)
 
@@ -271,7 +271,7 @@ func TestWithFunc_CRUDStillWorks(t *testing.T) {
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
-		router.WithFunc("GET", "status", getOrderStatus, router.AuthConfig{
+		router.WithEndpoint("GET", "status", getOrderStatus, router.AuthConfig{
 			Scopes: []string{router.ScopePublic},
 		}),
 	)
@@ -296,17 +296,17 @@ func TestWithFunc_CRUDStillWorks(t *testing.T) {
 		t.Errorf("Get: Expected status 200, got %d: %s", getW.Code, getW.Body.String())
 	}
 
-	// Func
+	// Endpoint
 	funcReq := httptest.NewRequest("GET", "/orders/1/status", nil)
 	funcW := httptest.NewRecorder()
 	r.ServeHTTP(funcW, funcReq)
 
 	if funcW.Code != http.StatusOK {
-		t.Errorf("Func: Expected status 200, got %d: %s", funcW.Code, funcW.Body.String())
+		t.Errorf("Endpoint: Expected status 200, got %d: %s", funcW.Code, funcW.Body.String())
 	}
 }
 
-func TestWithFunc_NotFound(t *testing.T) {
+func TestWithEndpoint_NotFound(t *testing.T) {
 	setupFuncTestTable(t)
 	cleanFuncTestTable(t)
 
@@ -315,7 +315,7 @@ func TestWithFunc_NotFound(t *testing.T) {
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
-		router.WithFunc("GET", "status", getOrderStatus, router.AuthConfig{
+		router.WithEndpoint("GET", "status", getOrderStatus, router.AuthConfig{
 			Scopes: []string{router.ScopePublic},
 		}),
 	)
@@ -329,8 +329,8 @@ func TestWithFunc_NotFound(t *testing.T) {
 	}
 }
 
-func TestWithFuncConfig_TypeAndName(t *testing.T) {
-	config := router.WithFunc("GET", "status", getOrderStatus, router.AuthConfig{
+func TestWithEndpointConfig_TypeAndName(t *testing.T) {
+	config := router.WithEndpoint("GET", "status", getOrderStatus, router.AuthConfig{
 		Scopes: []string{"user"},
 	})
 
@@ -351,7 +351,7 @@ func TestWithFuncConfig_TypeAndName(t *testing.T) {
 	}
 }
 
-func TestRegisterRootFunc_Success(t *testing.T) {
+func TestRegisterRootEndpoint_Success(t *testing.T) {
 	healthFn := func(ctx context.Context, auth *metadata.AuthInfo, r *http.Request) (any, int, error) {
 		return &HealthResponse{Status: "healthy", Version: "1.0"}, http.StatusOK, nil
 	}
@@ -359,7 +359,7 @@ func TestRegisterRootFunc_Success(t *testing.T) {
 	r := chi.NewRouter()
 	b := router.NewBuilder(r, testDB(t))
 
-	router.RegisterRootFunc(b, "GET", "/health", healthFn, router.AllPublic())
+	router.RegisterRootEndpoint(b, "GET", "/health", healthFn, router.AllPublic())
 
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
@@ -379,7 +379,7 @@ func TestRegisterRootFunc_Success(t *testing.T) {
 	}
 }
 
-func TestRegisterRootFunc_WithAuth(t *testing.T) {
+func TestRegisterRootEndpoint_WithAuth(t *testing.T) {
 	webhookFn := func(ctx context.Context, auth *metadata.AuthInfo, r *http.Request) (any, int, error) {
 		return &HealthResponse{Status: "received"}, http.StatusOK, nil
 	}
@@ -398,7 +398,7 @@ func TestRegisterRootFunc_WithAuth(t *testing.T) {
 	})
 
 	b := router.NewBuilder(r, testDB(t))
-	router.RegisterRootFunc(b, "POST", "/webhooks/stripe", webhookFn, router.AuthConfig{
+	router.RegisterRootEndpoint(b, "POST", "/webhooks/stripe", webhookFn, router.AuthConfig{
 		Methods: []string{router.MethodAll},
 		Scopes:  []string{"admin"},
 	})
@@ -423,7 +423,7 @@ func TestRegisterRootFunc_WithAuth(t *testing.T) {
 	}
 }
 
-func TestWithFunc_WithOwnership(t *testing.T) {
+func TestWithEndpoint_WithOwnership(t *testing.T) {
 	setupFuncTestTable(t)
 	cleanFuncTestTable(t)
 
@@ -458,7 +458,7 @@ func TestWithFunc_WithOwnership(t *testing.T) {
 				Fields: []string{"OwnerID"},
 			},
 		},
-		router.WithFunc("GET", "status", getOrderStatus, router.AuthConfig{
+		router.WithEndpoint("GET", "status", getOrderStatus, router.AuthConfig{
 			Scopes: []string{"user"},
 			Ownership: &router.OwnershipConfig{
 				Fields: []string{"OwnerID"},
@@ -485,7 +485,7 @@ func TestWithFunc_WithOwnership(t *testing.T) {
 	}
 }
 
-func TestWithFunc_BlockedByDefault(t *testing.T) {
+func TestWithEndpoint_BlockedByDefault(t *testing.T) {
 	setupFuncTestTable(t)
 	cleanFuncTestTable(t)
 
@@ -501,7 +501,7 @@ func TestWithFunc_BlockedByDefault(t *testing.T) {
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
-		router.WithFunc("GET", "status", getOrderStatus, router.AuthConfig{}),
+		router.WithEndpoint("GET", "status", getOrderStatus, router.AuthConfig{}),
 	)
 
 	req := httptest.NewRequest("GET", "/orders/1/status", nil)
@@ -513,7 +513,7 @@ func TestWithFunc_BlockedByDefault(t *testing.T) {
 	}
 }
 
-func TestRegisterRootFunc_Forbidden(t *testing.T) {
+func TestRegisterRootEndpoint_Forbidden(t *testing.T) {
 	webhookFn := func(ctx context.Context, auth *metadata.AuthInfo, r *http.Request) (any, int, error) {
 		return &HealthResponse{Status: "received"}, http.StatusOK, nil
 	}
@@ -528,7 +528,7 @@ func TestRegisterRootFunc_Forbidden(t *testing.T) {
 	})
 
 	b := router.NewBuilder(r, testDB(t))
-	router.RegisterRootFunc(b, "POST", "/webhooks/stripe", webhookFn, router.AuthConfig{
+	router.RegisterRootEndpoint(b, "POST", "/webhooks/stripe", webhookFn, router.AuthConfig{
 		Methods: []string{router.MethodAll},
 		Scopes:  []string{"admin"},
 	})
@@ -542,7 +542,7 @@ func TestRegisterRootFunc_Forbidden(t *testing.T) {
 	}
 }
 
-func TestRegisterRootFunc_NoContent(t *testing.T) {
+func TestRegisterRootEndpoint_NoContent(t *testing.T) {
 	webhookFn := func(ctx context.Context, auth *metadata.AuthInfo, r *http.Request) (any, int, error) {
 		return nil, 0, nil
 	}
@@ -550,7 +550,7 @@ func TestRegisterRootFunc_NoContent(t *testing.T) {
 	r := chi.NewRouter()
 	b := router.NewBuilder(r, testDB(t))
 
-	router.RegisterRootFunc(b, "POST", "/webhooks/test", webhookFn, router.AllPublic())
+	router.RegisterRootEndpoint(b, "POST", "/webhooks/test", webhookFn, router.AllPublic())
 
 	req := httptest.NewRequest("POST", "/webhooks/test", nil)
 	w := httptest.NewRecorder()

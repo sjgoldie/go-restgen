@@ -8,9 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
-
-	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/service"
 )
@@ -50,49 +47,19 @@ type RootSSEFunc func(
 // streams events to client, and cancels context on disconnect.
 func SSE[T any](fn SSEFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-
-		svc, err := service.New[T]()
+		rc, err := setupRequest(w, r, StandardGet[T])
 		if err != nil {
-			slog.ErrorContext(ctx, "failed to create service", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
-
-		meta, err := metadata.FromContext(ctx)
-		if err != nil {
-			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		id := chi.URLParam(r, meta.URLParamUUID)
-		if id == "" {
-			slog.DebugContext(ctx, "missing id parameter", "paramUUID", meta.URLParamUUID)
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-
-		item, err := svc.Get(ctx, id)
-		if err != nil {
-			if errors.Is(err, apperrors.ErrNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			handleMutationError(ctx, w, err, "get for sse")
-			return
-		}
-
-		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
 
 		events := make(chan SSEEvent)
 
-		ctx, cancel := context.WithCancel(ctx)
+		ctx, cancel := context.WithCancel(rc.ctx)
 		defer cancel()
 
 		go func() {
 			defer close(events)
-			if err := fn(ctx, svc, meta, auth, id, item, events); err != nil {
+			if err := fn(ctx, rc.svc, rc.meta, rc.auth, rc.id, rc.item, events); err != nil {
 				if !errors.Is(err, context.Canceled) {
 					slog.ErrorContext(ctx, "sse func error", "error", err)
 				}

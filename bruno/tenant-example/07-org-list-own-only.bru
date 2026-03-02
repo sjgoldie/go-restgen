@@ -1,0 +1,35 @@
+meta {
+  name: IsTenantTable - List Shows Only Own Org
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/organizations
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:org-a:user
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("IsTenantTable list shows only own org", function() {
+    expect(res.body).to.be.an('array');
+    expect(res.body.length).to.equal(1);
+    expect(res.body[0].id).to.equal("org-a");
+    expect(res.body[0].name).to.equal("Acme Corp");
+  });
+}
+
+docs {
+  # IsTenantTable: List Filtering
+  Even though both org-a and org-b exist, Alice only sees org-a.
+  The IsTenantTable filter applies WHERE id = tenantID to list queries too.
+}

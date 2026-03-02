@@ -1,0 +1,21 @@
+meta {
+  name: Projects - No Auth Returns 401
+  type: http
+  seq: 28
+}
+
+get {
+  url: {{baseUrl}}/projects
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  # No Auth At All → 401
+  Tenant-scoped routes with ownership require authentication.
+  No auth header → 401.
+}

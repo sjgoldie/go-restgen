@@ -1,0 +1,22 @@
+meta {
+  name: Get Task - Own Tenant
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/projects/{{aliceProjectId}}/tasks/{{aliceTaskId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:org-a:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{aliceTaskId}}
+  res.body.title: eq Implement feature X
+  res.body.org_id: eq org-a
+}

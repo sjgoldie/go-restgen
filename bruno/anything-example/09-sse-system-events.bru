@@ -1,0 +1,15 @@
+meta {
+  name: SSE System Events (root-level SSE)
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/events/system
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}

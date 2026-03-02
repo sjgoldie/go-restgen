@@ -1921,3 +1921,422 @@ func TestAuth_Issue28_ParentOwnershipBypass(t *testing.T) {
 		t.Errorf("expected status 200 for admin with bypass scope, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// =============================================================================
+// Issue #64: Multi-Tenant Scoping Tests (Router Level)
+// =============================================================================
+
+// Tenant test models
+
+type TenantTestOrg struct {
+	bun.BaseModel `bun:"table:tenant_test_orgs"`
+	ID            string `bun:"id,pk"`
+	Name          string `bun:"name"`
+}
+
+type TenantTestProject struct {
+	bun.BaseModel `bun:"table:tenant_test_projects"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	OrgID         string `bun:"org_id,notnull"`
+	OwnerID       string `bun:"owner_id,notnull"`
+	Name          string `bun:"name"`
+}
+
+type TenantTestTask struct {
+	bun.BaseModel `bun:"table:tenant_test_tasks"`
+	ID            int                `bun:"id,pk,autoincrement"`
+	ProjectID     int                `bun:"project_id,notnull"`
+	Project       *TenantTestProject `bun:"rel:belongs-to,join:project_id=id"`
+	OrgID         string             `bun:"org_id,notnull"`
+	Title         string             `bun:"title"`
+}
+
+// addTenantAuthMiddleware injects AuthInfo with UserID, TenantID, and Scopes
+func addTenantAuthMiddleware(r *chi.Mux, userID, tenantID string, scopes []string) *chi.Mux {
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			authInfo := &router.AuthInfo{
+				UserID:   userID,
+				TenantID: tenantID,
+				Scopes:   scopes,
+			}
+			ctx := context.WithValue(req.Context(), router.AuthInfoKey, authInfo)
+			next.ServeHTTP(w, req.WithContext(ctx))
+		})
+	})
+	return r
+}
+
+func setupTenantTest(t *testing.T) {
+	t.Helper()
+
+	ds, err := datastore.Get()
+	if err != nil {
+		t.Fatalf("failed to get datastore: %v", err)
+	}
+
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	if _, err := db.NewCreateTable().Model((*TenantTestOrg)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create orgs table: %v", err)
+	}
+	if _, err := db.NewCreateTable().Model((*TenantTestProject)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create projects table: %v", err)
+	}
+	if _, err := db.NewCreateTable().Model((*TenantTestTask)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create tasks table: %v", err)
+	}
+
+	// Clean tables
+	_, _ = db.NewDelete().Model((*TenantTestTask)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.NewDelete().Model((*TenantTestProject)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.NewDelete().Model((*TenantTestOrg)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.Exec("DELETE FROM sqlite_sequence WHERE name IN ('tenant_test_projects', 'tenant_test_tasks')")
+}
+
+func TestTenantAuth_RequiresTenantID(t *testing.T) {
+	setupTenantTest(t)
+
+	// Auth middleware with empty TenantID
+	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "", []string{"user"})
+	b := router.NewBuilder(r, testDB(t))
+
+	router.RegisterRoutes[TenantTestProject](b, "/projects",
+		router.WithTenantScope("OrgID"),
+		router.IsAuthenticated(),
+	)
+
+	req := httptest.NewRequest("GET", "/projects", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// Should be 401 — tenant-scoped route requires TenantID
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for missing TenantID on tenant-scoped route, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestTenantAuth_List_FiltersByTenant(t *testing.T) {
+	setupTenantTest(t)
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	// Seed data for two tenants
+	p1 := &TenantTestProject{OrgID: "org-a", OwnerID: "alice", Name: "Org A Project"}
+	p2 := &TenantTestProject{OrgID: "org-b", OwnerID: "bob", Name: "Org B Project"}
+	_, _ = db.NewInsert().Model(p1).Returning("*").Exec(ctx)
+	_, _ = db.NewInsert().Model(p2).Returning("*").Exec(ctx)
+
+	// User in org-a
+	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "org-a", []string{"user"})
+	b := router.NewBuilder(r, testDB(t))
+
+	router.RegisterRoutes[TenantTestProject](b, "/projects",
+		router.WithTenantScope("OrgID"),
+		router.IsAuthenticated(),
+	)
+
+	req := httptest.NewRequest("GET", "/projects", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var projects []TenantTestProject
+	if err := json.Unmarshal(w.Body.Bytes(), &projects); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(projects) != 1 {
+		t.Errorf("expected 1 project for org-a, got %d", len(projects))
+	}
+	if len(projects) > 0 && projects[0].OrgID != "org-a" {
+		t.Errorf("expected org-a project, got %s", projects[0].OrgID)
+	}
+}
+
+func crossTenantRequestReturns404(t *testing.T, method string) {
+	t.Helper()
+	setupTenantTest(t)
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	p := &TenantTestProject{OrgID: "org-a", OwnerID: "alice", Name: "Org A Project"}
+	_, _ = db.NewInsert().Model(p).Returning("*").Exec(ctx)
+
+	r := addTenantAuthMiddleware(chi.NewRouter(), "bob", "org-b", []string{"user"})
+	b := router.NewBuilder(r, testDB(t))
+
+	router.RegisterRoutes[TenantTestProject](b, "/projects",
+		router.WithTenantScope("OrgID"),
+		router.IsAuthenticated(),
+	)
+
+	req := httptest.NewRequest(method, "/projects/1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for cross-tenant %s, got %d: %s", method, w.Code, w.Body.String())
+	}
+}
+
+func TestTenantAuth_Get_CrossTenant_404(t *testing.T) {
+	crossTenantRequestReturns404(t, "GET")
+}
+
+func TestTenantAuth_Create_AutoSetsTenantField(t *testing.T) {
+	setupTenantTest(t)
+
+	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "org-a", []string{"user"})
+	b := router.NewBuilder(r, testDB(t))
+
+	router.RegisterRoutes[TenantTestProject](b, "/projects",
+		router.WithTenantScope("OrgID"),
+		router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+	)
+
+	body, _ := json.Marshal(map[string]interface{}{"name": "New Project"})
+	req := httptest.NewRequest("POST", "/projects", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var created TenantTestProject
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if created.OrgID != "org-a" {
+		t.Errorf("expected OrgID auto-set to org-a, got '%s'", created.OrgID)
+	}
+	if created.OwnerID != "alice" {
+		t.Errorf("expected OwnerID auto-set to alice, got '%s'", created.OwnerID)
+	}
+}
+
+func TestTenantAuth_Update_CrossTenant_404(t *testing.T) {
+	setupTenantTest(t)
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	p := &TenantTestProject{OrgID: "org-a", OwnerID: "alice", Name: "Original"}
+	_, _ = db.NewInsert().Model(p).Returning("*").Exec(ctx)
+
+	// org-b tries to update org-a's project
+	r := addTenantAuthMiddleware(chi.NewRouter(), "bob", "org-b", []string{"user"})
+	b := router.NewBuilder(r, testDB(t))
+
+	router.RegisterRoutes[TenantTestProject](b, "/projects",
+		router.WithTenantScope("OrgID"),
+		router.IsAuthenticated(),
+	)
+
+	body, _ := json.Marshal(map[string]interface{}{"name": "Hacked"})
+	req := httptest.NewRequest("PUT", "/projects/1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for cross-tenant UPDATE, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestTenantAuth_Delete_CrossTenant_404(t *testing.T) {
+	crossTenantRequestReturns404(t, "DELETE")
+}
+
+func TestTenantAuth_IsTenantTable_ViewOwnOrg(t *testing.T) {
+	setupTenantTest(t)
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	_, _ = db.NewInsert().Model(&TenantTestOrg{ID: "org-a", Name: "Alpha"}).Exec(ctx)
+	_, _ = db.NewInsert().Model(&TenantTestOrg{ID: "org-b", Name: "Beta"}).Exec(ctx)
+
+	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "org-a", []string{"user"})
+	b := router.NewBuilder(r, testDB(t))
+
+	router.RegisterRoutes[TenantTestOrg](b, "/organizations",
+		router.IsTenantTable(),
+		router.IsAuthenticated(),
+	)
+
+	// List should return only own org
+	req := httptest.NewRequest("GET", "/organizations", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var orgs []TenantTestOrg
+	if err := json.Unmarshal(w.Body.Bytes(), &orgs); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(orgs) != 1 {
+		t.Errorf("expected 1 org (own), got %d", len(orgs))
+	}
+	if len(orgs) > 0 && orgs[0].ID != "org-a" {
+		t.Errorf("expected org-a, got %s", orgs[0].ID)
+	}
+}
+
+func TestTenantAuth_IsTenantTable_CrossTenant_404(t *testing.T) {
+	setupTenantTest(t)
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	_, _ = db.NewInsert().Model(&TenantTestOrg{ID: "org-a", Name: "Alpha"}).Exec(ctx)
+
+	// org-b tries to GET org-a
+	r := addTenantAuthMiddleware(chi.NewRouter(), "bob", "org-b", []string{"user"})
+	b := router.NewBuilder(r, testDB(t))
+
+	router.RegisterRoutes[TenantTestOrg](b, "/organizations",
+		router.IsTenantTable(),
+		router.IsAuthenticated(),
+	)
+
+	req := httptest.NewRequest("GET", "/organizations/org-a", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for cross-tenant org access, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestTenantAuth_ChildInheritsTenantScope(t *testing.T) {
+	setupTenantTest(t)
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	// Create project and task for org-a
+	p := &TenantTestProject{OrgID: "org-a", OwnerID: "alice", Name: "Project A"}
+	_, _ = db.NewInsert().Model(p).Returning("*").Exec(ctx)
+	task := &TenantTestTask{ProjectID: p.ID, OrgID: "org-a", Title: "Task A"}
+	_, _ = db.NewInsert().Model(task).Returning("*").Exec(ctx)
+
+	// Create project and task for org-b
+	p2 := &TenantTestProject{OrgID: "org-b", OwnerID: "bob", Name: "Project B"}
+	_, _ = db.NewInsert().Model(p2).Returning("*").Exec(ctx)
+	task2 := &TenantTestTask{ProjectID: p2.ID, OrgID: "org-b", Title: "Task B"}
+	_, _ = db.NewInsert().Model(task2).Returning("*").Exec(ctx)
+
+	// org-a user accesses tasks under their project
+	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "org-a", []string{"user"})
+	b := router.NewBuilder(r, testDB(t))
+
+	router.RegisterRoutes[TenantTestProject](b, "/projects",
+		router.WithTenantScope("OrgID"),
+		router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+		func(b *router.Builder) {
+			router.RegisterRoutes[TenantTestTask](b, "/tasks",
+				router.IsAuthenticated(),
+				router.WithRelationName("Tasks"),
+			)
+		},
+	)
+
+	// List tasks under project 1 (org-a's project) — should work
+	req := httptest.NewRequest("GET", "/projects/1/tasks", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var tasks []TenantTestTask
+	if err := json.Unmarshal(w.Body.Bytes(), &tasks); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(tasks) != 1 {
+		t.Errorf("expected 1 task for org-a, got %d", len(tasks))
+	}
+
+	// org-a user tries to access tasks under project 2 (org-b's project)
+	req2 := httptest.NewRequest("GET", "/projects/2/tasks", nil)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+
+	// Parent project belongs to org-b — should be blocked
+	// Either 404 (parent not found) or empty results
+	if w2.Code == http.StatusOK {
+		var crossTasks []TenantTestTask
+		if err := json.Unmarshal(w2.Body.Bytes(), &crossTasks); err != nil {
+			t.Fatalf("failed to unmarshal cross-tenant tasks: %v", err)
+		}
+		if len(crossTasks) != 0 {
+			t.Errorf("expected 0 tasks for cross-tenant parent, got %d", len(crossTasks))
+		}
+	}
+}
+
+func TestTenantAuth_WithOwnership_BothEnforced(t *testing.T) {
+	setupTenantTest(t)
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	// Create projects: different owners in same tenant, and one in another tenant
+	_, _ = db.NewInsert().Model(&TenantTestProject{OrgID: "org-a", OwnerID: "alice", Name: "Alice A"}).Exec(ctx)
+	_, _ = db.NewInsert().Model(&TenantTestProject{OrgID: "org-a", OwnerID: "bob", Name: "Bob A"}).Exec(ctx)
+	_, _ = db.NewInsert().Model(&TenantTestProject{OrgID: "org-b", OwnerID: "alice", Name: "Alice B"}).Exec(ctx)
+
+	// Alice in org-a: should only see her own project in org-a
+	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "org-a", []string{"user"})
+	b := router.NewBuilder(r, testDB(t))
+
+	router.RegisterRoutes[TenantTestProject](b, "/projects",
+		router.WithTenantScope("OrgID"),
+		router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+	)
+
+	req := httptest.NewRequest("GET", "/projects", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var projects []TenantTestProject
+	if err := json.Unmarshal(w.Body.Bytes(), &projects); err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+
+	if len(projects) != 1 {
+		t.Errorf("expected 1 project (alice in org-a), got %d", len(projects))
+	}
+	if len(projects) > 0 {
+		if projects[0].OwnerID != "alice" || projects[0].OrgID != "org-a" {
+			t.Errorf("expected alice/org-a, got %s/%s", projects[0].OwnerID, projects[0].OrgID)
+		}
+	}
+}

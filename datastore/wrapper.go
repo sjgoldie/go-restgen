@@ -74,6 +74,12 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64,
 		return nil, 0, nil, err
 	}
 
+	// Apply tenant filter
+	query, err = w.applyTenantFilter(ctx, query, meta)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
 	// Get query options from context (optional)
 	opts := metadata.QueryOptionsFromContext(ctx)
 
@@ -182,7 +188,12 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 		return nil, err
 	}
 
-	// Run custom validation (after ownership is set so validator sees final state)
+	// Set tenant field if enforced
+	if err := w.setTenantField(ctx, &item); err != nil {
+		return nil, err
+	}
+
+	// Run custom validation (after ownership and tenant are set so validator sees final state)
 	if err := w.runValidation(ctx, meta, metadata.OpCreate, nil, &item); err != nil {
 		return nil, err
 	}
@@ -251,6 +262,11 @@ func (w *Wrapper[T]) Update(ctx context.Context, id string, item T) (*T, error) 
 	// This also provides the old value for validation
 	existing, err := w.Get(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+
+	// Re-enforce tenant field on update (prevents cross-tenant moves)
+	if err := w.setTenantField(ctx, &item); err != nil {
 		return nil, err
 	}
 
@@ -390,6 +406,12 @@ func (w *Wrapper[T]) getWithMeta(ctx context.Context, meta *metadata.TypeMetadat
 
 	// Apply ownership filter using the metadata
 	query, err = w.applyOwnershipFilterWithMeta(ctx, query, meta)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply tenant filter
+	query, err = w.applyTenantFilter(ctx, query, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -543,11 +565,15 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 	// Get parents needing ownership filtering (set by auth middleware)
 	parentsNeedingOwnership, _ := ctx.Value(metadata.ParentOwnershipKey).([]*metadata.TypeMetadata)
 
-	// Get UserID from AuthInfo for parent ownership filtering
-	// (OwnershipUserIDKey may not be set if current route doesn't have ownership)
+	// Get parents needing tenant filtering (set by auth middleware)
+	parentsNeedingTenant, _ := ctx.Value(metadata.ParentTenantKey).([]*metadata.TypeMetadata)
+
+	// Get UserID and TenantID from AuthInfo for parent filtering
 	var ownershipUserID string
+	var tenantID string
 	if authInfo, ok := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo); ok && authInfo != nil {
 		ownershipUserID = authInfo.UserID
+		tenantID = authInfo.TenantID
 	}
 
 	// Now build the JOINs and WHERE clauses
@@ -602,6 +628,11 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 		// Issue #28 fix: Apply ownership filter for this parent if needed
 		if slices.Contains(parentsNeedingOwnership, join.parentMeta) && ownershipUserID != "" {
 			query = w.applyParentOwnershipFilter(query, join.parentMeta, ownershipUserID)
+		}
+
+		// Issue #64: Apply tenant filter for this parent if needed
+		if slices.Contains(parentsNeedingTenant, join.parentMeta) && tenantID != "" {
+			query = w.applyParentTenantFilter(query, join.parentMeta, tenantID)
 		}
 	}
 
@@ -756,6 +787,102 @@ func (w *Wrapper[T]) columnFromGoName(tType reflect.Type, fieldName string) (str
 		}
 	}
 	return "", fmt.Errorf("field %s not found on type %s", fieldName, tType.Name())
+}
+
+// applyTenantFilter applies tenant scoping to a query if enforced in context.
+// For IsTenantTable types, filters by PK = tenantID.
+// For WithTenantScope types, filters by tenant_field = tenantID.
+func (w *Wrapper[T]) applyTenantFilter(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata) (*bun.SelectQuery, error) {
+	// Check if tenant scoping is active
+	enforced, ok := ctx.Value(metadata.TenantScopedKey).(bool)
+	if !ok || !enforced {
+		return query, nil
+	}
+
+	// Get tenant ID from context
+	tenantID, ok := ctx.Value(metadata.TenantIDValueKey).(string)
+	if !ok || tenantID == "" {
+		return nil, fmt.Errorf("tenant scoped but tenant ID missing from context")
+	}
+
+	// Skip if this type has no tenant configuration
+	if meta == nil || (meta.TenantField == "" && !meta.IsTenantTable) {
+		return query, nil
+	}
+
+	if meta.IsTenantTable {
+		// IsTenantTable: the PK IS the tenant ID
+		query = query.Where("?TableAlias.? = ?", bun.Ident("id"), tenantID)
+	} else {
+		// WithTenantScope: filter by the named tenant field
+		itemType := meta.ModelType
+		if itemType.Kind() == reflect.Ptr {
+			itemType = itemType.Elem()
+		}
+		colName, err := w.columnFromGoName(itemType, meta.TenantField)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get column name for tenant field: %w", err)
+		}
+		query = query.Where("?TableAlias.? = ?", bun.Ident(colName), tenantID)
+	}
+
+	return query, nil
+}
+
+// applyParentTenantFilter adds tenant WHERE clause for a parent table (used during parent chain JOINs)
+func (w *Wrapper[T]) applyParentTenantFilter(query *bun.SelectQuery, parentMeta *metadata.TypeMetadata, tenantID string) *bun.SelectQuery {
+	if parentMeta.TenantField == "" {
+		return query
+	}
+
+	parentType := parentMeta.ModelType
+	if parentType.Kind() == reflect.Ptr {
+		parentType = parentType.Elem()
+	}
+
+	colName, err := w.columnFromGoName(parentType, parentMeta.TenantField)
+	if err != nil {
+		return query
+	}
+
+	query = query.Where("?.? = ?", bun.Ident(parentMeta.TableName), bun.Ident(colName), tenantID)
+	return query
+}
+
+// setTenantField sets the tenant field on an item if tenant scoping is active in context.
+// Does not set for IsTenantTable types (the PK is the tenant ID, not a separate field).
+func (w *Wrapper[T]) setTenantField(ctx context.Context, item *T) error {
+	// Check if tenant scoping is active
+	enforced, ok := ctx.Value(metadata.TenantScopedKey).(bool)
+	if !ok || !enforced {
+		return nil
+	}
+
+	// Get tenant ID from context
+	tenantID, ok := ctx.Value(metadata.TenantIDValueKey).(string)
+	if !ok || tenantID == "" {
+		return fmt.Errorf("tenant scoped but tenant ID missing from context")
+	}
+
+	// Get metadata from context
+	meta, err := metadata.FromContext(ctx)
+	if err != nil || meta.TenantField == "" || meta.IsTenantTable {
+		return nil
+	}
+
+	// Set the tenant field via reflection
+	itemValue := reflect.ValueOf(item).Elem()
+	field := itemValue.FieldByName(meta.TenantField)
+	if !field.IsValid() || !field.CanSet() {
+		return fmt.Errorf("cannot set tenant field %s", meta.TenantField)
+	}
+
+	if field.Kind() != reflect.String {
+		return fmt.Errorf("tenant field %s must be string type, got %s", meta.TenantField, field.Kind())
+	}
+
+	field.SetString(tenantID)
+	return nil
 }
 
 // convertFilterValues converts a string filter value to the appropriate Go type(s)
@@ -1455,6 +1582,11 @@ func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 				return err
 			}
 
+			// Set tenant field
+			if err := w.setTenantField(ctx, item); err != nil {
+				return err
+			}
+
 			// Run validation
 			if err := w.runValidation(ctx, meta, metadata.OpCreate, nil, item); err != nil {
 				return err
@@ -1502,6 +1634,13 @@ func (w *Wrapper[T]) BatchUpdate(ctx context.Context, items []T) ([]*T, error) {
 	preFetch, err := w.preFetchItems(ctx, meta, items, metadata.OpUpdate)
 	if err != nil {
 		return nil, err
+	}
+
+	// Re-enforce tenant field on all items (prevents cross-tenant moves)
+	for i := range items {
+		if err := w.setTenantField(ctx, &items[i]); err != nil {
+			return nil, err
+		}
 	}
 
 	results := make([]*T, 0, len(items))

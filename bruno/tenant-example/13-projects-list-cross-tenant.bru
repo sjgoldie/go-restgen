@@ -1,0 +1,35 @@
+meta {
+  name: List Projects - Charlie (cross-tenant isolation)
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/projects
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:charlie:org-b:user
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Charlie sees only org-b projects, not org-a", function() {
+    expect(res.body).to.be.an('array');
+    expect(res.body.length).to.equal(1);
+    expect(res.body[0].name).to.equal("Gamma Project");
+    expect(res.body[0].org_id).to.equal("org-b");
+  });
+}
+
+docs {
+  # Cross-Tenant Isolation
+  Charlie is in org-b. He can only see org-b projects.
+  org-a's projects (Alpha, Beta) are completely invisible.
+}

@@ -1,0 +1,29 @@
+meta {
+  name: Icon Colors - Global Route No Auth
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/iconcolors
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Global route returns seeded icon colors without auth", function() {
+    expect(res.body).to.be.an('array');
+    expect(res.body.length).to.equal(3);
+  });
+}
+
+docs {
+  # Global Route - No Tenant Scope
+  Icon colors are a global resource with AllPublic() — no auth, no tenant scoping.
+  All tenants (and unauthenticated users) can access them.
+}

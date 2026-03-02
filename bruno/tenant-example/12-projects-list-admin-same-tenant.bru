@@ -1,0 +1,35 @@
+meta {
+  name: List Projects - Bob Admin (all in tenant)
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/projects
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:org-a:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Admin sees all projects in same tenant", function() {
+    expect(res.body).to.be.an('array');
+    expect(res.body.length).to.equal(2);
+    expect(res.body.every(p => p.org_id === "org-a")).to.be.true;
+  });
+}
+
+docs {
+  # Admin Bypasses Ownership But NOT Tenant
+  Bob is admin in org-a. Admin scope bypasses ownership filtering,
+  so he sees ALL org-a projects (both Alice's and his). But tenant
+  filtering still applies — he cannot see org-b projects.
+}

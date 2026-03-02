@@ -1,0 +1,47 @@
+meta {
+  name: Create Project - Alice (org-a)
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/projects
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:org-a:user
+}
+
+body:json {
+  {
+    "name": "Alpha Project",
+    "description": "Alice's project in org-a"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.name: eq Alpha Project
+}
+
+tests {
+  test("Tenant field org_id auto-set from TenantID", function() {
+    expect(res.body.org_id).to.equal("org-a");
+  });
+  test("Ownership field owner_id auto-set from UserID", function() {
+    expect(res.body.owner_id).to.equal("alice");
+  });
+}
+
+script:post-response {
+  bru.setVar("aliceProjectId", res.body.id);
+}
+
+docs {
+  # Create Project with Auto-Set Fields
+  Both org_id (tenant) and owner_id (ownership) are auto-populated.
+  The client doesn't need to set them — they come from the JWT/AuthInfo.
+}

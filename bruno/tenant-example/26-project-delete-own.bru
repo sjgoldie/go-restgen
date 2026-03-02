@@ -1,0 +1,24 @@
+meta {
+  name: Delete Project - Own Tenant
+  type: http
+  seq: 26
+}
+
+delete {
+  url: {{baseUrl}}/projects/{{bobProjectId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:org-a:user,admin
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  # Delete Within Own Tenant
+  Bob (admin, org-a) deletes his own project. Works normally.
+}

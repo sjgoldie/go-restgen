@@ -1,0 +1,30 @@
+meta {
+  name: Create Order
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "customer_name": "Alice",
+    "total": 49.99
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.customer_name: eq Alice
+  res.body.total: eq 49.99
+  res.body.status: eq pending
+}
+
+script:post-response {
+  bru.setVar("orderId", res.body.id);
+}

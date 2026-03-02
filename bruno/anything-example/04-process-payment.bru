@@ -1,0 +1,25 @@
+meta {
+  name: Process Payment (anything func POST)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/pay
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "method": "paypal"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.order_id: isDefined
+  res.body.amount: eq 49.99
+  res.body.payment_method: eq paypal
+  res.body.status: eq paid
+}

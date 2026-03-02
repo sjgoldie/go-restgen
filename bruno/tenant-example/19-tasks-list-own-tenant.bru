@@ -1,0 +1,29 @@
+meta {
+  name: List Tasks - Own Tenant
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/projects/{{aliceProjectId}}/tasks
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:org-a:user
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+tests {
+  test("Alice sees tasks under her project", function() {
+    expect(res.body).to.be.an('array');
+    expect(res.body.length).to.equal(1);
+    expect(res.body[0].title).to.equal("Implement feature X");
+    expect(res.body[0].org_id).to.equal("org-a");
+  });
+}

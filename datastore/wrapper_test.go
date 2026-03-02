@@ -4417,3 +4417,835 @@ func TestRelationFilter_CombinedFilterAndInclude(t *testing.T) {
 		t.Error("Expected Accounts to be included")
 	}
 }
+
+// =============================================================================
+// Issue #64: Multi-Tenant Scoping Tests
+// =============================================================================
+
+// TestTenantOrg is the tenant entity itself (PK = tenant ID)
+type TestTenantOrg struct {
+	bun.BaseModel `bun:"table:test_tenant_orgs"`
+	ID            string `bun:"id,pk"`
+	Name          string `bun:"name,notnull"`
+}
+
+// TestTenantProject has tenant scoping + ownership
+type TestTenantProject struct {
+	bun.BaseModel `bun:"table:test_tenant_projects"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	OrgID         string `bun:"org_id,notnull"`
+	OwnerID       string `bun:"owner_id,notnull"`
+	Name          string `bun:"name,notnull"`
+}
+
+// TestTenantTask is a child of Project, inherits tenant scoping
+type TestTenantTask struct {
+	bun.BaseModel `bun:"table:test_tenant_tasks"`
+	ID            int                `bun:"id,pk,autoincrement"`
+	ProjectID     int                `bun:"project_id,notnull"`
+	Project       *TestTenantProject `bun:"rel:belongs-to,join:project_id=id"`
+	OrgID         string             `bun:"org_id,notnull"`
+	Title         string             `bun:"title,notnull"`
+}
+
+func setupTenantTestDB(t *testing.T) (*datastore.SQLite, func()) {
+	t.Helper()
+
+	db, err := datastore.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal("Failed to create test database:", err)
+	}
+
+	ctx := context.Background()
+	models := []interface{}{
+		(*TestTenantOrg)(nil),
+		(*TestTenantProject)(nil),
+		(*TestTenantTask)(nil),
+	}
+
+	for _, model := range models {
+		_, err := db.GetDB().NewCreateTable().Model(model).IfNotExists().Exec(ctx)
+		if err != nil {
+			db.Cleanup()
+			t.Fatal("Failed to create table:", err)
+		}
+	}
+
+	cleanup := func() {
+		for _, model := range models {
+			db.GetDB().NewDropTable().Model(model).IfExists().Exec(ctx)
+		}
+		db.Cleanup()
+	}
+
+	return db, cleanup
+}
+
+func createTenantTestMeta() (orgMeta *metadata.TypeMetadata, projectMeta *metadata.TypeMetadata, taskMeta *metadata.TypeMetadata) {
+	orgMeta = &metadata.TypeMetadata{
+		TypeID:        "test_tenant_org",
+		TypeName:      "TestTenantOrg",
+		TableName:     "test_tenant_orgs",
+		URLParamUUID:  "orgId",
+		PKField:       "ID",
+		ModelType:     reflect.TypeOf(TestTenantOrg{}),
+		IsTenantTable: true,
+		ChildMeta:     make(map[string]*metadata.TypeMetadata),
+	}
+
+	projectMeta = &metadata.TypeMetadata{
+		TypeID:          "test_tenant_project",
+		TypeName:        "TestTenantProject",
+		TableName:       "test_tenant_projects",
+		URLParamUUID:    "projectId",
+		PKField:         "ID",
+		ModelType:       reflect.TypeOf(TestTenantProject{}),
+		TenantField:     "OrgID",
+		OwnershipFields: []string{"OwnerID"},
+		BypassScopes:    []string{"admin"},
+		ChildMeta:       make(map[string]*metadata.TypeMetadata),
+	}
+
+	taskMeta = &metadata.TypeMetadata{
+		TypeID:        "test_tenant_task",
+		TypeName:      "TestTenantTask",
+		TableName:     "test_tenant_tasks",
+		URLParamUUID:  "taskId",
+		PKField:       "ID",
+		ModelType:     reflect.TypeOf(TestTenantTask{}),
+		ParentType:    reflect.TypeOf(TestTenantProject{}),
+		ParentMeta:    projectMeta,
+		ForeignKeyCol: "project_id",
+		TenantField:   "OrgID",
+		ChildMeta:     make(map[string]*metadata.TypeMetadata),
+	}
+
+	projectMeta.ChildMeta["Tasks"] = taskMeta
+
+	return orgMeta, projectMeta, taskMeta
+}
+
+// ctxWithTenant creates a context with tenant scoping active
+func ctxWithTenant(ctx context.Context, tenantID string) context.Context {
+	ctx = context.WithValue(ctx, metadata.TenantScopedKey, true)
+	ctx = context.WithValue(ctx, metadata.TenantIDValueKey, tenantID)
+	return ctx
+}
+
+// --- Direct Tenant Filtering ---
+
+func TestTenant_GetAll_FiltersByTenant(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+
+	// Create projects for two tenants
+	projects := []TestTenantProject{
+		{OrgID: "org-a", OwnerID: "alice", Name: "Org A Project 1"},
+		{OrgID: "org-a", OwnerID: "alice", Name: "Org A Project 2"},
+		{OrgID: "org-b", OwnerID: "bob", Name: "Org B Project 1"},
+	}
+	for _, p := range projects {
+		_, err := wrapper.Create(ctx, p)
+		if err != nil {
+			t.Fatal("Failed to create project:", err)
+		}
+	}
+
+	// GetAll with tenant scoping for org-a
+	tenantCtx := ctxWithTenant(ctx, "org-a")
+	retrieved, _, _, err := wrapper.GetAll(tenantCtx)
+	if err != nil {
+		t.Fatal("Failed to get projects:", err)
+	}
+
+	if len(retrieved) != 2 {
+		t.Errorf("Expected 2 projects for org-a, got %d", len(retrieved))
+	}
+	for _, p := range retrieved {
+		if p.OrgID != "org-a" {
+			t.Errorf("Expected project to belong to org-a, got %s", p.OrgID)
+		}
+	}
+}
+
+func TestTenant_GetAll_CrossTenant_ReturnsEmpty(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+
+	// Create project for org-a
+	_, err := wrapper.Create(ctx, TestTenantProject{OrgID: "org-a", OwnerID: "alice", Name: "Org A Project"})
+	if err != nil {
+		t.Fatal("Failed to create project:", err)
+	}
+
+	// GetAll as org-b should see nothing
+	tenantCtx := ctxWithTenant(ctx, "org-b")
+	retrieved, _, _, err := wrapper.GetAll(tenantCtx)
+	if err != nil {
+		t.Fatal("Failed to get projects:", err)
+	}
+
+	if len(retrieved) != 0 {
+		t.Errorf("Expected 0 projects for org-b (cross-tenant), got %d", len(retrieved))
+	}
+}
+
+func TestTenant_Get_FiltersByTenant(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+
+	// Create project for org-a
+	created, err := wrapper.Create(ctx, TestTenantProject{OrgID: "org-a", OwnerID: "alice", Name: "Org A Project"})
+	if err != nil {
+		t.Fatal("Failed to create project:", err)
+	}
+
+	// Get as org-a should work
+	tenantCtx := ctxWithTenant(ctx, "org-a")
+	retrieved, err := wrapper.Get(tenantCtx, strconv.Itoa(created.ID))
+	if err != nil {
+		t.Fatal("Failed to get project as org-a:", err)
+	}
+	if retrieved.OrgID != "org-a" {
+		t.Errorf("Expected project org-a, got %s", retrieved.OrgID)
+	}
+}
+
+func TestTenant_Get_CrossTenant_Returns404(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+
+	// Create project for org-a
+	created, err := wrapper.Create(ctx, TestTenantProject{OrgID: "org-a", OwnerID: "alice", Name: "Org A Project"})
+	if err != nil {
+		t.Fatal("Failed to create project:", err)
+	}
+
+	// Get as org-b should fail
+	tenantCtx := ctxWithTenant(ctx, "org-b")
+	_, err = wrapper.Get(tenantCtx, strconv.Itoa(created.ID))
+	if err == nil {
+		t.Error("Expected error when org-b tries to get org-a's project")
+	}
+	if !errors.Is(err, apperrors.ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+}
+
+// --- Auto-set Tenant Field on Create ---
+
+func TestTenant_Create_AutoSetsTenantField(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+
+	// Create project with tenant scoping — OrgID should be auto-set
+	tenantCtx := ctxWithTenant(ctx, "org-a")
+	created, err := wrapper.Create(tenantCtx, TestTenantProject{
+		OrgID:   "", // Should be auto-set
+		OwnerID: "alice",
+		Name:    "Auto-tenanted Project",
+	})
+	if err != nil {
+		t.Fatal("Failed to create project:", err)
+	}
+
+	if created.OrgID != "org-a" {
+		t.Errorf("Expected OrgID to be auto-set to org-a, got %s", created.OrgID)
+	}
+}
+
+func TestTenant_BatchCreate_AutoSetsTenantField(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+
+	tenantCtx := ctxWithTenant(ctx, "org-a")
+	items := []TestTenantProject{
+		{OwnerID: "alice", Name: "Batch Project 1"},
+		{OwnerID: "bob", Name: "Batch Project 2"},
+	}
+
+	results, err := wrapper.BatchCreate(tenantCtx, items)
+	if err != nil {
+		t.Fatal("Failed to batch create:", err)
+	}
+
+	for _, p := range results {
+		if p.OrgID != "org-a" {
+			t.Errorf("Expected OrgID org-a on batch create, got %s", p.OrgID)
+		}
+	}
+}
+
+// --- IsTenantTable (tenant entity itself, PK = tenant ID) ---
+
+func TestTenant_IsTenantTable_GetAll_FiltersByPK(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	orgMeta, _, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantOrg]{Store: db}
+	ctx := ctxWithMeta(orgMeta)
+
+	// Create orgs directly (org creation is a provisioning operation)
+	orgs := []TestTenantOrg{
+		{ID: "org-a", Name: "Org Alpha"},
+		{ID: "org-b", Name: "Org Beta"},
+		{ID: "org-c", Name: "Org Gamma"},
+	}
+	for _, org := range orgs {
+		_, err := db.GetDB().NewInsert().Model(&org).Exec(context.Background())
+		if err != nil {
+			t.Fatal("Failed to create org:", err)
+		}
+	}
+
+	// GetAll as org-a should only return org-a
+	tenantCtx := ctxWithTenant(ctx, "org-a")
+	retrieved, _, _, err := wrapper.GetAll(tenantCtx)
+	if err != nil {
+		t.Fatal("Failed to get orgs:", err)
+	}
+
+	if len(retrieved) != 1 {
+		t.Errorf("Expected 1 org for org-a, got %d", len(retrieved))
+	}
+	if len(retrieved) > 0 && retrieved[0].ID != "org-a" {
+		t.Errorf("Expected org-a, got %s", retrieved[0].ID)
+	}
+}
+
+func TestTenant_IsTenantTable_Get_CrossTenant_Returns404(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	orgMeta, _, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantOrg]{Store: db}
+	ctx := ctxWithMeta(orgMeta)
+
+	// Create org-a
+	_, err := db.GetDB().NewInsert().Model(&TestTenantOrg{ID: "org-a", Name: "Org Alpha"}).Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create org:", err)
+	}
+
+	// org-b tries to access org-a — should 404
+	tenantCtx := ctxWithTenant(ctx, "org-b")
+	_, err = wrapper.Get(tenantCtx, "org-a")
+	if err == nil {
+		t.Error("Expected error when org-b tries to get org-a")
+	}
+	if !errors.Is(err, apperrors.ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestTenant_IsTenantTable_Get_OwnTenant_Works(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	orgMeta, _, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantOrg]{Store: db}
+	ctx := ctxWithMeta(orgMeta)
+
+	// Create org-a
+	_, err := db.GetDB().NewInsert().Model(&TestTenantOrg{ID: "org-a", Name: "Org Alpha"}).Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create org:", err)
+	}
+
+	// org-a views own org
+	tenantCtx := ctxWithTenant(ctx, "org-a")
+	retrieved, err := wrapper.Get(tenantCtx, "org-a")
+	if err != nil {
+		t.Fatal("Failed to get own org:", err)
+	}
+	if retrieved.Name != "Org Alpha" {
+		t.Errorf("Expected Org Alpha, got %s", retrieved.Name)
+	}
+}
+
+// --- Tenant + Ownership Combo ---
+
+func TestTenant_WithOwnership_BothFiltersApply(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+
+	// Create projects: different tenants and owners
+	projects := []TestTenantProject{
+		{OrgID: "org-a", OwnerID: "alice", Name: "Alice's Org A Project"},
+		{OrgID: "org-a", OwnerID: "bob", Name: "Bob's Org A Project"},
+		{OrgID: "org-b", OwnerID: "alice", Name: "Alice's Org B Project"},
+	}
+	for _, p := range projects {
+		_, err := wrapper.Create(ctx, p)
+		if err != nil {
+			t.Fatal("Failed to create project:", err)
+		}
+	}
+
+	// Alice in org-a: tenant filter + ownership filter
+	tenantCtx := ctxWithTenant(ctx, "org-a")
+	tenantCtx = context.WithValue(tenantCtx, metadata.OwnershipEnforcedKey, true)
+	tenantCtx = context.WithValue(tenantCtx, metadata.OwnershipUserIDKey, "alice")
+
+	retrieved, _, _, err := wrapper.GetAll(tenantCtx)
+	if err != nil {
+		t.Fatal("Failed to get projects:", err)
+	}
+
+	// Should only get alice's project in org-a (not bob's in org-a, not alice's in org-b)
+	if len(retrieved) != 1 {
+		t.Errorf("Expected 1 project (alice + org-a), got %d", len(retrieved))
+	}
+	if len(retrieved) > 0 {
+		if retrieved[0].OrgID != "org-a" || retrieved[0].OwnerID != "alice" {
+			t.Errorf("Expected org-a/alice, got %s/%s", retrieved[0].OrgID, retrieved[0].OwnerID)
+		}
+	}
+}
+
+func TestTenant_WithOwnership_AdminBypassOwnershipNotTenant(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+
+	// Create projects for org-a
+	projects := []TestTenantProject{
+		{OrgID: "org-a", OwnerID: "alice", Name: "Alice's Project"},
+		{OrgID: "org-a", OwnerID: "bob", Name: "Bob's Project"},
+		{OrgID: "org-b", OwnerID: "carol", Name: "Carol's Org B Project"},
+	}
+	for _, p := range projects {
+		_, err := wrapper.Create(ctx, p)
+		if err != nil {
+			t.Fatal("Failed to create project:", err)
+		}
+	}
+
+	// Admin in org-a: bypasses ownership, but NOT tenant
+	tenantCtx := ctxWithTenant(ctx, "org-a")
+	tenantCtx = context.WithValue(tenantCtx, metadata.OwnershipEnforcedKey, true)
+	tenantCtx = context.WithValue(tenantCtx, metadata.OwnershipUserIDKey, "admin-user")
+	tenantCtx = context.WithValue(tenantCtx, metadata.AuthInfoKey, &metadata.AuthInfo{
+		UserID:   "admin-user",
+		TenantID: "org-a",
+		Scopes:   []string{"admin"},
+	})
+
+	retrieved, _, _, err := wrapper.GetAll(tenantCtx)
+	if err != nil {
+		t.Fatal("Failed to get projects:", err)
+	}
+
+	// Admin sees all of org-a (bypass ownership), but NOT org-b
+	if len(retrieved) != 2 {
+		t.Errorf("Expected 2 projects (admin sees all of org-a), got %d", len(retrieved))
+	}
+	for _, p := range retrieved {
+		if p.OrgID != "org-a" {
+			t.Errorf("Admin should only see org-a projects, got %s", p.OrgID)
+		}
+	}
+}
+
+// --- Parent Chain Tenant Verification ---
+
+func TestTenant_ParentChain_FiltersByParentTenant(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, taskMeta := createTenantTestMeta()
+	projectWrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	taskWrapper := &datastore.Wrapper[TestTenantTask]{Store: db}
+	ctxProject := ctxWithMeta(projectMeta)
+
+	// Create projects for different tenants
+	projectA, err := projectWrapper.Create(ctxProject, TestTenantProject{OrgID: "org-a", OwnerID: "alice", Name: "Org A Project"})
+	if err != nil {
+		t.Fatal("Failed to create project:", err)
+	}
+	projectB, err := projectWrapper.Create(ctxProject, TestTenantProject{OrgID: "org-b", OwnerID: "bob", Name: "Org B Project"})
+	if err != nil {
+		t.Fatal("Failed to create project:", err)
+	}
+
+	// Create tasks under each project (directly, bypassing tenant enforcement for setup)
+	ctxTask := ctxWithMeta(taskMeta)
+	ctxWithParentA := context.WithValue(ctxTask, metadata.ParentIDsKey, map[string]string{
+		"projectId": strconv.Itoa(projectA.ID),
+	})
+	ctxWithParentB := context.WithValue(ctxTask, metadata.ParentIDsKey, map[string]string{
+		"projectId": strconv.Itoa(projectB.ID),
+	})
+
+	_, err = taskWrapper.Create(ctxWithParentA, TestTenantTask{ProjectID: projectA.ID, OrgID: "org-a", Title: "Task A"})
+	if err != nil {
+		t.Fatal("Failed to create task:", err)
+	}
+	_, err = taskWrapper.Create(ctxWithParentB, TestTenantTask{ProjectID: projectB.ID, OrgID: "org-b", Title: "Task B"})
+	if err != nil {
+		t.Fatal("Failed to create task:", err)
+	}
+
+	// Query tasks under project A as org-a — should work
+	taskCtx := context.WithValue(ctxTask, metadata.ParentIDsKey, map[string]string{
+		"projectId": strconv.Itoa(projectA.ID),
+	})
+	taskCtx = ctxWithTenant(taskCtx, "org-a")
+	// Set parent tenant context (normally set by auth middleware)
+	taskCtx = context.WithValue(taskCtx, metadata.ParentTenantKey, []*metadata.TypeMetadata{projectMeta})
+
+	tasks, _, _, err := taskWrapper.GetAll(taskCtx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+	if len(tasks) != 1 {
+		t.Errorf("Expected 1 task for org-a, got %d", len(tasks))
+	}
+
+	// Query tasks under project A as org-b — parent tenant mismatch, should get 0
+	taskCtxB := context.WithValue(ctxTask, metadata.ParentIDsKey, map[string]string{
+		"projectId": strconv.Itoa(projectA.ID),
+	})
+	taskCtxB = ctxWithTenant(taskCtxB, "org-b")
+	taskCtxB = context.WithValue(taskCtxB, metadata.ParentTenantKey, []*metadata.TypeMetadata{projectMeta})
+
+	tasks, _, _, err = taskWrapper.GetAll(taskCtxB)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+	if len(tasks) != 0 {
+		t.Errorf("Expected 0 tasks (cross-tenant parent), got %d", len(tasks))
+	}
+}
+
+func TestTenant_ParentChain_CantCreateUnderOtherTenantParent(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, taskMeta := createTenantTestMeta()
+	projectWrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	taskWrapper := &datastore.Wrapper[TestTenantTask]{Store: db}
+	ctxProject := ctxWithMeta(projectMeta)
+
+	// Create project for org-a
+	projectA, err := projectWrapper.Create(ctxProject, TestTenantProject{OrgID: "org-a", OwnerID: "alice", Name: "Org A Project"})
+	if err != nil {
+		t.Fatal("Failed to create project:", err)
+	}
+
+	// org-b tries to create task under org-a's project (with tenant enforcement)
+	ctxTask := ctxWithMeta(taskMeta)
+	ctxTask = context.WithValue(ctxTask, metadata.ParentIDsKey, map[string]string{
+		"projectId": strconv.Itoa(projectA.ID),
+	})
+	ctxTask = ctxWithTenant(ctxTask, "org-b")
+	ctxTask = context.WithValue(ctxTask, metadata.ParentTenantKey, []*metadata.TypeMetadata{projectMeta})
+
+	_, err = taskWrapper.Create(ctxTask, TestTenantTask{Title: "Malicious Task"})
+	if err == nil {
+		t.Error("Expected error creating task under another tenant's project")
+	}
+}
+
+// --- No Tenant Context = No Filtering (global routes) ---
+
+func TestTenant_NoTenantContext_NoFiltering(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+
+	// Create projects for different tenants
+	projects := []TestTenantProject{
+		{OrgID: "org-a", OwnerID: "alice", Name: "Org A Project"},
+		{OrgID: "org-b", OwnerID: "bob", Name: "Org B Project"},
+	}
+	for _, p := range projects {
+		_, err := wrapper.Create(ctx, p)
+		if err != nil {
+			t.Fatal("Failed to create project:", err)
+		}
+	}
+
+	// GetAll without tenant context — should return all (global route behavior)
+	retrieved, _, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("Failed to get projects:", err)
+	}
+
+	if len(retrieved) != 2 {
+		t.Errorf("Expected 2 projects without tenant filter (global), got %d", len(retrieved))
+	}
+}
+
+// --- Tenant Enforced but TenantID empty ---
+
+func TestTenant_EnforcedButEmpty_ReturnsError(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+
+	// Create a project
+	_, err := wrapper.Create(ctx, TestTenantProject{OrgID: "org-a", OwnerID: "alice", Name: "Project"})
+	if err != nil {
+		t.Fatal("Failed to create project:", err)
+	}
+
+	// Tenant enforced but empty ID — should error
+	tenantCtx := context.WithValue(ctx, metadata.TenantScopedKey, true)
+	tenantCtx = context.WithValue(tenantCtx, metadata.TenantIDValueKey, "")
+
+	_, _, _, err = wrapper.GetAll(tenantCtx)
+	if err == nil {
+		t.Error("Expected error when tenant scoped but tenant ID is empty")
+	}
+}
+
+// --- Tenant + Query Filters ---
+
+func TestTenant_WithQueryFilters_BothApply(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	projectMeta.FilterableFields = []string{"Name"}
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+
+	// Create projects
+	projects := []TestTenantProject{
+		{OrgID: "org-a", OwnerID: "alice", Name: "Alpha"},
+		{OrgID: "org-a", OwnerID: "alice", Name: "Beta"},
+		{OrgID: "org-b", OwnerID: "bob", Name: "Alpha"},
+	}
+	for _, p := range projects {
+		_, err := wrapper.Create(ctx, p)
+		if err != nil {
+			t.Fatal("Failed to create project:", err)
+		}
+	}
+
+	// Filter by Name=Alpha within org-a
+	tenantCtx := ctxWithTenant(ctx, "org-a")
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Name": {Value: "Alpha", Operator: metadata.OpEq},
+		},
+	}
+	tenantCtx = context.WithValue(tenantCtx, metadata.QueryOptionsKey, opts)
+
+	retrieved, _, _, err := wrapper.GetAll(tenantCtx)
+	if err != nil {
+		t.Fatal("Failed to get projects:", err)
+	}
+
+	if len(retrieved) != 1 {
+		t.Errorf("Expected 1 project (Alpha in org-a), got %d", len(retrieved))
+	}
+	if len(retrieved) > 0 && retrieved[0].Name != "Alpha" {
+		t.Errorf("Expected Alpha, got %s", retrieved[0].Name)
+	}
+}
+
+// --- Tenant + Update/Delete (implicit via Get) ---
+
+func TestTenant_Update_CrossTenant_Returns404(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+
+	// Create project for org-a
+	created, err := wrapper.Create(ctx, TestTenantProject{OrgID: "org-a", OwnerID: "alice", Name: "Org A Project"})
+	if err != nil {
+		t.Fatal("Failed to create project:", err)
+	}
+
+	// org-b tries to update org-a's project
+	tenantCtx := ctxWithTenant(ctx, "org-b")
+	_, err = wrapper.Update(tenantCtx, strconv.Itoa(created.ID), TestTenantProject{Name: "Hacked"})
+	if err == nil {
+		t.Error("Expected error when org-b tries to update org-a's project")
+	}
+	if !errors.Is(err, apperrors.ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestTenant_Delete_CrossTenant_Returns404(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+
+	// Create project for org-a
+	created, err := wrapper.Create(ctx, TestTenantProject{OrgID: "org-a", OwnerID: "alice", Name: "Org A Project"})
+	if err != nil {
+		t.Fatal("Failed to create project:", err)
+	}
+
+	// org-b tries to delete org-a's project
+	tenantCtx := ctxWithTenant(ctx, "org-b")
+	err = wrapper.Delete(tenantCtx, strconv.Itoa(created.ID))
+	if err == nil {
+		t.Error("Expected error when org-b tries to delete org-a's project")
+	}
+	if !errors.Is(err, apperrors.ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestTenant_SetTenantField_SkipsIsTenantTable(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	orgMeta, _, _ := createTenantTestMeta()
+	// Ensure orgMeta has IsTenantTable but also set TenantField to force the IsTenantTable branch
+	orgMeta.TenantField = "ID"
+	orgMeta.IsTenantTable = true
+
+	wrapper := &datastore.Wrapper[TestTenantOrg]{Store: db}
+	ctx := ctxWithMeta(orgMeta)
+
+	// Create org with explicit ID, tenant context set to "org-a"
+	tenantCtx := ctxWithTenant(ctx, "org-a")
+	created, err := wrapper.Create(tenantCtx, TestTenantOrg{ID: "org-x", Name: "Org X"})
+	if err != nil {
+		t.Fatal("Failed to create org:", err)
+	}
+
+	// IsTenantTable should NOT auto-set the tenant field — ID stays as provided
+	if created.ID != "org-x" {
+		t.Errorf("Expected org ID to remain org-x (IsTenantTable skips setTenantField), got %s", created.ID)
+	}
+}
+
+func TestTenant_SetTenantField_NonStringFieldReturnsError(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	// Point TenantField at an int field to trigger the non-string error path
+	projectMeta.TenantField = "ID"
+
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+	tenantCtx := ctxWithTenant(ctx, "org-a")
+
+	_, err := wrapper.Create(tenantCtx, TestTenantProject{OrgID: "org-a", OwnerID: "alice", Name: "Test"})
+	if err == nil {
+		t.Error("Expected error when tenant field is non-string type")
+	}
+}
+
+func TestTenant_SetTenantField_InvalidFieldReturnsError(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	// Point TenantField at a field that doesn't exist
+	projectMeta.TenantField = "NonExistentField"
+
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+	ctx := ctxWithMeta(projectMeta)
+	tenantCtx := ctxWithTenant(ctx, "org-a")
+
+	_, err := wrapper.Create(tenantCtx, TestTenantProject{OrgID: "org-a", OwnerID: "alice", Name: "Test"})
+	if err == nil {
+		t.Error("Expected error when tenant field doesn't exist on model")
+	}
+}
+
+func TestTenant_ParentTenantFilter_SkipsParentWithNoTenantField(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, taskMeta := createTenantTestMeta()
+
+	// Clear the parent's TenantField so applyParentTenantFilter hits the early return
+	projectMeta.TenantField = ""
+
+	wrapper := &datastore.Wrapper[TestTenantTask]{Store: db}
+
+	// Insert test data directly
+	ctx := context.Background()
+	p := &TestTenantProject{OrgID: "org-a", OwnerID: "alice", Name: "Project A"}
+	_, _ = db.GetDB().NewInsert().Model(p).Returning("*").Exec(ctx)
+	task := &TestTenantTask{ProjectID: p.ID, OrgID: "org-a", Title: "Task A"}
+	_, _ = db.GetDB().NewInsert().Model(task).Returning("*").Exec(ctx)
+
+	// Set up context with task meta, parent IDs, and tenant scoping
+	taskCtx := ctxWithMeta(taskMeta)
+	taskCtx = context.WithValue(taskCtx, metadata.ParentIDsKey, map[string]string{
+		"projectId": strconv.Itoa(p.ID),
+	})
+	// Parent has no TenantField, so parent tenant filter should be skipped
+	// but direct tenant filter on task still applies
+	taskCtx = ctxWithTenant(taskCtx, "org-a")
+	taskCtx = context.WithValue(taskCtx, metadata.ParentTenantKey, []*metadata.TypeMetadata{projectMeta})
+
+	results, _, _, err := wrapper.GetAll(taskCtx)
+	if err != nil {
+		t.Fatal("Failed to get tasks:", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("Expected 1 task (parent tenant filter skipped), got %d", len(results))
+	}
+
+	// Cross-tenant should still be filtered by direct tenant filter
+	crossCtx := ctxWithMeta(taskMeta)
+	crossCtx = context.WithValue(crossCtx, metadata.ParentIDsKey, map[string]string{
+		"projectId": strconv.Itoa(p.ID),
+	})
+	crossCtx = ctxWithTenant(crossCtx, "org-b")
+	crossCtx = context.WithValue(crossCtx, metadata.ParentTenantKey, []*metadata.TypeMetadata{projectMeta})
+
+	crossResults, _, _, err := wrapper.GetAll(crossCtx)
+	if err != nil {
+		t.Fatal("Failed to get tasks:", err)
+	}
+	if len(crossResults) != 0 {
+		t.Errorf("Expected 0 tasks (direct tenant filter still applies), got %d", len(crossResults))
+	}
+}

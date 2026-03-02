@@ -169,6 +169,69 @@ func handleMutationError(ctx context.Context, w http.ResponseWriter, err error, 
 	http.Error(w, "internal server error", http.StatusInternalServerError)
 }
 
+// requestContext holds common setup data for /{id} handlers.
+type requestContext[T any] struct {
+	ctx  context.Context
+	svc  *service.Common[T]
+	meta *metadata.TypeMetadata
+	auth *metadata.AuthInfo
+	id   string
+	item *T
+}
+
+// setupRequest performs common validation and setup for /{id} handlers.
+// Creates the service, extracts metadata and auth, parses the URL ID parameter,
+// and optionally pre-fetches the item using getFunc.
+// On error, the HTTP error response is already written to w.
+func setupRequest[T any](w http.ResponseWriter, r *http.Request, getFunc CustomGetFunc[T]) (requestContext[T], error) {
+	ctx := r.Context()
+	var zero requestContext[T]
+
+	svc, err := service.New[T]()
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to create service", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return zero, err
+	}
+
+	meta, err := metadata.FromContext(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "metadata not found in context", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return zero, err
+	}
+
+	var id string
+	if meta.URLParamUUID != "" {
+		id = chi.URLParam(r, meta.URLParamUUID)
+		if id == "" {
+			slog.DebugContext(ctx, "missing id parameter", "paramUUID", meta.URLParamUUID)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return zero, fmt.Errorf("missing id parameter %s", meta.URLParamUUID)
+		}
+	}
+
+	auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
+
+	var item *T
+	if getFunc != nil {
+		item, err = getFunc(ctx, svc, meta, auth, id)
+		if err != nil {
+			handleMutationError(ctx, w, err, "get item")
+			return zero, err
+		}
+	}
+
+	return requestContext[T]{
+		ctx:  ctx,
+		svc:  svc,
+		meta: meta,
+		auth: auth,
+		id:   id,
+		item: item,
+	}, nil
+}
+
 // StandardGetAll is the default GetAll implementation that calls svc.GetAll.
 // Use this when no custom logic is needed.
 func StandardGetAll[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*T, int, map[string]float64, error) {
@@ -273,66 +336,15 @@ func StandardGetByParentRelation[T any](ctx context.Context, svc *service.Common
 // or provide a custom function for specialized logic (e.g., getting user from auth token).
 func Get[T any](getFunc CustomGetFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-
-		svc, err := service.New[T]()
+		rc, err := setupRequest(w, r, getFunc)
 		if err != nil {
-			slog.ErrorContext(ctx, "failed to create service", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		// Get metadata from context
-		meta, err := metadata.FromContext(ctx)
-		if err != nil {
-			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		// Get ID from URL parameter (passed as string to support both int and UUID PKs)
-		// For single routes with no parent (e.g., /me), URLParamUUID is empty and ID comes from custom logic
-		var id string
-		if meta.URLParamUUID != "" {
-			id = chi.URLParam(r, meta.URLParamUUID)
-			if id == "" {
-				slog.DebugContext(ctx, "missing id parameter", "paramUUID", meta.URLParamUUID)
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-		}
-
-		// Get auth from context (may be nil if not authenticated)
-		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
-
-		// Call the provided function
-		item, err := getFunc(ctx, svc, meta, auth, id)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return // Client disconnected, no response needed
-			}
-			if errors.Is(err, context.DeadlineExceeded) {
-				http.Error(w, "request timeout", http.StatusGatewayTimeout)
-				return
-			}
-			if errors.Is(err, apperrors.ErrNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			if errors.Is(err, apperrors.ErrUnavailable) {
-				w.Header().Set("Retry-After", "5")
-				http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			slog.ErrorContext(ctx, "failed to get item", "id", id, "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(item); err != nil {
-			slog.ErrorContext(ctx, "failed to encode response", "error", err)
+		if err := json.NewEncoder(w).Encode(rc.item); err != nil {
+			slog.ErrorContext(rc.ctx, "failed to encode response", "error", err)
 		}
 	}
 }
@@ -407,8 +419,10 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 		// Parse request body - either multipart form or JSON
 		contentType := r.Header.Get("Content-Type")
 		if strings.HasPrefix(contentType, "multipart/form-data") {
-			// Parse multipart form
-			if err := r.ParseMultipartForm(32 << 20); err != nil {
+			// Limit request body size to prevent memory exhaustion
+			const maxUploadSize = 32 << 20 // 32 MB
+			r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+			if err := r.ParseMultipartForm(maxUploadSize); err != nil {
 				slog.DebugContext(ctx, "failed to parse multipart form", "error", err)
 				http.Error(w, "bad request: failed to parse multipart form", http.StatusBadRequest)
 				return
@@ -478,41 +492,14 @@ func StandardUpdateByParentRelation[T any](ctx context.Context, svc *service.Com
 // or provide a custom function for specialized logic.
 func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-
-		svc, err := service.New[T]()
+		rc, err := setupRequest[T](w, r, nil)
 		if err != nil {
-			slog.ErrorContext(ctx, "failed to create service", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
-
-		// Get metadata from context
-		meta, err := metadata.FromContext(ctx)
-		if err != nil {
-			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		// Get ID from URL parameter (passed as string to support both int and UUID PKs)
-		// For single routes with no parent (e.g., /me), URLParamUUID is empty and ID comes from custom logic
-		var id string
-		if meta.URLParamUUID != "" {
-			id = chi.URLParam(r, meta.URLParamUUID)
-			if id == "" {
-				slog.DebugContext(ctx, "missing id parameter", "paramUUID", meta.URLParamUUID)
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-		}
-
-		// Get auth from context (may be nil if not authenticated)
-		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
 
 		var item T
 		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
-			slog.DebugContext(ctx, "failed to decode request body", "error", err)
+			slog.DebugContext(rc.ctx, "failed to decode request body", "error", err)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -520,25 +507,24 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 		// Set ID from path onto the struct (overwrite any ID from JSON)
 		// This ensures the path ID takes precedence and is required for Bun's WherePK()
 		// Skip for single routes with no URL param - custom function handles ID
-		if id != "" {
-			if err := setIDField(&item, id, meta.PKField); err != nil {
-				slog.ErrorContext(ctx, "failed to set ID field", "error", err)
+		if rc.id != "" {
+			if err := setIDField(&item, rc.id, rc.meta.PKField); err != nil {
+				slog.ErrorContext(rc.ctx, "failed to set ID field", "error", err)
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
 		}
 
-		// Call the provided function
-		savedItem, err := updateFunc(ctx, svc, meta, auth, id, item)
+		savedItem, err := updateFunc(rc.ctx, rc.svc, rc.meta, rc.auth, rc.id, item)
 		if err != nil {
-			handleMutationError(ctx, w, err, "update")
+			handleMutationError(rc.ctx, w, err, "update")
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(savedItem); err != nil {
-			slog.ErrorContext(ctx, "failed to encode response", "error", err)
+			slog.ErrorContext(rc.ctx, "failed to encode response", "error", err)
 		}
 	}
 }
@@ -578,60 +564,13 @@ func StandardDelete[T any](ctx context.Context, svc *service.Common[T], meta *me
 // or provide a custom function for specialized logic.
 func Delete[T any](deleteFunc CustomDeleteFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-
-		svc, err := service.New[T]()
+		rc, err := setupRequest[T](w, r, nil)
 		if err != nil {
-			slog.ErrorContext(ctx, "failed to create service", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		// Get metadata from context
-		meta, err := metadata.FromContext(ctx)
-		if err != nil {
-			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		// Get ID from URL parameter (passed as string to support both int and UUID PKs)
-		id := chi.URLParam(r, meta.URLParamUUID)
-		if id == "" {
-			slog.DebugContext(ctx, "missing id parameter", "paramUUID", meta.URLParamUUID)
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-
-		// Get auth from context (may be nil if not authenticated)
-		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
-
-		// Call the provided function
-		if err := deleteFunc(ctx, svc, meta, auth, id); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return // Client disconnected, no response needed
-			}
-			if errors.Is(err, context.DeadlineExceeded) {
-				http.Error(w, "request timeout", http.StatusGatewayTimeout)
-				return
-			}
-			// Check for validation error - return custom message to client
-			var validationErr *apperrors.ValidationError
-			if errors.As(err, &validationErr) {
-				http.Error(w, validationErr.Message, http.StatusBadRequest)
-				return
-			}
-			if errors.Is(err, apperrors.ErrNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			if errors.Is(err, apperrors.ErrUnavailable) {
-				w.Header().Set("Retry-After", "5")
-				http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			slog.ErrorContext(ctx, "failed to delete item", "id", id, "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if err := deleteFunc(rc.ctx, rc.svc, rc.meta, rc.auth, rc.id); err != nil {
+			handleMutationError(rc.ctx, w, err, "delete")
 			return
 		}
 
@@ -643,49 +582,18 @@ func Delete[T any](deleteFunc CustomDeleteFunc[T]) http.HandlerFunc {
 // Streams the file for proxy mode, redirects to signed URL for signed URL mode.
 func Download[T any]() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-
-		svc, err := service.New[T]()
+		rc, err := setupRequest[T](w, r, nil)
 		if err != nil {
-			slog.ErrorContext(ctx, "failed to create service", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		meta, err := metadata.FromContext(ctx)
+		result, err := rc.svc.Download(rc.ctx, rc.id)
 		if err != nil {
-			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		id := chi.URLParam(r, meta.URLParamUUID)
-		if id == "" {
-			slog.DebugContext(ctx, "missing id parameter", "paramUUID", meta.URLParamUUID)
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-
-		result, err := svc.Download(ctx, id)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return
-			}
-			if errors.Is(err, context.DeadlineExceeded) {
-				http.Error(w, "request timeout", http.StatusGatewayTimeout)
-				return
-			}
-			if errors.Is(err, apperrors.ErrNotFound) || errors.Is(err, filestore.ErrStorageKeyNotFound) {
+			if errors.Is(err, filestore.ErrStorageKeyNotFound) {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
-			if errors.Is(err, apperrors.ErrUnavailable) {
-				w.Header().Set("Retry-After", "5")
-				http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			slog.ErrorContext(ctx, "failed to download file", "id", id, "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			handleMutationError(rc.ctx, w, err, "download")
 			return
 		}
 
@@ -713,7 +621,7 @@ func Download[T any]() http.HandlerFunc {
 
 		w.WriteHeader(http.StatusOK)
 		if _, err := io.Copy(w, result.Reader); err != nil {
-			slog.WarnContext(ctx, "failed to stream file", "error", err)
+			slog.WarnContext(rc.ctx, "failed to stream file", "error", err)
 		}
 	}
 }
@@ -758,53 +666,21 @@ func setIDField[T any](item *T, id string, pkFieldName string) error {
 // The item is fetched first (validating existence and permissions), then passed to the action function.
 func Action[T any](actionFunc ActionFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-
-		svc, err := service.New[T]()
+		rc, err := setupRequest(w, r, StandardGet[T])
 		if err != nil {
-			slog.ErrorContext(ctx, "failed to create service", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		meta, err := metadata.FromContext(ctx)
-		if err != nil {
-			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		id := chi.URLParam(r, meta.URLParamUUID)
-		if id == "" {
-			slog.DebugContext(ctx, "missing id parameter", "paramUUID", meta.URLParamUUID)
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-
-		// Fetch the item first (validates existence and permissions)
-		item, err := svc.Get(ctx, id)
-		if err != nil {
-			if errors.Is(err, apperrors.ErrNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			handleMutationError(ctx, w, err, "get for action")
-			return
-		}
-
-		// Read request body for action payload
 		payload, err := io.ReadAll(r.Body)
 		if err != nil {
-			slog.DebugContext(ctx, "failed to read request body", "error", err)
+			slog.DebugContext(rc.ctx, "failed to read request body", "error", err)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
 
-		auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
-
-		result, err := actionFunc(ctx, svc, meta, auth, id, item, payload)
+		result, err := actionFunc(rc.ctx, rc.svc, rc.meta, rc.auth, rc.id, rc.item, payload)
 		if err != nil {
-			handleMutationError(ctx, w, err, "action")
+			handleMutationError(rc.ctx, w, err, "action")
 			return
 		}
 
@@ -816,7 +692,7 @@ func Action[T any](actionFunc ActionFunc[T]) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(result); err != nil {
-			slog.ErrorContext(ctx, "failed to encode response", "error", err)
+			slog.ErrorContext(rc.ctx, "failed to encode response", "error", err)
 		}
 	}
 }

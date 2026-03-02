@@ -1,0 +1,25 @@
+meta {
+  name: IsTenantTable - Cross-Tenant Org 404
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/organizations/org-b
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:org-a:user
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # IsTenantTable: Cross-Tenant Access Blocked
+  Alice (org-a) cannot view org-b. The IsTenantTable filter ensures
+  WHERE id = 'org-a', so org-b is invisible. Returns 404.
+}

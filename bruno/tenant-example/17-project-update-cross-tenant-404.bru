@@ -1,0 +1,35 @@
+meta {
+  name: Update Project - Cross-Tenant 404
+  type: http
+  seq: 17
+}
+
+put {
+  url: {{baseUrl}}/projects/{{aliceProjectId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:charlie:org-b:user
+}
+
+body:json {
+  {
+    "id": {{aliceProjectId}},
+    "owner_id": "charlie",
+    "name": "Hacked Project",
+    "description": "Cross-tenant attack"
+  }
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # Cross-Tenant UPDATE Returns 404
+  Charlie (org-b) tries to update Alice's project (org-a).
+  The update handler first fetches the existing record with tenant filtering.
+  Since the project is invisible to Charlie, it returns 404.
+}

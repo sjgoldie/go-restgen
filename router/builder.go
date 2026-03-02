@@ -50,6 +50,21 @@ type actionEntry[T any] struct {
 	auth AuthConfig
 }
 
+// endpointEntry holds a single endpoint configuration with its auth
+type endpointEntry[T any] struct {
+	method string
+	name   string
+	fn     handler.EndpointHandler[T]
+	auth   AuthConfig
+}
+
+// sseEntry holds a single SSE endpoint configuration with its auth
+type sseEntry[T any] struct {
+	name string
+	fn   handler.SSEFunc[T]
+	auth AuthConfig
+}
+
 // FileResourceConfig marks a route as a file resource
 type FileResourceConfig struct{}
 
@@ -92,12 +107,16 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 	var batch batchHandlers[T]
 	var batchLimit int
 	var actions []actionEntry[T]
+	var endpoints []endpointEntry[T]
+	var sses []sseEntry[T]
 	var relationName string
 	var nested NestedFunc
 	var singleRoute *SingleRouteConfig
 	var isFileResource bool
 	var pkField string
 	var joinOn *JoinOnConfig
+	var tenantField string
+	var isTenantTable bool
 
 	for _, opt := range options {
 		switch v := opt.(type) {
@@ -129,6 +148,10 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			batch.delete = v.Fn
 		case ActionConfig[T]:
 			actions = append(actions, actionEntry[T]{name: v.Name, fn: v.Fn, auth: v.Auth})
+		case EndpointConfig[T]:
+			endpoints = append(endpoints, endpointEntry[T]{method: v.Method, name: v.Name, fn: v.Fn, auth: v.Auth})
+		case SSEConfig[T]:
+			sses = append(sses, sseEntry[T]{name: v.Name, fn: v.Fn, auth: v.Auth})
 		case RelationConfig:
 			relationName = v.Name
 		case SingleRouteConfig:
@@ -139,17 +162,21 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			pkField = v.FieldName
 		case JoinOnConfig:
 			joinOn = &v
+		case TenantConfig:
+			tenantField = v.Field
+		case TenantTableConfig:
+			isTenantTable = true
 		case func(*Builder):
 			nested = v
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, relationName, singleRoute, isFileResource, pkField, joinOn)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, endpoints, sses, relationName, singleRoute, isFileResource, pkField, joinOn, tenantField, isTenantTable)
 }
 
 // prepareMetadata assembles type metadata and auth configuration before route registration.
 // This extracts the setup phase from registerRoutesWithBuilder to reduce cyclomatic complexity.
-func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig) (string, *metadataSetup) {
+func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool) (string, *metadataSetup) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -288,6 +315,16 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 		meta.BypassScopes = bypassScopes
 	}
 
+	// Set tenant scoping
+	switch {
+	case isTenantTable:
+		meta.IsTenantTable = true
+	case tenantField != "":
+		meta.TenantField = tenantField
+	case b.parentMeta != nil && b.parentMeta.TenantField != "":
+		meta.TenantField = b.parentMeta.TenantField
+	}
+
 	// Merge query configs (last wins for each setting)
 	meta = mergeQueryConfigs(meta, queryConfigs)
 
@@ -326,8 +363,8 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig) {
-	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn)
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool) {
+	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, isTenantTable)
 	meta := setup.meta
 	authMap := setup.authMap
 	metadataMiddleware := setup.metadataMiddleware
@@ -463,6 +500,26 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 						actions[i].auth.ParentIncludeName = parentGetAuth.ParentIncludeName
 					}
 					r.Method("POST", "/"+actions[i].name, wrapHandler(handler.Action[T](actions[i].fn), &actions[i].auth))
+				}
+
+				// Register endpoint handlers - METHOD /resources/{id}/{endpoint-name}
+				for i := range endpoints {
+					endpoints[i].auth.ChildAuth = setup.childRelationAuth
+					if parentGetAuth := setup.authMap[MethodGet]; parentGetAuth != nil {
+						endpoints[i].auth.ParentAuth = parentGetAuth.ParentAuth
+						endpoints[i].auth.ParentIncludeName = parentGetAuth.ParentIncludeName
+					}
+					r.Method(endpoints[i].method, "/"+endpoints[i].name, wrapHandler(handler.Endpoint[T](endpoints[i].fn), &endpoints[i].auth))
+				}
+
+				// Register SSE endpoints - GET /resources/{id}/{sse-name}
+				for i := range sses {
+					sses[i].auth.ChildAuth = setup.childRelationAuth
+					if parentGetAuth := setup.authMap[MethodGet]; parentGetAuth != nil {
+						sses[i].auth.ParentAuth = parentGetAuth.ParentAuth
+						sses[i].auth.ParentIncludeName = parentGetAuth.ParentIncludeName
+					}
+					r.Method("GET", "/"+sses[i].name, wrapHandler(handler.SSE[T](sses[i].fn), &sses[i].auth))
 				}
 
 				nestedRouter = r
@@ -684,4 +741,17 @@ func registerChildAuthConfig(b *Builder, relationName string, authMap map[string
 	}
 
 	b.parentChildRelationAuth[relationName] = childGetAuth
+}
+
+// RegisterRootEndpoint registers a root-level endpoint handler on the builder.
+// Root endpoints have no parent model — they receive auth and the raw request.
+// Use for endpoints like health checks, webhooks, and proxies.
+func RegisterRootEndpoint(b *Builder, method, path string, fn handler.RootEndpointHandler, auth AuthConfig) {
+	b.router.Method(method, path, wrapHandler(handler.RootEndpoint(fn), &auth))
+}
+
+// RegisterRootSSE registers a root-level SSE endpoint on the builder.
+// Root SSE funcs have no parent model. Always registered as GET.
+func RegisterRootSSE(b *Builder, path string, fn handler.RootSSEFunc, auth AuthConfig) {
+	b.router.Method("GET", path, wrapHandler(handler.RootSSE(fn), &auth))
 }

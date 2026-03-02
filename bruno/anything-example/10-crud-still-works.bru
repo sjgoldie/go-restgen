@@ -1,0 +1,17 @@
+meta {
+  name: CRUD Still Works With Funcs Registered
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/orders/{{orderId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{orderId}}
+  res.body.customer_name: eq Alice
+}

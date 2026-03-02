@@ -165,3 +165,49 @@ type PKFieldConfig struct {
 func WithAlternatePK(fieldName string) PKFieldConfig {
 	return PKFieldConfig{FieldName: fieldName}
 }
+
+// FuncConfig holds anything func endpoint configuration for route registration.
+// Anything funcs are like actions but support any HTTP method and any return type.
+// Registered as METHOD /resource/{id}/{name} endpoints.
+type FuncConfig[T any] struct {
+	Method string
+	Name   string
+	Fn     handler.FuncHandler[T]
+	Auth   AuthConfig
+}
+
+// WithFunc creates a FuncConfig for use in RegisterRoutes.
+// The func handler receives the pre-fetched item and raw request body,
+// and can return any type with an explicit HTTP status code.
+//
+// Example:
+//
+//	router.RegisterRoutes[Organisation](b, "/organisations",
+//	    router.AllScoped("admin"),
+//	    router.WithFunc("GET", "wf-status", getWorkflowStatus, router.AllScoped("admin")),
+//	)
+func WithFunc[T any](method, name string, fn handler.FuncHandler[T], auth AuthConfig) FuncConfig[T] {
+	return FuncConfig[T]{Method: method, Name: name, Fn: fn, Auth: auth}
+}
+
+// SSEConfig holds SSE endpoint configuration for route registration.
+// SSE endpoints are always GET and stream events to the client.
+type SSEConfig[T any] struct {
+	Name string
+	Fn   handler.SSEFunc[T]
+	Auth AuthConfig
+}
+
+// WithSSE creates an SSEConfig for use in RegisterRoutes.
+// SSE endpoints are registered as GET /resource/{id}/{name}.
+// The handler receives the pre-fetched item and writes events to a channel.
+//
+// Example:
+//
+//	router.RegisterRoutes[Organisation](b, "/organisations",
+//	    router.AllScoped("admin"),
+//	    router.WithSSE("status-stream", streamOrgStatus, router.AllScoped("admin")),
+//	)
+func WithSSE[T any](name string, fn handler.SSEFunc[T], auth AuthConfig) SSEConfig[T] {
+	return SSEConfig[T]{Name: name, Fn: fn, Auth: auth}
+}

@@ -1,0 +1,16 @@
+meta {
+  name: Webhook Notify (root func POST)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/webhooks/notify
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 202
+  res.body.received: eq true
+}

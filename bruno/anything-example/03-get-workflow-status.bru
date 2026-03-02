@@ -1,0 +1,19 @@
+meta {
+  name: Get Workflow Status (anything func)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/orders/{{orderId}}/wf-status
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.order_id: isDefined
+  res.body.state: eq pending
+  res.body.steps: isArray
+  res.body.steps: length 3
+}

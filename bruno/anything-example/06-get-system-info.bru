@@ -1,0 +1,17 @@
+meta {
+  name: Get System Info (root func)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/system/info
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.version: eq 1.0.0
+  res.body.uptime: isDefined
+}

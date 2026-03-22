@@ -2464,6 +2464,7 @@ func TestWrapper_UpdateByParentRelation(t *testing.T) {
 		TypeName:      "TestIncludeAuthor",
 		TableName:     "include_authors",
 		URLParamUUID:  postMeta.URLParamUUID,
+		PKField:       "ID",
 		ModelType:     reflect.TypeOf(TestIncludeAuthor{}),
 		ParentType:    reflect.TypeOf(TestIncludePost{}),
 		ParentMeta:    postMeta,
@@ -2489,6 +2490,109 @@ func TestWrapper_UpdateByParentRelation(t *testing.T) {
 	}
 	if retrieved.Name != "Updated Name" {
 		t.Errorf("Expected persisted name 'Updated Name', got %s", retrieved.Name)
+	}
+}
+
+// TestWrapper_UpdateByParentRelation_DivergentIDs tests the fix for issue #70:
+// When parent ID != child ID, UpdateByParentRelation must set the resolved child ID
+// on the item struct so WherePK() targets the correct row.
+func TestWrapper_UpdateByParentRelation_DivergentIDs(t *testing.T) {
+	db, cleanup := setupIncludeTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	authorWrapper := &datastore.Wrapper[TestIncludeAuthor]{Store: db}
+	authorMeta := &metadata.TypeMetadata{
+		TypeID:       "test_author_id",
+		TypeName:     "TestIncludeAuthor",
+		TableName:    "include_authors",
+		URLParamUUID: "author_id",
+		PKField:      "ID",
+		ModelType:    reflect.TypeOf(TestIncludeAuthor{}),
+	}
+	authorCtx := context.WithValue(ctx, metadata.MetadataKey, authorMeta)
+
+	// Create a dummy author to offset auto-increment (ID=1)
+	_, err := authorWrapper.Create(authorCtx, TestIncludeAuthor{Name: "Dummy"})
+	if err != nil {
+		t.Fatal("Failed to create dummy author:", err)
+	}
+
+	// Create the real author (ID=2)
+	author, err := authorWrapper.Create(authorCtx, TestIncludeAuthor{Name: "Real Author"})
+	if err != nil {
+		t.Fatal("Failed to create author:", err)
+	}
+	if author.ID == 1 {
+		t.Fatal("Expected author ID != 1, got 1 — dummy offset failed")
+	}
+
+	// Create a post (ID=1) pointing to author (ID=2)
+	postWrapper := &datastore.Wrapper[TestIncludePost]{Store: db}
+	postMeta := &metadata.TypeMetadata{
+		TypeID:       "test_post_id",
+		TypeName:     "TestIncludePost",
+		TableName:    "include_posts",
+		URLParamUUID: "post_id",
+		PKField:      "ID",
+		ModelType:    reflect.TypeOf(TestIncludePost{}),
+	}
+	postCtx := context.WithValue(ctx, metadata.MetadataKey, postMeta)
+	post, err := postWrapper.Create(postCtx, TestIncludePost{AuthorID: author.ID, OwnerID: "alice", Title: "Test Post"})
+	if err != nil {
+		t.Fatal("Failed to create post:", err)
+	}
+	if post.ID == author.ID {
+		t.Fatalf("Test requires post.ID (%d) != author.ID (%d)", post.ID, author.ID)
+	}
+
+	// Simulate what the handler does: stamp the parent (post) ID onto the child struct's PK.
+	// This is the bug — the handler sets item.ID = postID instead of authorID.
+	authorFromPostMeta := &metadata.TypeMetadata{
+		TypeID:        "test_author_from_post_id",
+		TypeName:      "TestIncludeAuthor",
+		TableName:     "include_authors",
+		URLParamUUID:  postMeta.URLParamUUID,
+		PKField:       "ID",
+		ModelType:     reflect.TypeOf(TestIncludeAuthor{}),
+		ParentType:    reflect.TypeOf(TestIncludePost{}),
+		ParentMeta:    postMeta,
+		ParentFKField: "AuthorID",
+	}
+	authorFromPostCtx := context.WithValue(ctx, metadata.MetadataKey, authorFromPostMeta)
+
+	// Item struct has WRONG PK (post.ID instead of author.ID) — simulates handler setIDField bug
+	updatedAuthor := TestIncludeAuthor{ID: post.ID, Name: "Updated Via Parent", CreatedAt: author.CreatedAt}
+	updated, err := authorWrapper.UpdateByParentRelation(authorFromPostCtx, strconv.Itoa(post.ID), updatedAuthor)
+	if err != nil {
+		t.Fatal("UpdateByParentRelation failed:", err)
+	}
+
+	// The returned item should have the correct author ID, not the post ID
+	if updated.ID != author.ID {
+		t.Errorf("Expected returned author ID %d, got %d", author.ID, updated.ID)
+	}
+	if updated.Name != "Updated Via Parent" {
+		t.Errorf("Expected name 'Updated Via Parent', got %q", updated.Name)
+	}
+
+	// Verify the correct author was updated in the database
+	retrieved, err := authorWrapper.Get(authorCtx, strconv.Itoa(author.ID))
+	if err != nil {
+		t.Fatal("Failed to get author:", err)
+	}
+	if retrieved.Name != "Updated Via Parent" {
+		t.Errorf("Expected persisted name 'Updated Via Parent', got %q", retrieved.Name)
+	}
+
+	// Verify the dummy author was NOT modified
+	dummy, err := authorWrapper.Get(authorCtx, "1")
+	if err != nil {
+		t.Fatal("Failed to get dummy author:", err)
+	}
+	if dummy.Name != "Dummy" {
+		t.Errorf("Dummy author was incorrectly modified: got name %q", dummy.Name)
 	}
 }
 

@@ -13,15 +13,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"reflect"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 
 	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/filestore"
+	"github.com/sjgoldie/go-restgen/internal/common"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/service"
 )
@@ -422,7 +421,7 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 			// Limit request body size to prevent memory exhaustion
 			const maxUploadSize = 32 << 20 // 32 MB
 			r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
-			if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+			if err := r.ParseMultipartForm(maxUploadSize); err != nil { // #nosec G120 -- body already bounded by MaxBytesReader above
 				slog.DebugContext(ctx, "failed to parse multipart form", "error", err)
 				http.Error(w, "bad request: failed to parse multipart form", http.StatusBadRequest)
 				return
@@ -508,7 +507,7 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 		// This ensures the path ID takes precedence and is required for Bun's WherePK()
 		// Skip for single routes with no URL param - custom function handles ID
 		if rc.id != "" {
-			if err := setIDField(&item, rc.id, rc.meta.PKField); err != nil {
+			if err := common.SetFieldFromString(&item, rc.meta.PKField, rc.id); err != nil {
 				slog.ErrorContext(rc.ctx, "failed to set ID field", "error", err)
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
@@ -624,41 +623,6 @@ func Download[T any]() http.HandlerFunc {
 			slog.WarnContext(rc.ctx, "failed to stream file", "error", err)
 		}
 	}
-}
-
-// setIDField sets the primary key field on a struct from a string value.
-// The pkFieldName parameter specifies which field to set (from metadata.PKField).
-// Handles int, int64, string, and uuid.UUID field types.
-func setIDField[T any](item *T, id string, pkFieldName string) error {
-	idField := reflect.ValueOf(item).Elem().FieldByName(pkFieldName)
-	if !idField.IsValid() || !idField.CanSet() {
-		return fmt.Errorf("PK field %q not found or not settable", pkFieldName)
-	}
-
-	switch idField.Kind() {
-	case reflect.Int, reflect.Int64:
-		// Parse string to int
-		intID, err := strconv.ParseInt(id, 10, 64)
-		if err != nil {
-			return err
-		}
-		idField.SetInt(intID)
-	case reflect.String:
-		idField.SetString(id)
-	default:
-		// Check for uuid.UUID type (which is [16]byte array)
-		if idField.Type() == reflect.TypeOf(uuid.UUID{}) {
-			parsed, err := uuid.Parse(id)
-			if err != nil {
-				return err
-			}
-			idField.Set(reflect.ValueOf(parsed))
-		} else {
-			return fmt.Errorf("unsupported PK field type: %s", idField.Type().String())
-		}
-	}
-
-	return nil
 }
 
 // Action handles POST requests for custom actions on a resource.

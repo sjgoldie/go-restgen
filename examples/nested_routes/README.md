@@ -58,7 +58,7 @@ type Comment struct {
 Use the Builder API to register nested routes with authentication:
 
 ```go
-b := router.NewBuilder(r, db.GetDB())
+b := router.NewBuilder(r)
 router.RegisterRoutes[User](b, "/users", router.AuthConfig{
     Methods: []string{router.MethodAll},
     Scopes:  []string{router.ScopePublic},  // Public for this example

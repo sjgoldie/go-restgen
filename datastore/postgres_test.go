@@ -9,6 +9,8 @@ import (
 	"github.com/sjgoldie/go-restgen/datastore"
 )
 
+const testDSN = "postgres://user:pass@localhost:5432/testdb?sslmode=disable" // #nosec G101 -- test DSN, not real credentials
+
 func TestNewPostgres(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -17,7 +19,7 @@ func TestNewPostgres(t *testing.T) {
 	}{
 		{
 			name:    "creates postgres instance",
-			dsn:     "postgres://user:pass@localhost:5432/testdb?sslmode=disable",
+			dsn:     testDSN,
 			wantErr: false,
 		},
 	}
@@ -48,7 +50,7 @@ func TestNewPostgres(t *testing.T) {
 func TestPostgreSQL_GetDB(t *testing.T) {
 	// Note: This test creates a PostgreSQL instance but doesn't require a running server
 	// It only tests that GetDB() returns a non-nil bun.DB instance
-	db, err := datastore.NewPostgres("postgres://user:pass@localhost:5432/testdb?sslmode=disable")
+	db, err := datastore.NewPostgres(testDSN)
 	if err != nil {
 		t.Fatal("Failed to create PostgreSQL instance:", err)
 	}
@@ -61,7 +63,7 @@ func TestPostgreSQL_GetDB(t *testing.T) {
 }
 
 func TestPostgreSQL_GetTimeout(t *testing.T) {
-	db, err := datastore.NewPostgres("postgres://user:pass@localhost:5432/testdb?sslmode=disable")
+	db, err := datastore.NewPostgres(testDSN)
 	if err != nil {
 		t.Fatal("Failed to create PostgreSQL instance:", err)
 	}
@@ -89,7 +91,7 @@ func TestPostgreSQL_Cleanup(t *testing.T) {
 		{
 			name: "cleanup doesn't panic",
 			test: func(t *testing.T) {
-				db, err := datastore.NewPostgres("postgres://user:pass@localhost:5432/testdb?sslmode=disable")
+				db, err := datastore.NewPostgres(testDSN)
 				if err != nil {
 					t.Fatal("Failed to create PostgreSQL instance:", err)
 				}
@@ -101,7 +103,7 @@ func TestPostgreSQL_Cleanup(t *testing.T) {
 		{
 			name: "multiple cleanup calls don't panic",
 			test: func(t *testing.T) {
-				db, err := datastore.NewPostgres("postgres://user:pass@localhost:5432/testdb?sslmode=disable")
+				db, err := datastore.NewPostgres(testDSN)
 				if err != nil {
 					t.Fatal("Failed to create PostgreSQL instance:", err)
 				}
@@ -124,7 +126,7 @@ func TestPostgreSQL_StoreInterface(t *testing.T) {
 	// Verify PostgreSQL implements Store interface
 	var _ datastore.Store = (*datastore.PostgreSQL)(nil)
 
-	db, err := datastore.NewPostgres("postgres://user:pass@localhost:5432/testdb?sslmode=disable")
+	db, err := datastore.NewPostgres(testDSN)
 	if err != nil {
 		t.Fatal("Failed to create PostgreSQL instance:", err)
 	}
@@ -147,7 +149,7 @@ func TestPostgreSQL_StoreInterface(t *testing.T) {
 
 func TestNewPostgresWithDB(t *testing.T) {
 	// Create external sql.DB using pgdriver
-	connector := pgdriver.NewConnector(pgdriver.WithDSN("postgres://user:pass@localhost:5432/testdb?sslmode=disable"))
+	connector := pgdriver.NewConnector(pgdriver.WithDSN(testDSN))
 	sqlDB := sql.OpenDB(connector)
 	defer func() { _ = sqlDB.Close() }()
 
@@ -172,7 +174,7 @@ func TestNewPostgresWithDB(t *testing.T) {
 
 func TestPostgresWithDB_CleanupDoesNotCloseExternalConnection(t *testing.T) {
 	// Create external sql.DB using pgdriver
-	connector := pgdriver.NewConnector(pgdriver.WithDSN("postgres://user:pass@localhost:5432/testdb?sslmode=disable"))
+	connector := pgdriver.NewConnector(pgdriver.WithDSN(testDSN))
 	sqlDB := sql.OpenDB(connector)
 	defer func() { _ = sqlDB.Close() }()
 
@@ -190,7 +192,7 @@ func TestPostgresWithDB_CleanupDoesNotCloseExternalConnection(t *testing.T) {
 }
 
 func TestPostgresWithDB_StoreInterface(t *testing.T) {
-	connector := pgdriver.NewConnector(pgdriver.WithDSN("postgres://user:pass@localhost:5432/testdb?sslmode=disable"))
+	connector := pgdriver.NewConnector(pgdriver.WithDSN(testDSN))
 	sqlDB := sql.OpenDB(connector)
 	defer func() { _ = sqlDB.Close() }()
 

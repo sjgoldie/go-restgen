@@ -199,7 +199,7 @@ func main() {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 
 	// Organization - the tenant entity itself
 	// IsTenantTable: PK = TenantID, so queries filter by WHERE id = tenantID

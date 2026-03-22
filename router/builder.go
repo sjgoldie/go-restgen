@@ -2,15 +2,13 @@ package router
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"reflect"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/schema"
 
+	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/sjgoldie/go-restgen/handler"
 	"github.com/sjgoldie/go-restgen/metadata"
 )
@@ -21,7 +19,6 @@ type NestedFunc func(b *Builder)
 // Builder provides context for registering nested routes and manages the chi router
 type Builder struct {
 	router                  chi.Router             // Chi router being configured
-	db                      *bun.DB                // Database connection for schema introspection
 	parentMeta              *metadata.TypeMetadata // Metadata of the immediate parent (nil for root)
 	parentChildRelationAuth map[string]*AuthConfig // Parent's shared child relation auth map (children add to this via registerChildAuthConfig)
 	parentGetAuth           *AuthConfig            // Parent's GET auth config (for ParentAuth chain on child configs)
@@ -77,12 +74,9 @@ type metadataSetup struct {
 }
 
 // NewBuilder creates a new Builder for registering routes.
-// The db parameter provides access to Bun's schema introspection for resolving
-// field names, column names, table names, and relationships from model types.
-func NewBuilder(r chi.Router, db *bun.DB) *Builder {
+func NewBuilder(r chi.Router) *Builder {
 	return &Builder{
 		router:     r,
-		db:         db,
 		parentMeta: nil,
 	}
 }
@@ -198,7 +192,7 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	urlParamUUID := metadata.GenerateTypeID()
 
 	// Get table name from Bun schema
-	tableName := getTableName(b.db, tType)
+	tableName := datastore.TableName(tType)
 
 	// Check if this type has a parent relationship
 	var parentType reflect.Type
@@ -206,37 +200,37 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 		parentType = b.parentMeta.ModelType
 	}
 
-	var parentRel parentRelation
+	var parentRel datastore.Relation
 	var parentJoinCol string
 	var parentJoinField string
 	if joinOn != nil && b.parentMeta != nil {
 		// WithJoinOn provided — resolve Go field names to column names via Bun schema.
-		childCol, err := columnFromGoName(b.db, tType, joinOn.ChildCol)
+		childCol, err := datastore.ColumnName(tType, joinOn.ChildCol)
 		if err != nil {
 			slog.WarnContext(context.Background(), "WithJoinOn: invalid child field",
 				"type", typeName,
 				"field", joinOn.ChildCol,
 				"error", err)
 		}
-		parentCol, err := columnFromGoName(b.db, b.parentMeta.ModelType, joinOn.ParentCol)
+		parentCol, err := datastore.ColumnName(b.parentMeta.ModelType, joinOn.ParentCol)
 		if err != nil {
 			slog.WarnContext(context.Background(), "WithJoinOn: invalid parent field",
 				"type", typeName,
 				"field", joinOn.ParentCol,
 				"error", err)
 		}
-		parentRel = parentRelation{foreignKeyCol: childCol, parentJoinCol: parentCol}
+		parentRel = datastore.Relation{ForeignKeyCol: childCol, ParentJoinCol: parentCol}
 		parentJoinCol = parentCol
 		parentJoinField = joinOn.ParentCol
 	} else {
 		var err error
-		parentRel, err = findParentRelationshipFromType(b.db, tType, parentType)
+		parentRel, err = datastore.FindRelation(tType, parentType)
 		if err != nil {
 			slog.WarnContext(context.Background(), "could not find parent relationship",
 				"type", typeName,
 				"error", err)
 		}
-		parentJoinCol = parentRel.parentJoinCol
+		parentJoinCol = parentRel.ParentJoinCol
 	}
 
 	// Default parent join column/field to "id"/"ID" for standard FK relationships
@@ -248,7 +242,7 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	}
 
 	// Validate parent relationship
-	validateParentRelationship(b.parentMeta, parentRel.foreignKeyCol, typeName)
+	validateParentRelationship(b.parentMeta, parentRel.ForeignKeyCol, typeName)
 
 	// Determine PK field name - default to "ID" convention
 	if pkField == "" {
@@ -265,7 +259,7 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 		ModelType:       tType,
 		ParentType:      parentType,
 		ParentMeta:      b.parentMeta,
-		ForeignKeyCol:   parentRel.foreignKeyCol,
+		ForeignKeyCol:   parentRel.ForeignKeyCol,
 		ParentJoinCol:   parentJoinCol,
 		ParentJoinField: parentJoinField,
 		ChildMeta:       make(map[string]*metadata.TypeMetadata),
@@ -291,7 +285,7 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 		for _, config := range authMap {
 			if config != nil {
 				config.ParentAuth = b.parentGetAuth
-				config.ParentIncludeName = parentRel.fieldName
+				config.ParentIncludeName = parentRel.FieldName
 			}
 		}
 	}
@@ -530,7 +524,6 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 		if nested != nil && nestedRouter != nil {
 			childBuilder := &Builder{
 				router:                  nestedRouter,
-				db:                      b.db,
 				parentMeta:              meta,
 				parentChildRelationAuth: setup.childRelationAuth,
 				parentGetAuth:           setup.authMap[MethodGet],
@@ -595,85 +588,6 @@ func createParentIDMiddleware(paramUUID string) func(http.Handler) http.Handler 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-// parentRelation holds the results of finding a parent relationship
-type parentRelation struct {
-	foreignKeyCol string // FK column name (e.g., "author_id")
-	parentJoinCol string // Parent join column name (e.g., "id") — right side of join: tag
-	fieldName     string // Struct field name for belongs-to (e.g., "Author")
-}
-
-// findParentRelationshipFromType uses Bun's schema to find the relationship between child and parent.
-// Checks for:
-// 1. Child has belongs-to Parent (e.g., Article belongs-to User) — FK is on child
-// 2. Parent has has-many/has-one Child — extract join columns from parent's relation
-func findParentRelationshipFromType(db *bun.DB, childType reflect.Type, parentType reflect.Type) (parentRelation, error) {
-	if parentType == nil {
-		return parentRelation{}, nil
-	}
-
-	childTable := db.Table(childType)
-
-	// Case 1: child has a belongs-to relation pointing to parent
-	for _, rel := range childTable.Relations {
-		if rel.Type == schema.BelongsToRelation && rel.JoinTable.Type == parentType {
-			if len(rel.BasePKs) > 0 && len(rel.JoinPKs) > 0 {
-				return parentRelation{
-					foreignKeyCol: rel.BasePKs[0].Name,
-					parentJoinCol: rel.JoinPKs[0].Name,
-					fieldName:     rel.Field.GoName,
-				}, nil
-			}
-		}
-	}
-
-	// Case 2: parent has has-many or has-one pointing to child
-	parentTable := db.Table(parentType)
-	for _, rel := range parentTable.Relations {
-		if (rel.Type == schema.HasManyRelation || rel.Type == schema.HasOneRelation) && rel.JoinTable.Type == childType {
-			if len(rel.BasePKs) > 0 && len(rel.JoinPKs) > 0 {
-				return parentRelation{
-					foreignKeyCol: rel.JoinPKs[0].Name,
-					parentJoinCol: rel.BasePKs[0].Name,
-					fieldName:     rel.Field.GoName,
-				}, nil
-			}
-		}
-	}
-
-	// Case 3: parent has belongs-to pointing to child (inverted belongs-to,
-	// e.g., Post.Author belongs-to User — FK author_id is on the parent)
-	for _, rel := range parentTable.Relations {
-		if rel.Type == schema.BelongsToRelation && rel.JoinTable.Type == childType {
-			if len(rel.BasePKs) > 0 && len(rel.JoinPKs) > 0 {
-				return parentRelation{
-					foreignKeyCol: rel.BasePKs[0].Name,
-					parentJoinCol: rel.JoinPKs[0].Name,
-					fieldName:     rel.Field.GoName,
-				}, nil
-			}
-		}
-	}
-
-	return parentRelation{}, fmt.Errorf("no relationship between %s and %s found", childType.Name(), parentType.Name())
-}
-
-// columnFromGoName resolves a Go field name to its SQL column name using Bun's schema.
-func columnFromGoName(db *bun.DB, tType reflect.Type, goName string) (string, error) {
-	table := db.Table(tType)
-	for _, field := range table.Fields {
-		if field.GoName == goName {
-			return field.Name, nil
-		}
-	}
-	return "", fmt.Errorf("field %s not found on type %s", goName, tType.Name())
-}
-
-// getTableName returns the SQL table name for a model type using Bun's schema.
-func getTableName(db *bun.DB, tType reflect.Type) string {
-	table := db.Table(tType)
-	return table.Name
 }
 
 // mergeQueryConfigs applies query configurations to metadata and returns a new copy.

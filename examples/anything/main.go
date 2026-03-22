@@ -207,7 +207,7 @@ func main() {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 
 	// Item-level endpoints and SSE on orders
 	router.RegisterRoutes[Order](b, "/orders",

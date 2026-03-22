@@ -35,7 +35,7 @@ func TestWithSSE_Registration(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -96,7 +96,7 @@ func TestWithSSE_WithAuth(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -150,7 +150,7 @@ func TestWithSSE_Forbidden(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -178,7 +178,7 @@ func TestWithSSE_NotFound(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -226,7 +226,7 @@ func TestWithSSE_WithOwnership(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AuthConfig{
@@ -280,7 +280,7 @@ func TestWithSSE_BlockedByDefault(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -306,7 +306,7 @@ func TestWithSSE_CRUDStillWorks(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -344,7 +344,7 @@ func TestRegisterRootSSE_Success(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRootSSE(b, "/events/system", sseFn, router.AllPublic())
 
@@ -386,7 +386,7 @@ func TestRegisterRootSSE_WithAuth(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	router.RegisterRootSSE(b, "/events/system", sseFn, router.AuthConfig{
 		Methods: []string{router.MethodAll},
 		Scopes:  []string{"admin"},
@@ -427,7 +427,7 @@ func TestRegisterRootSSE_Forbidden(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	router.RegisterRootSSE(b, "/events/system", sseFn, router.AuthConfig{
 		Methods: []string{router.MethodAll},
 		Scopes:  []string{"admin"},

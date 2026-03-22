@@ -560,6 +560,7 @@ func TestService_UpdateByParentRelation(t *testing.T) {
 		TypeName:      "ChildModel",
 		TableName:     "child_models",
 		URLParamUUID:  parentMeta.URLParamUUID,
+		PKField:       "ID",
 		ModelType:     reflect.TypeOf(ChildModel{}),
 		ParentType:    reflect.TypeOf(ParentModel{}),
 		ParentMeta:    parentMeta,

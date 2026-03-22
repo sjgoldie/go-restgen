@@ -80,7 +80,7 @@ func main() {
 	})
 
 	// Register CRUD routes with comprehensive filter/sort/pagination options
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 	router.RegisterRoutes[Product](b, "/products",
 		router.AllPublic(),
 		router.WithFilters("Name", "Category", "Price", "Stock", "Active"),

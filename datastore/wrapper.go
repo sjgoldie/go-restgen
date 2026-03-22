@@ -16,6 +16,7 @@ import (
 	"github.com/uptrace/bun/schema"
 
 	apperrors "github.com/sjgoldie/go-restgen/errors"
+	"github.com/sjgoldie/go-restgen/internal/common"
 	"github.com/sjgoldie/go-restgen/metadata"
 )
 
@@ -654,7 +655,7 @@ func (w *Wrapper[T]) applyParentOwnershipFilter(query *bun.SelectQuery, parentMe
 	// Build WHERE clause for ownership: parent_table.ownership_field = userID
 	// For multiple fields, use OR logic (same as applyOwnershipFilterWithMeta)
 	for i, fieldName := range parentMeta.OwnershipFields {
-		colName, err := w.columnFromGoName(parentType, fieldName)
+		colName, err := ColumnName(parentType, fieldName)
 		if err != nil {
 			continue
 		}
@@ -713,7 +714,7 @@ func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bu
 	// Use ?TableAlias to properly qualify columns when JOINs are present
 	if len(meta.OwnershipFields) == 1 {
 		// Single field - simple WHERE clause
-		colName, err := w.columnFromGoName(itemType, meta.OwnershipFields[0])
+		colName, err := ColumnName(itemType, meta.OwnershipFields[0])
 		if err != nil {
 			return nil, fmt.Errorf("failed to get column name for ownership field: %w", err)
 		}
@@ -721,7 +722,7 @@ func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bu
 	} else {
 		// Multiple fields - OR logic
 		for i, fieldName := range meta.OwnershipFields {
-			colName, err := w.columnFromGoName(itemType, fieldName)
+			colName, err := ColumnName(itemType, fieldName)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get column name for ownership field: %w", err)
 			}
@@ -778,17 +779,6 @@ func (w *Wrapper[T]) setOwnershipField(ctx context.Context, item *T) error {
 	return nil
 }
 
-// columnFromGoName resolves a Go field name to its SQL column name using Bun's schema.
-func (w *Wrapper[T]) columnFromGoName(tType reflect.Type, fieldName string) (string, error) {
-	table := w.Store.GetDB().Table(tType)
-	for _, field := range table.Fields {
-		if field.GoName == fieldName {
-			return field.Name, nil
-		}
-	}
-	return "", fmt.Errorf("field %s not found on type %s", fieldName, tType.Name())
-}
-
 // applyTenantFilter applies tenant scoping to a query if enforced in context.
 // For IsTenantTable types, filters by PK = tenantID.
 // For WithTenantScope types, filters by tenant_field = tenantID.
@@ -819,7 +809,7 @@ func (w *Wrapper[T]) applyTenantFilter(ctx context.Context, query *bun.SelectQue
 		if itemType.Kind() == reflect.Ptr {
 			itemType = itemType.Elem()
 		}
-		colName, err := w.columnFromGoName(itemType, meta.TenantField)
+		colName, err := ColumnName(itemType, meta.TenantField)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get column name for tenant field: %w", err)
 		}
@@ -840,7 +830,7 @@ func (w *Wrapper[T]) applyParentTenantFilter(query *bun.SelectQuery, parentMeta 
 		parentType = parentType.Elem()
 	}
 
-	colName, err := w.columnFromGoName(parentType, parentMeta.TenantField)
+	colName, err := ColumnName(parentType, parentMeta.TenantField)
 	if err != nil {
 		return query
 	}
@@ -996,7 +986,7 @@ func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQue
 			}
 
 			// Get column name
-			colName, err := w.columnFromGoName(meta.ModelType, field)
+			colName, err := ColumnName(meta.ModelType, field)
 			if err != nil {
 				slog.WarnContext(ctx, "sum requested for field with invalid column mapping", "field", field, "type", meta.TypeName, "error", err)
 				continue
@@ -1108,7 +1098,7 @@ func (w *Wrapper[T]) applyQueryFilters(ctx context.Context, query *bun.SelectQue
 			continue
 		}
 
-		colName, err := w.columnFromGoName(meta.ModelType, field)
+		colName, err := ColumnName(meta.ModelType, field)
 		if err != nil {
 			continue
 		}
@@ -1187,7 +1177,7 @@ func (w *Wrapper[T]) applyQuerySorting(query *bun.SelectQuery, opts *metadata.Qu
 				continue // skip invalid sort fields
 			}
 
-			colName, err := w.columnFromGoName(meta.ModelType, sort.Field)
+			colName, err := ColumnName(meta.ModelType, sort.Field)
 			if err != nil {
 				continue
 			}
@@ -1210,7 +1200,7 @@ func (w *Wrapper[T]) applyQuerySorting(query *bun.SelectQuery, opts *metadata.Qu
 			field = field[1:]
 		}
 
-		colName, err := w.columnFromGoName(meta.ModelType, field)
+		colName, err := ColumnName(meta.ModelType, field)
 		if err == nil {
 			if desc {
 				query = query.OrderExpr("?TableAlias.? DESC", bun.Ident(colName))
@@ -1329,12 +1319,23 @@ func (w *Wrapper[T]) GetByParentRelation(ctx context.Context, parentID string) (
 }
 
 // UpdateByParentRelation updates a single item of type T via the parent's foreign key field
-// Fetches the parent, extracts the FK value, then calls normal Update (preserving security checks)
+// Fetches the parent, extracts the FK value, sets it on the item struct (so WherePK targets
+// the correct row), then calls normal Update (preserving security checks).
 func (w *Wrapper[T]) UpdateByParentRelation(ctx context.Context, parentID string, item T) (*T, error) {
 	childID, err := w.resolveChildIDFromParent(ctx, parentID)
 	if err != nil {
 		return nil, err
 	}
+
+	meta, err := metadata.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := common.SetFieldFromString(&item, meta.PKField, childID); err != nil {
+		return nil, fmt.Errorf("failed to set child PK: %w", err)
+	}
+
 	return w.Update(ctx, childID, item)
 }
 
@@ -1719,17 +1720,6 @@ func (w *Wrapper[T]) BatchDelete(ctx context.Context, items []T) error {
 	return err
 }
 
-// extractID extracts the primary key field value from an item as a string.
-// The pkFieldName parameter specifies which field to extract (from metadata.PKField).
-func (w *Wrapper[T]) extractID(item *T, pkFieldName string) string {
-	v := reflect.ValueOf(item).Elem()
-	idField := v.FieldByName(pkFieldName)
-	if !idField.IsValid() {
-		return ""
-	}
-	return fmt.Sprintf("%v", idField.Interface())
-}
-
 // preFetchItems validates and fetches existing items before a batch operation.
 // This validates existence, ownership, and parent chain for each item.
 // For update operations, pass the new item to validation; for delete, pass nil.
@@ -1740,7 +1730,7 @@ func (w *Wrapper[T]) preFetchItems(ctx context.Context, meta *metadata.TypeMetad
 	}
 
 	for i := range items {
-		id := w.extractID(&items[i], meta.PKField)
+		id := common.GetFieldAsString(&items[i], meta.PKField)
 		if id == "" {
 			return nil, fmt.Errorf("item at index %d missing ID", i)
 		}
@@ -1800,7 +1790,7 @@ func (w *Wrapper[T]) applyParentFieldFilter(ctx context.Context, query *bun.Sele
 		return query
 	}
 
-	colName, err := w.columnFromGoName(targetMeta.ModelType, path.field)
+	colName, err := ColumnName(targetMeta.ModelType, path.field)
 	if err != nil {
 		return query
 	}
@@ -1901,7 +1891,7 @@ func (w *Wrapper[T]) applyChildFieldFilter(ctx context.Context, query *bun.Selec
 		return query
 	}
 
-	colName, err := w.columnFromGoName(targetMeta.ModelType, path.field)
+	colName, err := ColumnName(targetMeta.ModelType, path.field)
 	if err != nil {
 		return query
 	}

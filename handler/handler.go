@@ -421,7 +421,7 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 			// Limit request body size to prevent memory exhaustion
 			const maxUploadSize = 32 << 20 // 32 MB
 			r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
-			if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+			if err := r.ParseMultipartForm(maxUploadSize); err != nil { // #nosec G120 -- body already bounded by MaxBytesReader above
 				slog.DebugContext(ctx, "failed to parse multipart form", "error", err)
 				http.Error(w, "bad request: failed to parse multipart form", http.StatusBadRequest)
 				return

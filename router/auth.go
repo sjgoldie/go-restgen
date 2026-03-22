@@ -66,11 +66,10 @@ type OwnershipConfig struct {
 // Last config wins for each method. MethodAll expands to individual methods.
 func mergeAuthConfigs(configs []AuthConfig) map[string]*AuthConfig {
 	result := make(map[string]*AuthConfig)
-	for i := range configs {
-		methods := expandMethods(configs[i].Methods)
+	for _, cfg := range configs {
+		methods := expandMethods(cfg.Methods)
 		for _, method := range methods {
-			// Create a copy to avoid pointer issues
-			configCopy := configs[i]
+			configCopy := cfg
 			result[method] = &configCopy
 		}
 	}

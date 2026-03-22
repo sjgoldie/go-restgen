@@ -329,13 +329,65 @@ router.RegisterRoutes[Author](b, "/authors",
 | Alice + `?include=Posts` | Author + only Alice's posts (ownership filtered) |
 | Admin + `?include=Posts` | Author + all posts (bypass scope) |
 
+### Nested Includes (Dot Notation)
+
+Use dot notation to load deeper relations in a single request:
+
+```bash
+# Load author's posts and each post's comments
+GET /authors/1?include=Posts.Comments
+
+# Multiple nested paths
+GET /authors/1?include=Posts.Comments,Posts.Tags
+```
+
+**Requirements for child includes (downward):**
+- Each level in the chain must have `WithRelationName` configured on its route registration
+- The struct must have matching relation fields (e.g., `Posts []*Post` with `bun:"rel:has-many"`)
+
+```go
+router.RegisterRoutes[Author](b, "/authors",
+    router.AllPublic(),
+    func(b *router.Builder) {
+        router.RegisterRoutes[Post](b, "/posts",
+            router.AllPublic(),
+            router.WithRelationName("Posts"),  // Enables ?include=Posts on Author
+            func(b *router.Builder) {
+                router.RegisterRoutes[Comment](b, "/comments",
+                    router.AllPublic(),
+                    router.WithRelationName("Comments"),  // Enables ?include=Posts.Comments on Author
+                )
+            },
+        )
+    },
+)
+```
+
+**Parent includes (upward)** work automatically from `rel:belongs-to` tags — no `WithRelationName` needed:
+
+```go
+type Post struct {
+    bun.BaseModel `bun:"table:posts"`
+    ID            int     `bun:"id,pk,autoincrement" json:"id"`
+    AuthorID      int     `bun:"author_id,notnull" json:"author_id"`
+    Author        *Author `bun:"rel:belongs-to,join:author_id=id" json:"author,omitempty"`
+    Title         string  `bun:"title" json:"title"`
+}
+
+// GET /posts/1?include=Author  — loads the parent Author automatically
+```
+
+**Auth is cumulative across levels:**
+- **Access (AND):** a deeper level is only reachable if every level above it passes auth
+- **Ownership (OR):** if any level in the chain has ownership configured, ownership filtering applies to the dotted path
+- If a middle level fails auth, everything below it is silently omitted
+
 ### Key Points
 
 - **Relation name must match the struct field** - `WithRelationName("Posts")` maps to `Posts []*Post` field
 - **Unknown relation names are silently ignored** - for security, no error is returned
 - **Works with GET, LIST, and Actions** - `/authors/1?include=Posts`, `/authors?include=Posts`, and `/orders/1/complete?include=Items`
 - **Does not work with Batch operations** - batch create/update return items without relations (reload separately if needed)
-- **Nested includes supported** - use dot notation for deeper relations: `?include=Posts.Comments`
 
 See the [relations example](./examples/relations) for a complete working example.
 
@@ -646,7 +698,7 @@ router.ScopePublic    // "__restgen_public__" - No auth required
 router.ScopeAuthOnly  // "__restgen_auth_only__" - Auth required, no scope check
 
 // Context Key
-router.AuthInfoKey  // "authInfo" - Key for AuthInfo in context
+router.AuthInfoKey  // Typed context key for AuthInfo (use the constant, not the raw string)
 ```
 
 ### Auth Helper Functions
@@ -798,7 +850,23 @@ router.RegisterRoutes[User](b, "/users",
 )
 ```
 
-**Security Note**: Only fields explicitly listed in `WithFilters` and `WithSorts` can be used. Invalid fields are silently ignored.
+Alternatively, use `WithQuery` to configure all query options in a single struct:
+
+```go
+router.RegisterRoutes[User](b, "/users",
+    router.AllPublic(),
+    router.WithQuery(router.QueryConfig{
+        FilterableFields: []string{"Name", "Email", "Status"},
+        SortableFields:   []string{"Name", "Email", "CreatedAt"},
+        SummableFields:   []string{"Score"},
+        DefaultSort:      "-CreatedAt",
+        DefaultLimit:     20,
+        MaxLimit:         100,
+    }),
+)
+```
+
+**Security Note**: Only fields explicitly listed in `WithFilters`/`WithSorts` (or `QueryConfig`) can be used. Invalid fields are silently ignored.
 
 ### Filtering
 
@@ -1416,6 +1484,164 @@ POST /orders/{id}/approve  → approveOrder handler
 | `(nil, nil)` | 204 No Content |
 | `(_, error)` | Error response (400, 404, 500, etc.) |
 
+## Custom Endpoints (Anything Funcs)
+
+go-restgen supports fully custom endpoints that go beyond CRUD and actions. Unlike actions (which are always POST and return `*T`), custom endpoints support **any HTTP method** and can return **any type** with an explicit status code. There are also SSE (Server-Sent Events) variants for streaming.
+
+### Item-Level Endpoints (`WithEndpoint`)
+
+Item-level endpoints are mounted at `METHOD /resource/{id}/{name}`. The framework pre-fetches the item (validating existence, parent chain, and ownership), then passes it to your handler.
+
+```go
+// Handler signature: receives the pre-fetched item, returns any type + status code
+func getWorkflowStatus(
+    ctx context.Context,
+    svc *service.Common[Order],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    item *Order,
+    payload []byte,
+) (any, int, error) {
+    return &WorkflowStatus{
+        OrderID: id,
+        State:   item.Status,
+    }, http.StatusOK, nil
+}
+
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllPublic(),
+    router.WithEndpoint("GET", "wf-status", getWorkflowStatus, router.AuthConfig{
+        Scopes: []string{router.ScopePublic},
+    }),
+    router.WithEndpoint("POST", "pay", processPayment, router.AuthConfig{
+        Scopes: []string{"user"},
+    }),
+)
+```
+
+Generated endpoints:
+```
+GET  /orders/{id}/wf-status  → getWorkflowStatus handler
+POST /orders/{id}/pay        → processPayment handler
+```
+
+### Root-Level Endpoints (`RegisterRootEndpoint`)
+
+Root endpoints have no parent model — they receive the raw `*http.Request` for maximum flexibility. Registered directly on the builder, not inside `RegisterRoutes`.
+
+```go
+// Handler signature: raw request access, returns any type + status code
+func getSystemInfo(
+    ctx context.Context,
+    auth *metadata.AuthInfo,
+    r *http.Request,
+) (any, int, error) {
+    return &SystemInfo{Version: "1.0.0"}, http.StatusOK, nil
+}
+
+router.RegisterRootEndpoint(b, "GET", "/system/info", getSystemInfo, router.AllPublic())
+router.RegisterRootEndpoint(b, "POST", "/webhooks/notify", handleWebhook, router.AllScoped("admin"))
+```
+
+### Item-Level SSE (`WithSSE`)
+
+SSE endpoints stream events to the client. The framework handles all SSE protocol details (headers, event formatting, flushing, client disconnect). Always registered as GET.
+
+```go
+// Handler signature: write SSEEvent structs to the channel, return when done
+func streamOrderEvents(
+    ctx context.Context,
+    svc *service.Common[Order],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    item *Order,
+    events chan<- handler.SSEEvent,
+) error {
+    events <- handler.SSEEvent{
+        Event: "status",
+        Data:  map[string]string{"order_id": id, "state": item.Status},
+        ID:    "1",
+    }
+    return nil
+}
+
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllPublic(),
+    router.WithSSE("events", streamOrderEvents, router.AuthConfig{
+        Scopes: []string{router.ScopePublic},
+    }),
+)
+```
+
+Generated endpoint: `GET /orders/{id}/events`
+
+### Root-Level SSE (`RegisterRootSSE`)
+
+Root SSE endpoints have no parent model. Always registered as GET.
+
+```go
+func streamSystemEvents(
+    ctx context.Context,
+    auth *metadata.AuthInfo,
+    r *http.Request,
+    events chan<- handler.SSEEvent,
+) error {
+    events <- handler.SSEEvent{
+        Event: "heartbeat",
+        Data:  map[string]string{"status": "ok"},
+    }
+    return nil
+}
+
+router.RegisterRootSSE(b, "/events/system", streamSystemEvents, router.AllPublic())
+```
+
+### SSEEvent
+
+The `handler.SSEEvent` struct controls the event format:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Event` | `string` | Event type (omitted if empty) |
+| `Data` | `any` | Event data, JSON-encoded by the framework |
+| `ID` | `string` | Event ID (omitted if empty) |
+
+### Response Handling
+
+| Handler Returns | HTTP Response |
+|----------------|---------------|
+| `(result, statusCode, nil)` | Status code + JSON body |
+| `(result, 0, nil)` | 200 OK + JSON body (0 defaults to 200) |
+| `(nil, _, nil)` | 204 No Content |
+| `(_, _, error)` | Error response (400, 404, 500, etc.) |
+
+### Auth Per Endpoint
+
+Each endpoint and SSE stream has its own auth configuration, independent of the parent route's CRUD auth:
+
+```go
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllPublic(),  // CRUD is public
+    router.WithEndpoint("GET", "wf-status", getWorkflowStatus, router.AuthConfig{
+        Scopes: []string{router.ScopePublic},
+    }),
+    router.WithEndpoint("POST", "pay", processPayment, router.AuthConfig{
+        Scopes: []string{"user"},
+        Ownership: &router.OwnershipConfig{
+            Fields:       []string{"CustomerID"},
+            BypassScopes: []string{"admin"},
+        },
+    }),
+    router.WithSSE("events", streamOrderEvents, router.AuthConfig{
+        Scopes: []string{router.ScopeAuthOnly},
+    }),
+)
+```
+
+See the [anything funcs example](./examples/anything) for a complete working example with all four endpoint types.
+
 ## Batch Operations
 
 go-restgen supports batch create, update, and delete operations via `/resource/batch` endpoints. Batch operations run in a transaction for all-or-nothing semantics.
@@ -1590,7 +1816,7 @@ type Image struct {
     ID            int       `bun:"id,pk,autoincrement" json:"id"`
     PostID        int       `bun:"post_id,notnull" json:"post_id"`
     Post          *Post     `bun:"rel:belongs-to,join:post_id=id" json:"-"`
-    filestore.FileFields    // Embeds StorageKey, Filename, ContentType, Size, DownloadURL
+    filestore.FileFields    // Embeds StorageKey, Filename, ContentType, Size
     AltText       string    `bun:"alt_text" json:"alt_text,omitempty"`
     CreatedAt     time.Time `bun:"created_at,notnull" json:"created_at"`
 }
@@ -1601,7 +1827,6 @@ type Image struct {
 - `Filename` - Original filename from upload
 - `ContentType` - MIME type of the file
 - `Size` - File size in bytes
-- `DownloadURL` - Generated URL for downloading (populated at response time)
 
 ### Implementing Storage
 
@@ -1719,7 +1944,7 @@ router.RegisterRoutes[Post](b, "/posts",
 - `GET /posts/{id}/images/{id}/download` - Download file (streams through server)
 - `DELETE /posts/{id}/images/{id}` - Delete file
 
-**Signed URL mode** generates the same endpoints except no `/download` endpoint. The `download_url` in responses points directly to storage.
+**Signed URL mode** generates the same endpoints. The `/download` endpoint redirects (307) to the signed URL instead of streaming.
 
 ### Uploading Files
 
@@ -1731,7 +1956,7 @@ curl -X POST http://localhost:8080/posts/1/images \
   -F 'metadata={"alt_text":"A beautiful photo"}'
 ```
 
-Response includes the generated download URL:
+Response includes file metadata:
 
 ```json
 {
@@ -1740,11 +1965,12 @@ Response includes the generated download URL:
     "filename": "photo.jpg",
     "content_type": "image/jpeg",
     "size": 12345,
-    "download_url": "/posts/1/images/1/download",
     "alt_text": "A beautiful photo",
     "created_at": "2025-01-01T00:00:00Z"
 }
 ```
+
+To download the file, use the `/download` endpoint (proxy mode) or get a redirect to the signed URL.
 
 ### Proxy vs Signed URL Mode
 
@@ -1752,8 +1978,8 @@ The mode is determined by your `GenerateSignedURL` implementation:
 
 | Feature | Proxy Mode (`return ""`) | Signed URL Mode (`return url`) |
 |---------|--------------------------|--------------------------------|
-| Download endpoint | `/resource/{id}/download` | Direct URL to storage |
-| Server load | All downloads through server | Minimal (only metadata) |
+| Download endpoint | `/resource/{id}/download` streams file | `/resource/{id}/download` redirects (307) to signed URL |
+| Server load | All downloads through server | Minimal (only metadata + redirect) |
 | Auth on download | Full control | URL is the auth (time-limited in production) |
 | Best for | Small files, strict auth | Large files, CDN, S3/Minio |
 
@@ -1946,6 +2172,13 @@ metrics.RecordCustom(ctx, "Order", "cancel", 200, 45.2)
 
 If OTEL is not configured, metrics are no-ops with negligible overhead.
 
+**Direct access to metric instruments** (for testing or custom dashboards):
+
+```go
+histogram := metrics.GetRequestDuration()  // metric.Float64Histogram
+counter := metrics.GetRequestCount()       // metric.Int64Counter
+```
+
 ### Mix with Custom Handlers
 
 ```go
@@ -1990,6 +2223,7 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[File Upload (Proxy)](./examples/files_proxy)** - File upload/download with proxy mode (files stream through server)
 - **[File Upload (Signed URL)](./examples/files_signed)** - File upload/download with signed URL mode (direct to storage)
 - **[Action Endpoints](./examples/actions)** - Custom actions on resources (cancel, complete)
+- **[Custom Endpoints / Anything Funcs](./examples/anything)** - Custom endpoints with any HTTP method and return type, plus SSE streaming
 - **[Batch Operations](./examples/batch)** - Bulk create, update, and delete operations
 - **[Custom Handlers](./examples/custom)** - Override default CRUD behavior with custom handler functions
 - **[Custom Join Columns](./examples/custom_join)** - Non-FK relationships using `WithJoinOn` for shared attribute joins

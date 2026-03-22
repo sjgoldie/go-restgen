@@ -146,7 +146,31 @@ router.RegisterRoutes[Model](builder, "/path",
 
     // Custom actions
     router.WithAction("publish", publishFn, router.AuthConfig{Scopes: []string{"user"}}),
+
+    // Custom endpoints (any HTTP method, any return type)
+    router.WithEndpoint("GET", "wf-status", getWorkflowStatusFn, router.AuthConfig{Scopes: []string{router.ScopePublic}}),
+    router.WithEndpoint("POST", "pay", processPaymentFn, router.AuthConfig{Scopes: []string{"user"}}),
+
+    // SSE endpoints (item-level, always GET)
+    router.WithSSE("events", streamEventsFn, router.AuthConfig{Scopes: []string{router.ScopePublic}}),
+
+    // Query shorthand (alternative to individual WithFilters/WithSorts/etc)
+    router.WithQuery(router.QueryConfig{
+        FilterableFields: []string{"Status", "Name"},
+        SortableFields:   []string{"Name", "CreatedAt"},
+        SummableFields:   []string{"Price"},
+        DefaultSort:      "-CreatedAt",
+        DefaultLimit:     20,
+        MaxLimit:         100,
+    }),
 )
+
+// Root-level endpoints (no parent model, registered outside RegisterRoutes)
+router.RegisterRootEndpoint(b, "GET", "/system/info", getSystemInfoFn, router.AllPublic())
+router.RegisterRootEndpoint(b, "POST", "/webhooks/notify", handleWebhookFn, router.AllScoped("admin"))
+
+// Root-level SSE (no parent model, always GET)
+router.RegisterRootSSE(b, "/events/system", streamSystemEventsFn, router.AllPublic())
 ```
 
 ## Pattern: Nested Resources
@@ -397,6 +421,87 @@ router.RegisterRoutes[Post](b, "/posts",
 
 URL: `POST /posts/{id}/publish`
 
+## Pattern: Custom Endpoints (Anything Funcs)
+
+Custom endpoints support any HTTP method and any return type. SSE variants stream events.
+
+```go
+// Item-level endpoint: METHOD /resource/{id}/{name}
+// Handler signature: EndpointHandler[T]
+func getWorkflowStatus(
+    ctx context.Context,
+    svc *service.Common[Order],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    item *Order,       // pre-fetched by framework
+    payload []byte,    // raw request body
+) (any, int, error) { // any return type + status code
+    return &WorkflowStatus{OrderID: id, State: item.Status}, http.StatusOK, nil
+}
+
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllPublic(),
+    router.WithEndpoint("GET", "wf-status", getWorkflowStatus, router.AuthConfig{
+        Scopes: []string{router.ScopePublic},
+    }),
+)
+// URL: GET /orders/{id}/wf-status
+
+// Root-level endpoint: METHOD /any/path (no parent model)
+// Handler signature: RootEndpointHandler
+func getSystemInfo(
+    ctx context.Context,
+    auth *metadata.AuthInfo,
+    r *http.Request,   // full request access
+) (any, int, error) {
+    return &SystemInfo{Version: "1.0.0"}, http.StatusOK, nil
+}
+
+router.RegisterRootEndpoint(b, "GET", "/system/info", getSystemInfo, router.AllPublic())
+
+// Item-level SSE: GET /resource/{id}/{name}
+// Handler signature: SSEFunc[T]
+func streamOrderEvents(
+    ctx context.Context,
+    svc *service.Common[Order],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    item *Order,
+    events chan<- handler.SSEEvent,
+) error {
+    events <- handler.SSEEvent{Event: "status", Data: map[string]string{"state": item.Status}, ID: "1"}
+    return nil
+}
+
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllPublic(),
+    router.WithSSE("events", streamOrderEvents, router.AuthConfig{
+        Scopes: []string{router.ScopePublic},
+    }),
+)
+// URL: GET /orders/{id}/events
+
+// Root-level SSE: GET /any/path (no parent model)
+// Handler signature: RootSSEFunc
+func streamSystemEvents(
+    ctx context.Context,
+    auth *metadata.AuthInfo,
+    r *http.Request,
+    events chan<- handler.SSEEvent,
+) error {
+    events <- handler.SSEEvent{Event: "heartbeat", Data: map[string]string{"status": "ok"}}
+    return nil
+}
+
+router.RegisterRootSSE(b, "/events/system", streamSystemEvents, router.AllPublic())
+```
+
+**SSEEvent fields:** `Event` (string, optional), `Data` (any, JSON-encoded), `ID` (string, optional).
+
+**Response:** `(result, statusCode, nil)` → JSON + status code. `(nil, _, nil)` → 204. Status `0` defaults to `200`.
+
 ## Query Parameters
 
 Built-in support on GetAll endpoints:
@@ -417,6 +522,12 @@ Built-in support on GetAll endpoints:
 - `nin` - Not in list: `?filter[Status][nin]=deleted,archived`
 - `bt` - Between (inclusive): `?filter[Age][bt]=18,65`
 - `nbt` - Not between: `?filter[Price][nbt]=100,500`
+
+**Nested includes (dot notation):**
+- Child direction: `?include=Posts.Comments` — each level needs `WithRelationName` on its route
+- Parent direction: `?include=Author` — auto-derived from `rel:belongs-to` tags, no `WithRelationName` needed
+- Auth is cumulative AND (deeper levels blocked if parent fails), ownership is cumulative OR
+- Middle-level auth failure silently omits everything below
 
 ## Error Handling
 

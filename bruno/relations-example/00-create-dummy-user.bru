@@ -1,0 +1,29 @@
+meta {
+  name: Create Dummy User (offset auto-increment)
+  type: http
+  seq: 0
+}
+
+post {
+  url: {{baseUrl}}/users
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "external_id": "dummy",
+    "name": "Dummy User",
+    "email": "dummy@example.com"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+}
+
+docs {
+  Creates a dummy user so auto-increment user IDs diverge from post IDs.
+  This exposes bugs where parent URL IDs are incorrectly used as child PKs.
+}

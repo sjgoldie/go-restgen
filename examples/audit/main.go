@@ -139,7 +139,7 @@ func main() {
 	})
 
 	// Register Job routes with audit
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 	router.RegisterRoutes[Job](b, "/jobs",
 		router.AllPublic(),
 		router.WithFilters("Status", "Priority"),

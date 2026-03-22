@@ -115,7 +115,7 @@ func main() {
 	})
 
 	// Register routes
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 
 	// Posts with nested images
 	router.RegisterRoutes[Post](b, "/posts",

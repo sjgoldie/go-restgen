@@ -94,7 +94,7 @@ func TestWithEndpoint_Registration(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -140,7 +140,7 @@ func TestWithEndpoint_DifferentHTTPMethods(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -195,7 +195,7 @@ func TestWithEndpoint_WithAuth(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -244,7 +244,7 @@ func TestWithEndpoint_Forbidden(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -267,7 +267,7 @@ func TestWithEndpoint_CRUDStillWorks(t *testing.T) {
 	cleanFuncTestTable(t)
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -311,7 +311,7 @@ func TestWithEndpoint_NotFound(t *testing.T) {
 	cleanFuncTestTable(t)
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -357,7 +357,7 @@ func TestRegisterRootEndpoint_Success(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRootEndpoint(b, "GET", "/health", healthFn, router.AllPublic())
 
@@ -397,7 +397,7 @@ func TestRegisterRootEndpoint_WithAuth(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	router.RegisterRootEndpoint(b, "POST", "/webhooks/stripe", webhookFn, router.AuthConfig{
 		Methods: []string{router.MethodAll},
 		Scopes:  []string{"admin"},
@@ -448,7 +448,7 @@ func TestWithEndpoint_WithOwnership(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AuthConfig{
@@ -497,7 +497,7 @@ func TestWithEndpoint_BlockedByDefault(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[FuncTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -527,7 +527,7 @@ func TestRegisterRootEndpoint_Forbidden(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	router.RegisterRootEndpoint(b, "POST", "/webhooks/stripe", webhookFn, router.AuthConfig{
 		Methods: []string{router.MethodAll},
 		Scopes:  []string{"admin"},
@@ -548,7 +548,7 @@ func TestRegisterRootEndpoint_NoContent(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRootEndpoint(b, "POST", "/webhooks/test", webhookFn, router.AllPublic())
 

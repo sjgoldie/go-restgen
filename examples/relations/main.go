@@ -139,20 +139,28 @@ func authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// getMe is a custom get function that returns a hardcoded user
-// Used for /me endpoint where there's no parent FK - the ID comes from custom logic
+// getMe is a custom get function that returns the authenticated user
+// Used for /me endpoint where there's no parent FK - the ID comes from auth context
 func getMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string) (*User, error) {
-	// In a real app, you'd look up the user ID from auth context
-	// For this example, we just return user with ID "1"
-	return svc.Get(ctx, "1")
+	db, _ := datastore.Get()
+	var user User
+	err := db.GetDB().NewSelect().Model(&user).Where("external_id = ?", auth.UserID).Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
 }
 
-// updateMe is a custom update function that updates the hardcoded user
+// updateMe is a custom update function that updates the authenticated user
 func updateMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string, item User) (*User, error) {
-	// In a real app, you'd look up the user ID from auth context
-	// For this example, we just update user with ID 1
-	item.ID = 1
-	return svc.Update(ctx, "1", item)
+	db, _ := datastore.Get()
+	var user User
+	err := db.GetDB().NewSelect().Model(&user).Where("external_id = ?", auth.UserID).Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	item.ID = user.ID
+	return svc.Update(ctx, fmt.Sprintf("%d", user.ID), item)
 }
 
 func main() {
@@ -193,7 +201,7 @@ func main() {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 
 	// Users - public access
 	router.RegisterRoutes[User](b, "/users",

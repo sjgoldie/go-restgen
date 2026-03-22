@@ -274,7 +274,7 @@ func main() {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 
 	// Article - public reads, requires "publisher" scope for writes
 	router.RegisterRoutes[Article](b, "/articles",

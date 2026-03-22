@@ -2,38 +2,20 @@ package router
 
 import (
 	"context"
-	"database/sql"
 	"io"
-	"reflect"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/sqlitedialect"
-	_ "github.com/uptrace/bun/driver/sqliteshim"
 
 	"github.com/sjgoldie/go-restgen/filestore"
 	"github.com/sjgoldie/go-restgen/metadata"
 )
 
-func testDB(t *testing.T) *bun.DB {
-	t.Helper()
-	sqlDB, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = sqlDB.Close() })
-	return bun.NewDB(sqlDB, sqlitedialect.New())
-}
-
 const testFieldName = "Name"
-const testAuthorIDCol = "author_id"
 
-// testModel is a simple model for testing route registration
 type testModel struct {
-	bun.BaseModel `bun:"table:test_models"`
-	ID            int    `bun:"id,pk,autoincrement" json:"id"`
-	Name          string `bun:"name" json:"name"`
+	ID   int    `json:"id"`
+	Name string `json:"name"`
 }
 
 func TestMergeQueryConfigs(t *testing.T) {
@@ -177,130 +159,6 @@ func TestMergeQueryConfigs(t *testing.T) {
 	})
 }
 
-type columnFromGoNameTestModel struct {
-	bun.BaseModel `bun:"table:test_ftc"`
-	ID            int    `bun:"id,pk,autoincrement"`
-	NMI           string `bun:"nmi,notnull"`
-	AuthorID      int    `bun:"author_id,notnull"`
-}
-
-func TestColumnFromGoName(t *testing.T) {
-	db := testDB(t)
-	tType := reflect.TypeOf(columnFromGoNameTestModel{})
-
-	t.Run("standard field", func(t *testing.T) {
-		col, err := columnFromGoName(db, tType, "AuthorID")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if col != testAuthorIDCol {
-			t.Errorf("expected 'author_id', got '%s'", col)
-		}
-	})
-
-	t.Run("acronym field", func(t *testing.T) {
-		col, err := columnFromGoName(db, tType, "NMI")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if col != "nmi" {
-			t.Errorf("expected 'nmi', got '%s'", col)
-		}
-	})
-
-	t.Run("pk field", func(t *testing.T) {
-		col, err := columnFromGoName(db, tType, "ID")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if col != "id" {
-			t.Errorf("expected 'id', got '%s'", col)
-		}
-	})
-
-	t.Run("field not found", func(t *testing.T) {
-		_, err := columnFromGoName(db, tType, "Nonexistent")
-		if err == nil {
-			t.Fatal("expected error for nonexistent field")
-		}
-	})
-}
-
-// Models for testing findParentRelationshipFromType — inverted belongs-to case
-// (parent has belongs-to pointing to child, e.g., Post.Author belongs-to User)
-type parentRelUser struct {
-	bun.BaseModel `bun:"table:parent_rel_users"`
-	ID            int    `bun:"id,pk,autoincrement"`
-	Name          string `bun:"name"`
-}
-
-type parentRelPost struct {
-	bun.BaseModel `bun:"table:parent_rel_posts"`
-	ID            int            `bun:"id,pk,autoincrement"`
-	AuthorID      int            `bun:"author_id,notnull"`
-	Author        *parentRelUser `bun:"rel:belongs-to,join:author_id=id"`
-	Title         string         `bun:"title"`
-}
-
-func TestFindParentRelationshipFromType(t *testing.T) {
-	db := testDB(t)
-	userType := reflect.TypeOf(parentRelUser{})
-	postType := reflect.TypeOf(parentRelPost{})
-
-	t.Run("child belongs-to parent", func(t *testing.T) {
-		// Post belongs-to User (standard case: FK author_id is on Post)
-		rel, err := findParentRelationshipFromType(db, postType, userType)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if rel.foreignKeyCol != testAuthorIDCol {
-			t.Errorf("expected foreignKeyCol 'author_id', got %q", rel.foreignKeyCol)
-		}
-		if rel.parentJoinCol != "id" {
-			t.Errorf("expected parentJoinCol 'id', got %q", rel.parentJoinCol)
-		}
-		if rel.fieldName != "Author" {
-			t.Errorf("expected fieldName 'Author', got %q", rel.fieldName)
-		}
-	})
-
-	t.Run("parent belongs-to child (inverted)", func(t *testing.T) {
-		// User registered as child of Post — Post.Author belongs-to User
-		// FK author_id is on the parent (Post), not on the child (User)
-		rel, err := findParentRelationshipFromType(db, userType, postType)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if rel.foreignKeyCol != testAuthorIDCol {
-			t.Errorf("expected foreignKeyCol 'author_id', got %q", rel.foreignKeyCol)
-		}
-		if rel.parentJoinCol != "id" {
-			t.Errorf("expected parentJoinCol 'id', got %q", rel.parentJoinCol)
-		}
-		if rel.fieldName != "Author" {
-			t.Errorf("expected fieldName 'Author', got %q", rel.fieldName)
-		}
-	})
-
-	t.Run("no relationship", func(t *testing.T) {
-		unrelatedType := reflect.TypeOf(testModel{})
-		_, err := findParentRelationshipFromType(db, unrelatedType, userType)
-		if err == nil {
-			t.Fatal("expected error for unrelated types")
-		}
-	})
-
-	t.Run("nil parent returns empty", func(t *testing.T) {
-		rel, err := findParentRelationshipFromType(db, postType, nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if rel.foreignKeyCol != "" {
-			t.Errorf("expected empty foreignKeyCol, got %q", rel.foreignKeyCol)
-		}
-	})
-}
-
 func TestRegisterChildAuthConfig(t *testing.T) {
 	t.Run("empty relationName does nothing", func(t *testing.T) {
 		sharedMap := make(map[string]*AuthConfig)
@@ -398,7 +256,7 @@ func TestSharedChildRelationAuth(t *testing.T) {
 		// This test verifies that when we use AllPublicWithBatch and register child routes,
 		// the batch auth configs have access to the same ChildAuth map as regular GET/LIST configs
 		r := chi.NewRouter()
-		b := NewBuilder(r, testDB(t))
+		b := NewBuilder(r)
 
 		// We need to capture the auth configs to verify they share the same ChildAuth
 		// Since we can't easily access them after registration, we'll verify the behavior
@@ -489,7 +347,7 @@ func TestFileResourceRegistration(t *testing.T) {
 		}
 
 		r := chi.NewRouter()
-		b := NewBuilder(r, testDB(t))
+		b := NewBuilder(r)
 		RegisterRoutes[testModel](b, "/test", AsFileResource())
 	})
 }

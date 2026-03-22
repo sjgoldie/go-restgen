@@ -225,7 +225,7 @@ type UsageData struct {
     Reading       int    `bun:"reading" json:"reading"`
 }
 
-b := router.NewBuilder(r, db.GetDB())
+b := router.NewBuilder(r)
 router.RegisterRoutes[Site](b, "/sites", router.AllPublic(), func(b *router.Builder) {
     router.RegisterRoutes[UsageData](b, "/usage",
         router.AllPublic(),
@@ -711,7 +711,7 @@ type Task struct {
 ### Registering Routes
 
 ```go
-b := router.NewBuilder(r, db.GetDB())
+b := router.NewBuilder(r)
 
 // Tenant entity: PK = tenant ID, filtered by WHERE id = tenantID
 router.RegisterRoutes[Organization](b, "/organizations",
@@ -935,7 +935,7 @@ type Item struct {
     Name          string `bun:"name" json:"name"`
 }
 
-b := router.NewBuilder(r, db.GetDB())
+b := router.NewBuilder(r)
 
 // Root registration - public read, admin write
 router.RegisterRoutes[Item](b, "/items",
@@ -1696,7 +1696,7 @@ if err := filestore.Initialize(storage); err != nil {
 }
 
 // Register parent with nested file resource
-b := router.NewBuilder(r, db.GetDB())
+b := router.NewBuilder(r)
 router.RegisterRoutes[Post](b, "/posts",
     router.AllPublic(),
     func(b *router.Builder) {
@@ -1950,7 +1950,7 @@ If OTEL is not configured, metrics are no-ops with negligible overhead.
 
 ```go
 // Register standard CRUD
-b := router.NewBuilder(r, db.GetDB())
+b := router.NewBuilder(r)
 router.RegisterRoutes[User](b, "/users", router.AllPublic())
 
 // Add custom endpoints

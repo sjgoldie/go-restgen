@@ -117,7 +117,7 @@ func main() {
 
 	// Register CRUD routes with UUID primary keys
 	// Blogs are the parent resource, Posts are nested under blogs
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 	router.RegisterRoutes[Blog](b, "/blogs",
 		router.AllPublic(),
 		router.WithFilters("Name"),

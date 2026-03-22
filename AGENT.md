@@ -63,7 +63,7 @@ func main() {
         w.Write([]byte("OK"))
     })
 
-    b := router.NewBuilder(r, db.GetDB())
+    b := router.NewBuilder(r)
     router.RegisterRoutes[User](b, "/users", router.AllPublic())
 
     log.Fatal(http.ListenAndServe(":8080", r))
@@ -165,7 +165,7 @@ type Post struct {
     Title         string `bun:"title,notnull" json:"title"`
 }
 
-b := router.NewBuilder(r, db.GetDB())
+b := router.NewBuilder(r)
 router.RegisterRoutes[Blog](b, "/blogs", router.AllPublic(), func(b *router.Builder) {
     router.RegisterRoutes[Post](b, "/posts", router.AllPublic())
 })

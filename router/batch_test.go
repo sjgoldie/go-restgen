@@ -46,7 +46,7 @@ func TestBatch_AllPublicWithBatch(t *testing.T) {
 	setupBatchTestTable(t)
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	router.RegisterRoutes[BatchTestItem](b, "/items",
 		router.AllPublicWithBatch(),
 	)
@@ -66,7 +66,7 @@ func TestBatch_AllScopedWithBatch(t *testing.T) {
 	setupBatchTestTable(t)
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	router.RegisterRoutes[BatchTestItem](b, "/items",
 		router.AllScopedWithBatch("admin"),
 	)
@@ -101,7 +101,7 @@ func TestBatch_WithBatchLimit(t *testing.T) {
 	setupBatchTestTable(t)
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	router.RegisterRoutes[BatchTestItem](b, "/items",
 		router.AllPublicWithBatch(),
 		router.WithBatchLimit(2),
@@ -142,7 +142,7 @@ func TestBatch_CustomBatchCreate(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	router.RegisterRoutes[BatchTestItem](b, "/items",
 		router.AllPublicWithBatch(),
 		router.WithCustomBatchCreate(customFn),
@@ -178,7 +178,7 @@ func TestBatch_CustomBatchUpdate(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	router.RegisterRoutes[BatchTestItem](b, "/items",
 		router.AllPublicWithBatch(),
 		router.WithCustomBatchUpdate(customFn),
@@ -227,7 +227,7 @@ func TestBatch_CustomBatchDelete(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	router.RegisterRoutes[BatchTestItem](b, "/items",
 		router.AllPublicWithBatch(),
 		router.WithCustomBatchDelete(customFn),
@@ -270,7 +270,7 @@ func TestBatch_NoBatchMethodsNoRoutes(t *testing.T) {
 	setupBatchTestTable(t)
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	// Only AllPublic, no batch methods
 	router.RegisterRoutes[BatchTestItem](b, "/items",
 		router.AllPublic(),
@@ -293,7 +293,7 @@ func TestBatch_PartialBatchMethods(t *testing.T) {
 	setupBatchTestTable(t)
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	// Only batch create, not update or delete
 	router.RegisterRoutes[BatchTestItem](b, "/items",
 		router.AllPublic(),

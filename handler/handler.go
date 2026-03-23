@@ -446,7 +446,7 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 				defer func() { _ = formFile.Close() }()
 				file = formFile
 				fileMeta = filestore.FileMetadata{
-					Filename:    header.Filename,
+					Filename:    sanitizeFilename(header.Filename),
 					ContentType: header.Header.Get("Content-Type"),
 					Size:        header.Size,
 				}
@@ -626,7 +626,7 @@ func Download[T any]() http.HandlerFunc {
 			w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
 		}
 		if result.Filename != "" {
-			w.Header().Set("Content-Disposition", "attachment; filename=\""+result.Filename+"\"")
+			w.Header().Set("Content-Disposition", contentDisposition(result.Filename))
 		}
 
 		w.WriteHeader(http.StatusOK)

@@ -2387,7 +2387,7 @@ func TestDownload_WithContentLength(t *testing.T) {
 
 	// Check Content-Disposition header
 	contentDisposition := w.Header().Get("Content-Disposition")
-	if contentDisposition != `attachment; filename="test.txt"` {
+	if contentDisposition != `attachment; filename=test.txt` {
 		t.Errorf("Expected Content-Disposition header, got '%s'", contentDisposition)
 	}
 }

@@ -111,6 +111,7 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 	var joinOn *JoinOnConfig
 	var tenantField string
 	var isTenantTable bool
+	var maxBodySize int64
 
 	for _, opt := range options {
 		switch v := opt.(type) {
@@ -160,17 +161,19 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			tenantField = v.Field
 		case TenantTableConfig:
 			isTenantTable = true
+		case MaxBodySizeConfig:
+			maxBodySize = v.Size
 		case func(*Builder):
 			nested = v
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, endpoints, sses, relationName, singleRoute, isFileResource, pkField, joinOn, tenantField, isTenantTable)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, endpoints, sses, relationName, singleRoute, isFileResource, pkField, joinOn, tenantField, isTenantTable, maxBodySize)
 }
 
 // prepareMetadata assembles type metadata and auth configuration before route registration.
 // This extracts the setup phase from registerRoutesWithBuilder to reduce cyclomatic complexity.
-func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool) (string, *metadataSetup) {
+func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool, maxBodySize int64) (string, *metadataSetup) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -194,52 +197,8 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	// Get table name from Bun schema
 	tableName := datastore.TableName(tType)
 
-	// Check if this type has a parent relationship
-	var parentType reflect.Type
-	if b.parentMeta != nil {
-		parentType = b.parentMeta.ModelType
-	}
-
-	var parentRel datastore.Relation
-	var parentJoinCol string
-	var parentJoinField string
-	if joinOn != nil && b.parentMeta != nil {
-		// WithJoinOn provided — resolve Go field names to column names via Bun schema.
-		childCol, err := datastore.ColumnName(tType, joinOn.ChildCol)
-		if err != nil {
-			slog.WarnContext(context.Background(), "WithJoinOn: invalid child field",
-				"type", typeName,
-				"field", joinOn.ChildCol,
-				"error", err)
-		}
-		parentCol, err := datastore.ColumnName(b.parentMeta.ModelType, joinOn.ParentCol)
-		if err != nil {
-			slog.WarnContext(context.Background(), "WithJoinOn: invalid parent field",
-				"type", typeName,
-				"field", joinOn.ParentCol,
-				"error", err)
-		}
-		parentRel = datastore.Relation{ForeignKeyCol: childCol, ParentJoinCol: parentCol}
-		parentJoinCol = parentCol
-		parentJoinField = joinOn.ParentCol
-	} else {
-		var err error
-		parentRel, err = datastore.FindRelation(tType, parentType)
-		if err != nil {
-			slog.WarnContext(context.Background(), "could not find parent relationship",
-				"type", typeName,
-				"error", err)
-		}
-		parentJoinCol = parentRel.ParentJoinCol
-	}
-
-	// Default parent join column/field to "id"/"ID" for standard FK relationships
-	if parentJoinCol == "" {
-		parentJoinCol = "id"
-	}
-	if parentJoinField == "" {
-		parentJoinField = "ID"
-	}
+	// Resolve parent relationship
+	parentType, parentRel, parentJoinCol, parentJoinField := resolveParentRelationship(b.parentMeta, tType, typeName, joinOn)
 
 	// Validate parent relationship
 	validateParentRelationship(b.parentMeta, parentRel.ForeignKeyCol, typeName)
@@ -345,6 +304,13 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 		meta.BatchLimit = batchLimit
 	}
 
+	// Set max body size — explicit default, no magic zero
+	if maxBodySize > 0 {
+		meta.MaxBodySize = maxBodySize
+	} else {
+		meta.MaxBodySize = metadata.DefaultMaxBodySize
+	}
+
 	// Create middleware to inject metadata into context
 	metadataMiddleware := createMetadataMiddleware(meta)
 
@@ -357,8 +323,8 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool) {
-	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, isTenantTable)
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool, maxBodySize int64) {
+	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, isTenantTable, maxBodySize)
 	meta := setup.meta
 	authMap := setup.authMap
 	metadataMiddleware := setup.metadataMiddleware
@@ -533,6 +499,58 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 	})
 }
 
+// resolveParentRelationship determines the parent type, relation, join column, and join field
+// for a child resource. When joinOn is provided, field names are resolved to column names via
+// Bun schema. Otherwise, the relation is discovered automatically via datastore.FindRelation.
+// Returns defaults of "id"/"ID" for join column/field when not otherwise determined.
+func resolveParentRelationship(parentMeta *metadata.TypeMetadata, childType reflect.Type, typeName string, joinOn *JoinOnConfig) (reflect.Type, datastore.Relation, string, string) {
+	var parentType reflect.Type
+	if parentMeta != nil {
+		parentType = parentMeta.ModelType
+	}
+
+	var parentRel datastore.Relation
+	var parentJoinCol string
+	var parentJoinField string
+	if joinOn != nil && parentMeta != nil {
+		childCol, err := datastore.ColumnName(childType, joinOn.ChildCol)
+		if err != nil {
+			slog.WarnContext(context.Background(), "WithJoinOn: invalid child field",
+				"type", typeName,
+				"field", joinOn.ChildCol,
+				"error", err)
+		}
+		parentCol, err := datastore.ColumnName(parentMeta.ModelType, joinOn.ParentCol)
+		if err != nil {
+			slog.WarnContext(context.Background(), "WithJoinOn: invalid parent field",
+				"type", typeName,
+				"field", joinOn.ParentCol,
+				"error", err)
+		}
+		parentRel = datastore.Relation{ForeignKeyCol: childCol, ParentJoinCol: parentCol}
+		parentJoinCol = parentCol
+		parentJoinField = joinOn.ParentCol
+	} else {
+		var err error
+		parentRel, err = datastore.FindRelation(childType, parentType)
+		if err != nil {
+			slog.WarnContext(context.Background(), "could not find parent relationship",
+				"type", typeName,
+				"error", err)
+		}
+		parentJoinCol = parentRel.ParentJoinCol
+	}
+
+	if parentJoinCol == "" {
+		parentJoinCol = "id"
+	}
+	if parentJoinField == "" {
+		parentJoinField = "ID"
+	}
+
+	return parentType, parentRel, parentJoinCol, parentJoinField
+}
+
 // createMetadataMiddleware creates middleware that injects TypeMetadata and QueryOptions into context.
 // Query options are parsed here so all handlers (Get, GetAll, Action, Batch, etc.) have access.
 func createMetadataMiddleware(meta *metadata.TypeMetadata) func(http.Handler) http.Handler {
@@ -543,6 +561,12 @@ func createMetadataMiddleware(meta *metadata.TypeMetadata) func(http.Handler) ht
 			// Parse query options and add to context
 			opts := metadata.ParseQueryOptions(r.URL.Query())
 			ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+			// Limit request body size to prevent memory exhaustion.
+			// File resources are excluded — they have their own limit in the Create handler.
+			if !meta.IsFileResource {
+				r.Body = http.MaxBytesReader(w, r.Body, meta.MaxBodySize)
+			}
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

@@ -3,19 +3,41 @@ package router
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/uptrace/bun"
 
 	"github.com/sjgoldie/go-restgen/filestore"
 	"github.com/sjgoldie/go-restgen/metadata"
 )
 
 const testFieldName = "Name"
+const testParentIDCol = "parent_id"
 
 type testModel struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
+}
+
+// Models with bun tags for resolveParentRelationship tests
+type parentModel struct {
+	bun.BaseModel `bun:"table:rpr_parents"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	Code          string `bun:"code"`
+	Name          string `bun:"name"`
+}
+
+type childModel struct {
+	bun.BaseModel `bun:"table:rpr_children"`
+	ID            int          `bun:"id,pk,autoincrement"`
+	ParentID      int          `bun:"parent_id,notnull"`
+	Parent        *parentModel `bun:"rel:belongs-to,join:parent_id=id"`
+	Title         string       `bun:"title"`
 }
 
 func TestMergeQueryConfigs(t *testing.T) {
@@ -349,5 +371,256 @@ func TestFileResourceRegistration(t *testing.T) {
 		r := chi.NewRouter()
 		b := NewBuilder(r)
 		RegisterRoutes[testModel](b, "/test", AsFileResource())
+	})
+}
+
+func TestResolveParentRelationship(t *testing.T) {
+	childType := reflect.TypeOf(childModel{})
+	parentType := reflect.TypeOf(parentModel{})
+
+	parentMeta := &metadata.TypeMetadata{
+		ModelType: parentType,
+	}
+
+	t.Run("no parent returns empty relation with defaults", func(t *testing.T) {
+		gotParentType, rel, joinCol, joinField := resolveParentRelationship(nil, childType, "childModel", nil)
+
+		if gotParentType != nil {
+			t.Errorf("expected nil parentType, got %v", gotParentType)
+		}
+		if rel.ForeignKeyCol != "" {
+			t.Errorf("expected empty ForeignKeyCol, got %q", rel.ForeignKeyCol)
+		}
+		if joinCol != "id" {
+			t.Errorf("expected default joinCol \"id\", got %q", joinCol)
+		}
+		if joinField != "ID" {
+			t.Errorf("expected default joinField \"ID\", got %q", joinField)
+		}
+	})
+
+	t.Run("auto-discovers belongs-to relation", func(t *testing.T) {
+		gotParentType, rel, joinCol, joinField := resolveParentRelationship(parentMeta, childType, "childModel", nil)
+
+		if gotParentType != parentType {
+			t.Errorf("expected parentType %v, got %v", parentType, gotParentType)
+		}
+		if rel.ForeignKeyCol != testParentIDCol {
+			t.Errorf("expected ForeignKeyCol \"parent_id\", got %q", rel.ForeignKeyCol)
+		}
+		if joinCol != "id" {
+			t.Errorf("expected joinCol \"id\", got %q", joinCol)
+		}
+		if joinField != "ID" {
+			t.Errorf("expected joinField \"ID\", got %q", joinField)
+		}
+	})
+
+	t.Run("explicit joinOn resolves field names to columns", func(t *testing.T) {
+		joinOn := &JoinOnConfig{
+			ChildCol:  "ParentID",
+			ParentCol: "Code",
+		}
+
+		gotParentType, rel, joinCol, joinField := resolveParentRelationship(parentMeta, childType, "childModel", joinOn)
+
+		if gotParentType != parentType {
+			t.Errorf("expected parentType %v, got %v", parentType, gotParentType)
+		}
+		if rel.ForeignKeyCol != testParentIDCol {
+			t.Errorf("expected ForeignKeyCol \"parent_id\", got %q", rel.ForeignKeyCol)
+		}
+		if rel.ParentJoinCol != "code" {
+			t.Errorf("expected ParentJoinCol \"code\", got %q", rel.ParentJoinCol)
+		}
+		if joinCol != "code" {
+			t.Errorf("expected joinCol \"code\", got %q", joinCol)
+		}
+		if joinField != "Code" {
+			t.Errorf("expected joinField \"Code\", got %q", joinField)
+		}
+	})
+
+	t.Run("joinOn without parent falls back to auto-discovery", func(t *testing.T) {
+		joinOn := &JoinOnConfig{
+			ChildCol:  "ParentID",
+			ParentCol: "Code",
+		}
+
+		_, rel, joinCol, joinField := resolveParentRelationship(nil, childType, "childModel", joinOn)
+
+		// joinOn is ignored when parentMeta is nil — falls back to FindRelation with nil parentType
+		if rel.ForeignKeyCol != "" {
+			t.Errorf("expected empty ForeignKeyCol, got %q", rel.ForeignKeyCol)
+		}
+		if joinCol != "id" {
+			t.Errorf("expected default joinCol \"id\", got %q", joinCol)
+		}
+		if joinField != "ID" {
+			t.Errorf("expected default joinField \"ID\", got %q", joinField)
+		}
+	})
+
+	t.Run("joinOn with invalid child field logs warning and returns empty col", func(t *testing.T) {
+		joinOn := &JoinOnConfig{
+			ChildCol:  "NonExistentField",
+			ParentCol: "Code",
+		}
+
+		_, rel, _, _ := resolveParentRelationship(parentMeta, childType, "childModel", joinOn)
+
+		// Invalid field returns empty string from ColumnName
+		if rel.ForeignKeyCol != "" {
+			t.Errorf("expected empty ForeignKeyCol for invalid field, got %q", rel.ForeignKeyCol)
+		}
+	})
+
+	t.Run("joinOn with invalid parent field logs warning and returns empty col", func(t *testing.T) {
+		joinOn := &JoinOnConfig{
+			ChildCol:  "ParentID",
+			ParentCol: "NonExistentField",
+		}
+
+		_, rel, joinCol, _ := resolveParentRelationship(parentMeta, childType, "childModel", joinOn)
+
+		if rel.ForeignKeyCol != testParentIDCol {
+			t.Errorf("expected ForeignKeyCol \"parent_id\", got %q", rel.ForeignKeyCol)
+		}
+		// Invalid parent col falls through to default
+		if joinCol != "id" {
+			t.Errorf("expected default joinCol \"id\" for invalid parent field, got %q", joinCol)
+		}
+	})
+
+	t.Run("auto-discovery with unrelated types returns defaults", func(t *testing.T) {
+		unrelatedType := reflect.TypeOf(testModel{})
+		unrelatedMeta := &metadata.TypeMetadata{
+			ModelType: unrelatedType,
+		}
+
+		_, rel, joinCol, joinField := resolveParentRelationship(unrelatedMeta, childType, "childModel", nil)
+
+		// No relation found — ForeignKeyCol may be empty
+		if rel.ForeignKeyCol != "" {
+			t.Errorf("expected empty ForeignKeyCol for unrelated types, got %q", rel.ForeignKeyCol)
+		}
+		if joinCol != "id" {
+			t.Errorf("expected default joinCol \"id\", got %q", joinCol)
+		}
+		if joinField != "ID" {
+			t.Errorf("expected default joinField \"ID\", got %q", joinField)
+		}
+	})
+}
+
+func TestCreateMetadataMiddleware(t *testing.T) {
+	t.Run("applies MaxBytesReader for non-file resources", func(t *testing.T) {
+		meta := &metadata.TypeMetadata{
+			MaxBodySize:    512,
+			IsFileResource: false,
+		}
+
+		middleware := createMetadataMiddleware(meta)
+
+		var capturedBody http.Request
+		handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedBody = *r
+		}))
+
+		body := strings.NewReader(strings.Repeat("x", 1024))
+		req := httptest.NewRequest("POST", "/test", body)
+		w := httptest.NewRecorder()
+
+		handler.ServeHTTP(w, req)
+
+		// Reading beyond the limit should fail
+		buf := make([]byte, 1024)
+		_, err := capturedBody.Body.Read(buf)
+		if err == nil {
+			t.Error("expected error reading beyond MaxBodySize limit")
+		}
+	})
+
+	t.Run("skips MaxBytesReader for file resources", func(t *testing.T) {
+		meta := &metadata.TypeMetadata{
+			MaxBodySize:    512,
+			IsFileResource: true,
+		}
+
+		middleware := createMetadataMiddleware(meta)
+
+		var capturedBody http.Request
+		handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedBody = *r
+		}))
+
+		body := strings.NewReader(strings.Repeat("x", 1024))
+		req := httptest.NewRequest("POST", "/test", body)
+		w := httptest.NewRecorder()
+
+		handler.ServeHTTP(w, req)
+
+		// Should be able to read full body — no limit applied
+		buf := make([]byte, 1024)
+		n, err := capturedBody.Body.Read(buf)
+		if err != nil {
+			t.Errorf("expected no error reading body for file resource, got %v", err)
+		}
+		if n != 1024 {
+			t.Errorf("expected to read 1024 bytes, got %d", n)
+		}
+	})
+
+	t.Run("injects metadata into context", func(t *testing.T) {
+		meta := &metadata.TypeMetadata{
+			TypeID:      "test-type",
+			MaxBodySize: metadata.DefaultMaxBodySize,
+		}
+
+		middleware := createMetadataMiddleware(meta)
+
+		var capturedMeta *metadata.TypeMetadata
+		handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedMeta = r.Context().Value(metadata.MetadataKey).(*metadata.TypeMetadata)
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		w := httptest.NewRecorder()
+
+		handler.ServeHTTP(w, req)
+
+		if capturedMeta == nil {
+			t.Fatal("expected metadata in context")
+		}
+		if capturedMeta.TypeID != "test-type" {
+			t.Errorf("expected TypeID \"test-type\", got %q", capturedMeta.TypeID)
+		}
+	})
+
+	t.Run("uses exact MaxBodySize value from metadata", func(t *testing.T) {
+		customLimit := int64(256)
+		meta := &metadata.TypeMetadata{
+			MaxBodySize: customLimit,
+		}
+
+		middleware := createMetadataMiddleware(meta)
+
+		var capturedBody http.Request
+		handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedBody = *r
+		}))
+
+		// Send exactly at the limit — should succeed
+		body := strings.NewReader(strings.Repeat("x", 256))
+		req := httptest.NewRequest("POST", "/test", body)
+		w := httptest.NewRecorder()
+
+		handler.ServeHTTP(w, req)
+
+		buf := make([]byte, 256)
+		n, _ := capturedBody.Body.Read(buf)
+		if n != 256 {
+			t.Errorf("expected to read 256 bytes at limit, got %d", n)
+		}
 	})
 }

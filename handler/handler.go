@@ -132,6 +132,19 @@ type batchSetup[T any] struct {
 	ctx   context.Context
 }
 
+// handleBodyReadError handles errors from JSON decoding or body reading.
+// MaxBytesError returns 413; other errors return 400.
+func handleBodyReadError(ctx context.Context, w http.ResponseWriter, err error, msg string) {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		slog.DebugContext(ctx, msg, "error", err)
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	slog.DebugContext(ctx, msg, "error", err)
+	http.Error(w, "bad request", http.StatusBadRequest)
+}
+
 // handleMutationError handles errors from Create/Update operations
 func handleMutationError(ctx context.Context, w http.ResponseWriter, err error, operation string) {
 	if errors.Is(err, context.Canceled) {
@@ -453,8 +466,7 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 		} else {
 			// JSON body
 			if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
-				slog.DebugContext(ctx, "failed to decode request body", "error", err)
-				http.Error(w, "bad request", http.StatusBadRequest)
+				handleBodyReadError(ctx, w, err, "failed to decode request body")
 				return
 			}
 		}
@@ -498,8 +510,7 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 
 		var item T
 		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
-			slog.DebugContext(rc.ctx, "failed to decode request body", "error", err)
-			http.Error(w, "bad request", http.StatusBadRequest)
+			handleBodyReadError(rc.ctx, w, err, "failed to decode request body")
 			return
 		}
 
@@ -637,8 +648,7 @@ func Action[T any](actionFunc ActionFunc[T]) http.HandlerFunc {
 
 		payload, err := io.ReadAll(r.Body)
 		if err != nil {
-			slog.DebugContext(rc.ctx, "failed to read request body", "error", err)
-			http.Error(w, "bad request", http.StatusBadRequest)
+			handleBodyReadError(rc.ctx, w, err, "failed to read request body")
 			return
 		}
 
@@ -702,6 +712,12 @@ func setupBatch[T any](w http.ResponseWriter, r *http.Request, opName string) *b
 
 	var items []T
 	if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			slog.DebugContext(ctx, "failed to decode batch request", "error", err)
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return nil
+		}
 		slog.DebugContext(ctx, "failed to decode batch request", "error", err)
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return nil

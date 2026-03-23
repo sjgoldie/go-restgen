@@ -1008,6 +1008,29 @@ curl 'http://localhost:8080/users?filter[Status]=active&sort=-CreatedAt&limit=10
 # X-Offset: 10
 ```
 
+## Request Body Size Limits
+
+All JSON request bodies are limited to prevent denial-of-service via oversized payloads. The default limit is **1 MB** per request.
+
+### Configuration
+
+Set a custom limit per resource:
+
+```go
+router.RegisterRoutes[User](b, "/users",
+    router.AllPublic(),
+    router.WithMaxBodySize(1024),  // 1 KB limit
+)
+```
+
+The limit applies to all JSON-consuming endpoints for the resource: Create, Update, Batch Create, Batch Update, Batch Delete, Actions, and Endpoints.
+
+Requests exceeding the limit receive `413 Request Entity Too Large`.
+
+### Multipart Uploads
+
+File upload endpoints using `multipart/form-data` are **not** affected by `WithMaxBodySize`. They use a separate 32 MB limit handled internally by the file upload handler.
+
 ## Multi-Registration
 
 go-restgen supports registering the same model type at multiple routes with different configurations. This is useful when:

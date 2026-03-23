@@ -111,6 +111,25 @@ func WithBatchLimit(limit int) BatchLimitConfig {
 	return BatchLimitConfig{Limit: limit}
 }
 
+// MaxBodySizeConfig holds the maximum request body size for JSON endpoints.
+type MaxBodySizeConfig struct {
+	Size int64
+}
+
+// WithMaxBodySize sets the maximum allowed size in bytes for JSON request bodies.
+// If not set, the default is 1 MB (metadata.DefaultMaxBodySize).
+// This does not affect multipart uploads which have their own 32 MB limit.
+//
+// Example:
+//
+//	router.RegisterRoutes[User](b, "/users",
+//	    router.AllPublic(),
+//	    router.WithMaxBodySize(1024), // 1 KB limit
+//	)
+func WithMaxBodySize(size int64) MaxBodySizeConfig {
+	return MaxBodySizeConfig{Size: size}
+}
+
 // CustomBatchCreateConfig holds custom batch create handler configuration.
 type CustomBatchCreateConfig[T any] struct {
 	Fn handler.CustomBatchCreateFunc[T]

@@ -117,6 +117,9 @@ type parentTenantKeyType string
 // Value is []*TypeMetadata - list of parent types in the chain that require tenant checks
 const ParentTenantKey parentTenantKeyType = "restgen_parent_tenant"
 
+// DefaultMaxBodySize is the default maximum size for JSON request bodies (1 MB).
+const DefaultMaxBodySize int64 = 1 << 20
+
 // TypeMetadata contains all metadata for a registered type
 type TypeMetadata struct {
 	TypeID          string        // Unique UUID for this type
@@ -163,6 +166,9 @@ type TypeMetadata struct {
 
 	// Batch operations
 	BatchLimit int // Maximum items in batch operations (0 = no limit)
+
+	// Request body limits
+	MaxBodySize int64 // Max JSON request body size in bytes (default: DefaultMaxBodySize)
 }
 
 // Clone returns a deep copy of the TypeMetadata.
@@ -189,6 +195,7 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 		Auditor:         m.Auditor,
 		IsFileResource:  m.IsFileResource,
 		BatchLimit:      m.BatchLimit,
+		MaxBodySize:     m.MaxBodySize,
 		TenantField:     m.TenantField,
 		IsTenantTable:   m.IsTenantTable,
 	}

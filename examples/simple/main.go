@@ -90,6 +90,7 @@ func main() {
 		router.WithSorts("Name", "Email", "CreatedAt"), // Allow sorting by these fields
 		router.WithPagination(20, 100),                 // Default 20 items, max 100
 		router.WithDefaultSort("-CreatedAt"),           // Default sort by CreatedAt descending
+		router.WithMaxBodySize(1024),                   // Limit JSON body to 1 KB
 	)
 
 	// Start server

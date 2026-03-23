@@ -136,6 +136,9 @@ router.RegisterRoutes[Model](builder, "/path",
     // File uploads (model must embed filestore.FileFields)
     router.AsFileResource(),
 
+    // Request body limits
+    router.WithMaxBodySize(1024),        // optional: max JSON body size in bytes (default: 1 MB)
+
     // Batch operations (enabled via auth methods)
     router.AllScopedWithBatch("admin"),  // all methods + batch for admin scope
     router.WithBatchLimit(100),          // optional: limit items per batch

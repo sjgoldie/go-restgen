@@ -40,7 +40,30 @@ See the [simple example](./examples/simple) for a simple working example to get 
 
 ## Using with AI Coding Agents
 
-The [AGENT.md](./AGENT.md) file provides a concise reference optimized for AI coding assistants (Claude, Copilot, etc.). Point your AI agent to this file for quick, accurate go-restgen implementations.
+### Claude Code / Cursor (Auto-Install)
+
+Install go-restgen rules so your AI agent automatically knows the framework patterns:
+
+```bash
+# Claude Code (default)
+go run github.com/sjgoldie/go-restgen/cmd/install-skill@latest
+
+# Cursor
+go run github.com/sjgoldie/go-restgen/cmd/install-skill@latest --agent=cursor
+
+# Both
+go run github.com/sjgoldie/go-restgen/cmd/install-skill@latest --agent=all
+```
+
+This writes rule files into your project's agent-specific directory (`.claude/skills/go-restgen/` or `.cursor/rules/`). The agent auto-detects them and loads framework context whenever you work on the project — no manual prompting needed.
+
+### Other Agents
+
+For agents that support project-level instruction files (Codex CLI, Cline, etc.), copy the contents of [AGENT.md](./AGENT.md) into your agent's instructions file. For detailed handler signatures and all route options, also include [cmd/install-skill/skill/patterns.md](./cmd/install-skill/skill/patterns.md).
+
+### Manual Prompting
+
+For any AI agent, you can point it directly to the reference file:
 
 **Sample prompt:**
 ```

@@ -151,6 +151,59 @@ func TestRecordCustomBeforeInitialize(t *testing.T) {
 	RecordCustom(context.Background(), "TestResource", "POST", 201, 42.5)
 }
 
+func TestResponseWriterImplementsFlusher(t *testing.T) {
+	rec := httptest.NewRecorder()
+	var w http.ResponseWriter = &responseWriter{ResponseWriter: rec, statusCode: http.StatusOK}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		t.Fatal("responseWriter wrapping a Flusher-capable writer should implement http.Flusher")
+	}
+
+	flusher.Flush()
+	if !rec.Flushed {
+		t.Error("Flush() should delegate to underlying ResponseWriter")
+	}
+}
+
+func TestResponseWriterFlushNoopWithoutFlusher(t *testing.T) {
+	var w http.ResponseWriter = &responseWriter{ResponseWriter: &minimalResponseWriter{}, statusCode: http.StatusOK}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		t.Fatal("responseWriter should always implement http.Flusher")
+	}
+
+	// Should not panic when underlying writer doesn't support Flush
+	flusher.Flush()
+}
+
+func TestMiddlewarePreservesFlusher(t *testing.T) {
+	_ = Initialize(noop.NewMeterProvider())
+
+	var flusherAvailable bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, flusherAvailable = w.(http.Flusher)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	wrapped := Middleware()(handler)
+	req := httptest.NewRequest("GET", "/test", nil)
+	rec := httptest.NewRecorder()
+	wrapped.ServeHTTP(rec, req)
+
+	if !flusherAvailable {
+		t.Error("Middleware should preserve http.Flusher interface from underlying ResponseWriter")
+	}
+}
+
+// minimalResponseWriter implements only http.ResponseWriter (no Flusher)
+type minimalResponseWriter struct{}
+
+func (m *minimalResponseWriter) Header() http.Header         { return http.Header{} }
+func (m *minimalResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (m *minimalResponseWriter) WriteHeader(int)             {}
+
 func TestMiddlewareAutoInitializes(t *testing.T) {
 	// Reset state
 	requestDuration = nil

@@ -128,6 +128,14 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+// Flush implements http.Flusher by delegating to the underlying ResponseWriter.
+// This is required so that middleware wrapping does not break SSE streaming.
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // Unwrap returns the underlying ResponseWriter for middleware compatibility
 func (rw *responseWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter

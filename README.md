@@ -1031,6 +1031,37 @@ Requests exceeding the limit receive `413 Request Entity Too Large`.
 
 File upload endpoints using `multipart/form-data` are **not** affected by `WithMaxBodySize`. They use a separate 32 MB limit handled internally by the file upload handler.
 
+## Error Responses
+
+All error responses are returned as structured JSON with a consistent format:
+
+```json
+{"error": "not_found", "message": "Not Found"}
+```
+
+| HTTP Status | Error Code | Message |
+|-------------|-----------|---------|
+| 400 | `bad_request` | Bad Request |
+| 400 | `validation_error` | Custom message from validator |
+| 400 | `duplicate` | Bad Request |
+| 400 | `invalid_reference` | Bad Request |
+| 401 | `unauthorized` | Unauthorized |
+| 403 | `forbidden` | Forbidden |
+| 404 | `not_found` | Not Found |
+| 504 | `request_timeout` | Gateway Timeout |
+| 413 | `request_too_large` | Request Entity Too Large |
+| 500 | `internal_error` | Internal Server Error |
+| 501 | `not_implemented` | Not Implemented |
+| 503 | `service_unavailable` | Service Unavailable |
+
+The `error` field is a machine-readable code for programmatic error handling. The `message` field uses `http.StatusText()` — the standard HTTP status text for the response code. For validation errors, the `message` contains the custom message from your validator function. Error code constants are exported as `handler.ErrCodeBadRequest`, `handler.ErrCodeNotFound`, etc.
+
+`handler.WriteError` is exported for use in custom middleware and handlers:
+
+```go
+handler.WriteError(w, http.StatusBadRequest, "bad_request", "custom error message")
+```
+
 ## Multi-Registration
 
 go-restgen supports registering the same model type at multiple routes with different configurations. This is useful when:
@@ -2240,12 +2271,15 @@ r.Get("/users/search", searchUsersHandler)
 ### Direct Access to Services
 
 ```go
-import "github.com/sjgoldie/go-restgen/service"
+import (
+    "github.com/sjgoldie/go-restgen/handler"
+    "github.com/sjgoldie/go-restgen/service"
+)
 
 func myCustomHandler(w http.ResponseWriter, r *http.Request) {
     svc, err := service.New[User]()
     if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
+        handler.WriteError(w, http.StatusInternalServerError, handler.ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
         return
     }
 

@@ -534,18 +534,22 @@ Built-in support on GetAll endpoints:
 
 ## Error Handling
 
+All errors are returned as structured JSON: `{"error": "not_found", "message": "Not Found"}`
+
 ```go
 import apperrors "github.com/sjgoldie/go-restgen/errors"
 
 // In custom handlers, return domain errors:
-return nil, apperrors.ErrNotFound           // 404
-return nil, apperrors.ErrDuplicate          // 400
-return nil, apperrors.ErrInvalidReference   // 400
-return nil, apperrors.ErrUnavailable        // 503
+return nil, apperrors.ErrNotFound           // 404 {"error":"not_found"}
+return nil, apperrors.ErrDuplicate          // 400 {"error":"duplicate"}
+return nil, apperrors.ErrInvalidReference   // 400 {"error":"invalid_reference"}
+return nil, apperrors.ErrUnavailable        // 503 {"error":"service_unavailable"}
 
 // Custom validation error (message sent to client):
-return nil, apperrors.NewValidationError("title cannot be empty")  // 400
+return nil, apperrors.NewValidationError("title cannot be empty")  // 400 {"error":"validation_error","message":"title cannot be empty"}
 ```
+
+For custom middleware, use `handler.WriteError(w, statusCode, errorCode, message)`.
 
 ## Logging
 

@@ -138,11 +138,11 @@ func handleBodyReadError(ctx context.Context, w http.ResponseWriter, err error, 
 	var maxBytesErr *http.MaxBytesError
 	if errors.As(err, &maxBytesErr) {
 		slog.DebugContext(ctx, msg, "error", err)
-		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		WriteError(w, http.StatusRequestEntityTooLarge, ErrCodeRequestTooLarge, http.StatusText(http.StatusRequestEntityTooLarge))
 		return
 	}
 	slog.DebugContext(ctx, msg, "error", err)
-	http.Error(w, "bad request", http.StatusBadRequest)
+	WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 }
 
 // handleMutationError handles errors from Create/Update operations
@@ -151,34 +151,34 @@ func handleMutationError(ctx context.Context, w http.ResponseWriter, err error, 
 		return // Client disconnected, no response needed
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		http.Error(w, "request timeout", http.StatusGatewayTimeout)
+		WriteError(w, http.StatusGatewayTimeout, ErrCodeRequestTimeout, http.StatusText(http.StatusGatewayTimeout))
 		return
 	}
-	// Check for validation error - return custom message to client
+	// Check for validation error - return developer-authored message to client
 	var validationErr *apperrors.ValidationError
 	if errors.As(err, &validationErr) {
-		http.Error(w, validationErr.Message, http.StatusBadRequest)
+		WriteError(w, http.StatusBadRequest, ErrCodeValidationError, validationErr.Message)
 		return
 	}
 	if errors.Is(err, apperrors.ErrDuplicate) {
-		http.Error(w, "resource already exists", http.StatusBadRequest)
+		WriteError(w, http.StatusBadRequest, ErrCodeDuplicate, http.StatusText(http.StatusBadRequest))
 		return
 	}
 	if errors.Is(err, apperrors.ErrInvalidReference) {
-		http.Error(w, "invalid reference to related resource", http.StatusBadRequest)
+		WriteError(w, http.StatusBadRequest, ErrCodeInvalidReference, http.StatusText(http.StatusBadRequest))
 		return
 	}
 	if errors.Is(err, apperrors.ErrNotFound) {
-		http.Error(w, "not found", http.StatusNotFound)
+		WriteError(w, http.StatusNotFound, ErrCodeNotFound, http.StatusText(http.StatusNotFound))
 		return
 	}
 	if errors.Is(err, apperrors.ErrUnavailable) {
 		w.Header().Set("Retry-After", "5")
-		http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
+		WriteError(w, http.StatusServiceUnavailable, ErrCodeServiceUnavailable, http.StatusText(http.StatusServiceUnavailable))
 		return
 	}
 	slog.ErrorContext(ctx, "failed to "+operation+" item", "error", err)
-	http.Error(w, "internal server error", http.StatusInternalServerError)
+	WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 }
 
 // requestContext holds common setup data for /{id} handlers.
@@ -202,14 +202,14 @@ func setupRequest[T any](w http.ResponseWriter, r *http.Request, getFunc CustomG
 	svc, err := service.New[T]()
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to create service", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 		return zero, err
 	}
 
 	meta, err := metadata.FromContext(ctx)
 	if err != nil {
 		slog.ErrorContext(ctx, "metadata not found in context", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 		return zero, err
 	}
 
@@ -218,7 +218,7 @@ func setupRequest[T any](w http.ResponseWriter, r *http.Request, getFunc CustomG
 		id = chi.URLParam(r, meta.URLParamUUID)
 		if id == "" {
 			slog.DebugContext(ctx, "missing id parameter", "paramUUID", meta.URLParamUUID)
-			http.Error(w, "bad request", http.StatusBadRequest)
+			WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 			return zero, fmt.Errorf("missing id parameter %s", meta.URLParamUUID)
 		}
 	}
@@ -265,7 +265,7 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 		svc, err := service.New[T]()
 		if err != nil {
 			slog.ErrorContext(ctx, "failed to create service", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 			return
 		}
 
@@ -273,7 +273,7 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 		meta, err := metadata.FromContext(ctx)
 		if err != nil {
 			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 			return
 		}
 
@@ -290,16 +290,16 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 				return // Client disconnected, no response needed
 			}
 			if errors.Is(err, context.DeadlineExceeded) {
-				http.Error(w, "request timeout", http.StatusGatewayTimeout)
+				WriteError(w, http.StatusGatewayTimeout, ErrCodeRequestTimeout, http.StatusText(http.StatusGatewayTimeout))
 				return
 			}
 			if errors.Is(err, apperrors.ErrUnavailable) {
 				w.Header().Set("Retry-After", "5")
-				http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
+				WriteError(w, http.StatusServiceUnavailable, ErrCodeServiceUnavailable, http.StatusText(http.StatusServiceUnavailable))
 				return
 			}
 			slog.ErrorContext(ctx, "failed to get all items", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 			return
 		}
 
@@ -409,7 +409,7 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 		svc, err := service.New[T]()
 		if err != nil {
 			slog.ErrorContext(ctx, "failed to create service", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 			return
 		}
 
@@ -417,7 +417,7 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 		meta, err := metadata.FromContext(ctx)
 		if err != nil {
 			slog.ErrorContext(ctx, "metadata not found in context", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 			return
 		}
 
@@ -436,7 +436,7 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 			r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 			if err := r.ParseMultipartForm(maxUploadSize); err != nil { // #nosec G120 -- body already bounded by MaxBytesReader above
 				slog.DebugContext(ctx, "failed to parse multipart form", "error", err)
-				http.Error(w, "bad request: failed to parse multipart form", http.StatusBadRequest)
+				WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 				return
 			}
 
@@ -459,7 +459,7 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 			if metadataValues, ok := r.MultipartForm.Value["metadata"]; ok && len(metadataValues) > 0 {
 				if err := json.Unmarshal([]byte(metadataValues[0]), &item); err != nil {
 					slog.DebugContext(ctx, "failed to parse metadata JSON", "error", err)
-					http.Error(w, "bad request: invalid metadata JSON", http.StatusBadRequest)
+					WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 					return
 				}
 			}
@@ -520,7 +520,7 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 		if rc.id != "" {
 			if err := common.SetFieldFromString(&item, rc.meta.PKField, rc.id); err != nil {
 				slog.ErrorContext(rc.ctx, "failed to set ID field", "error", err)
-				http.Error(w, "bad request", http.StatusBadRequest)
+				WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 				return
 			}
 		}
@@ -599,7 +599,7 @@ func Download[T any]() http.HandlerFunc {
 		result, err := rc.svc.Download(rc.ctx, rc.id)
 		if err != nil {
 			if errors.Is(err, filestore.ErrStorageKeyNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
+				WriteError(w, http.StatusNotFound, ErrCodeNotFound, http.StatusText(http.StatusNotFound))
 				return
 			}
 			handleMutationError(rc.ctx, w, err, "download")
@@ -687,25 +687,25 @@ func StandardBatchDelete[T any](ctx context.Context, svc *service.Common[T], met
 
 // setupBatch performs common validation and setup for batch operations.
 // Returns nil if successful, otherwise writes error response and returns error.
-func setupBatch[T any](w http.ResponseWriter, r *http.Request, opName string) *batchSetup[T] {
+func setupBatch[T any](w http.ResponseWriter, r *http.Request) *batchSetup[T] {
 	ctx := r.Context()
 
 	svc, err := service.New[T]()
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to create service", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 		return nil
 	}
 
 	meta, err := metadata.FromContext(ctx)
 	if err != nil {
 		slog.ErrorContext(ctx, "metadata not found in context", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 		return nil
 	}
 
 	if meta.IsFileResource {
-		http.Error(w, opName+" not supported for file resources", http.StatusNotImplemented)
+		WriteError(w, http.StatusNotImplemented, ErrCodeNotImplemented, http.StatusText(http.StatusNotImplemented))
 		return nil
 	}
 
@@ -714,21 +714,21 @@ func setupBatch[T any](w http.ResponseWriter, r *http.Request, opName string) *b
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			slog.DebugContext(ctx, "failed to decode batch request", "error", err)
-			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			WriteError(w, http.StatusRequestEntityTooLarge, ErrCodeRequestTooLarge, http.StatusText(http.StatusRequestEntityTooLarge))
 			return nil
 		}
 		slog.DebugContext(ctx, "failed to decode batch request", "error", err)
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 		return nil
 	}
 
 	if len(items) == 0 {
-		http.Error(w, "batch request must contain at least one item", http.StatusBadRequest)
+		WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 		return nil
 	}
 
 	if meta.BatchLimit > 0 && len(items) > meta.BatchLimit {
-		http.Error(w, "batch size exceeds limit", http.StatusBadRequest)
+		WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 		return nil
 	}
 
@@ -746,7 +746,7 @@ func setupBatch[T any](w http.ResponseWriter, r *http.Request, opName string) *b
 // BatchCreate handles POST requests to /resources/batch for batch creation.
 func BatchCreate[T any](createFunc CustomBatchCreateFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		setup := setupBatch[T](w, r, "batch create")
+		setup := setupBatch[T](w, r)
 		if setup == nil {
 			return
 		}
@@ -768,7 +768,7 @@ func BatchCreate[T any](createFunc CustomBatchCreateFunc[T]) http.HandlerFunc {
 // BatchUpdate handles PUT requests to /resources/batch for batch updates.
 func BatchUpdate[T any](updateFunc CustomBatchUpdateFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		setup := setupBatch[T](w, r, "batch update")
+		setup := setupBatch[T](w, r)
 		if setup == nil {
 			return
 		}
@@ -790,7 +790,7 @@ func BatchUpdate[T any](updateFunc CustomBatchUpdateFunc[T]) http.HandlerFunc {
 // BatchDelete handles DELETE requests to /resources/batch for batch deletion.
 func BatchDelete[T any](deleteFunc CustomBatchDeleteFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		setup := setupBatch[T](w, r, "batch delete")
+		setup := setupBatch[T](w, r)
 		if setup == nil {
 			return
 		}
@@ -810,31 +810,31 @@ func handleBatchError(ctx context.Context, w http.ResponseWriter, err error, ope
 		return
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		http.Error(w, "request timeout", http.StatusGatewayTimeout)
+		WriteError(w, http.StatusGatewayTimeout, ErrCodeRequestTimeout, http.StatusText(http.StatusGatewayTimeout))
 		return
 	}
 	var validationErr *apperrors.ValidationError
 	if errors.As(err, &validationErr) {
-		http.Error(w, validationErr.Message, http.StatusBadRequest)
+		WriteError(w, http.StatusBadRequest, ErrCodeValidationError, validationErr.Message)
 		return
 	}
 	if errors.Is(err, apperrors.ErrDuplicate) {
-		http.Error(w, "one or more resources already exist", http.StatusBadRequest)
+		WriteError(w, http.StatusBadRequest, ErrCodeDuplicate, http.StatusText(http.StatusBadRequest))
 		return
 	}
 	if errors.Is(err, apperrors.ErrInvalidReference) {
-		http.Error(w, "one or more items have invalid reference", http.StatusBadRequest)
+		WriteError(w, http.StatusBadRequest, ErrCodeInvalidReference, http.StatusText(http.StatusBadRequest))
 		return
 	}
 	if errors.Is(err, apperrors.ErrNotFound) {
-		http.Error(w, "one or more items not found", http.StatusNotFound)
+		WriteError(w, http.StatusNotFound, ErrCodeNotFound, http.StatusText(http.StatusNotFound))
 		return
 	}
 	if errors.Is(err, apperrors.ErrUnavailable) {
 		w.Header().Set("Retry-After", "5")
-		http.Error(w, "service temporarily unavailable", http.StatusServiceUnavailable)
+		WriteError(w, http.StatusServiceUnavailable, ErrCodeServiceUnavailable, http.StatusText(http.StatusServiceUnavailable))
 		return
 	}
 	slog.ErrorContext(ctx, "failed to "+operation, "error", err)
-	http.Error(w, "internal server error", http.StatusInternalServerError)
+	WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 }

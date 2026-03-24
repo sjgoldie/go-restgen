@@ -540,26 +540,25 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 }
 
 // StandardDelete is the default Delete implementation.
-// If the item implements FileResource, also deletes the file from storage.
+// If the item implements FileResource, fetches it first to extract the storage key
+// for file cleanup after deletion. For non-file resources, delegates directly to
+// svc.Delete which handles existence checks and validation internally.
 func StandardDelete[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) error {
-	// Get the item first (validates existence and permissions)
-	item, err := svc.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-
-	// Extract storage key if this is a file resource (via type assertion)
 	var storageKey string
-	if fr, ok := any(item).(filestore.FileResource); ok {
-		storageKey = fr.GetStorageKey()
+	if meta.IsFileResource {
+		item, err := svc.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		if fr, ok := any(item).(filestore.FileResource); ok {
+			storageKey = fr.GetStorageKey()
+		}
 	}
 
-	// Delete the DB record
 	if err := svc.Delete(ctx, id); err != nil {
 		return err
 	}
 
-	// Delete from storage if there was a file (log but don't fail if this fails)
 	if storageKey != "" {
 		if err := svc.DeleteStoredFile(ctx, storageKey); err != nil {
 			slog.WarnContext(ctx, "failed to delete file from storage", "key", storageKey, "error", err)

@@ -4,17 +4,18 @@ go-restgen uses a combination of unit tests, integration tests, and end-to-end A
 
 ## Test Coverage Summary
 
-**Core Framework Coverage: 83.0%** (excluding examples)
+**Core Framework Coverage: 86.6%** (excluding examples)
 
-- **metadata**: 98.4% - Registry and ownership configuration tests
-- **router**: 90.2% - Route registration, middleware, and auth tests
+- **metadata**: 98.6% - Registry and ownership configuration tests
+- **metrics**: 92.7% - Metrics middleware tests
+- **router**: 92.3% - Route registration, middleware, and auth tests
 - **filestore**: 88.9% - File storage abstraction tests
+- **handler**: 88.2% - HTTP handler tests
 - **service**: 82.7% - Comprehensive CRUD operation tests
-- **handler**: 80.7% - HTTP handler tests
-- **datastore**: 78.6% - Database operations (uses SQLite in-memory)
+- **datastore**: 82.3% - Database operations (uses SQLite in-memory)
 - **errors**: 100.0% - Domain error types
 
-**Integration Test Coverage: ~197 end-to-end API tests** (Bruno) across 12 examples
+**Integration Test Coverage: 300 end-to-end API tests** (Bruno) across 16 examples
 
 All unit tests use SQLite in-memory databases - no external database required!
 
@@ -29,7 +30,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 go tool cover -func=/tmp/coverage.out
 ```
 
-This gives accurate framework coverage (75.3%) without including example applications.
+This gives accurate framework coverage (86.6%) without including example applications.
 
 ### All Tests (Including Examples)
 
@@ -170,12 +171,13 @@ For CI/CD pipelines:
 ## Coverage Goals
 
 - **errors**: 100% (achieved: 100.0%) ✅
-- **metadata**: > 95% (achieved: 98.4%) ✅
-- **router**: > 85% (achieved: 90.2%) ✅
+- **metadata**: > 95% (achieved: 98.6%) ✅
+- **metrics**: > 90% (achieved: 92.7%) ✅
+- **router**: > 85% (achieved: 92.3%) ✅
 - **filestore**: > 85% (achieved: 88.9%) ✅
+- **handler**: > 85% (achieved: 88.2%) ✅
 - **service**: > 80% (achieved: 82.7%) ✅
-- **handler**: > 75% (achieved: 80.7%) ✅
-- **datastore**: > 75% (achieved: 78.6%) ✅
+- **datastore**: > 80% (achieved: 82.3%) ✅
 
 Main coverage gaps are in error path testing that requires mocking (service unavailability, rare edge cases).
 

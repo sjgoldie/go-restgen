@@ -702,6 +702,47 @@ func BenchmarkOperations(b *testing.B) {
 }
 
 // ============================================================================
+// Benchmark: Delete Operations
+// ============================================================================
+
+// BenchmarkDelete tests delete performance for non-file resources
+func BenchmarkDelete(b *testing.B) {
+	if err := setupBenchDB(); err != nil {
+		b.Fatal(err)
+	}
+
+	h := handler.Delete[BenchBlog](handler.StandardDelete[BenchBlog])
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		cleanupBenchDB(b)
+		blogIDs, _, _, _ := seedBenchData(b, 1, 0, 0, 0)
+		blogID := blogIDs[0]
+
+		req := httptest.NewRequest("DELETE", fmt.Sprintf("/blogs/%d", blogID), nil)
+		req = addAuthToRequest(req, "user-0", []string{"user"})
+		req = addMetaToRequest(req, benchBlogMeta)
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("blogId", fmt.Sprintf("%d", blogID))
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+		w := httptest.NewRecorder()
+		b.StartTimer()
+
+		h(w, req)
+
+		b.StopTimer()
+		if w.Code != http.StatusNoContent {
+			b.Fatalf("Expected 204, got %d: %s", w.Code, w.Body.String())
+		}
+	}
+}
+
+// ============================================================================
 // Benchmark: Nested Collections
 // ============================================================================
 

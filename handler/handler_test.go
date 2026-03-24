@@ -2900,3 +2900,81 @@ func TestHandler_GetAll_ErrorPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestStandardDelete_FileResource_CleansUpFile(t *testing.T) {
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	testFileStorage.files["delete-test-key"] = "file content"
+	defer delete(testFileStorage.files, "delete-test-key")
+
+	file := &TestFileModel{
+		Name: "deleteme.txt",
+	}
+	file.SetStorageKey("delete-test-key")
+	file.SetFilename("deleteme.txt")
+	file.SetContentType("text/plain")
+	file.SetSize(12)
+
+	_, err = testDB.GetDB().NewInsert().Model(file).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to insert file model:", err)
+	}
+
+	r := chi.NewRouter()
+	r.Use(withMeta(testFileMeta))
+	r.Delete("/files/{test_file_uuid}", handler.Delete[TestFileModel](handler.StandardDelete[TestFileModel]))
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/files/%d", file.ID), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("Expected %d, got %d: %s", http.StatusNoContent, w.Code, w.Body.String())
+	}
+
+	if _, exists := testFileStorage.files["delete-test-key"]; exists {
+		t.Error("Expected file to be deleted from storage")
+	}
+
+	count, err := testDB.GetDB().NewSelect().Model((*TestFileModel)(nil)).Where("id = ?", file.ID).Count(context.Background())
+	if err != nil {
+		t.Fatal("Failed to check existence:", err)
+	}
+	if count != 0 {
+		t.Error("Expected DB record to be deleted")
+	}
+}
+
+func TestStandardDelete_NonFileResource_Succeeds(t *testing.T) {
+	cleanTable(t)
+
+	user := &TestUser{Name: "Delete Me", Email: "deleteme@example.com"}
+	_, err := testDB.GetDB().NewInsert().Model(user).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to insert user:", err)
+	}
+
+	r := chi.NewRouter()
+	r.Use(withMeta(userMeta))
+	r.Delete("/users/{id}", handler.Delete[TestUser](handler.StandardDelete[TestUser]))
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/users/%d", user.ID), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("Expected %d, got %d: %s", http.StatusNoContent, w.Code, w.Body.String())
+	}
+
+	count, err := testDB.GetDB().NewSelect().Model((*TestUser)(nil)).Where("id = ?", user.ID).Count(context.Background())
+	if err != nil {
+		t.Fatal("Failed to check existence:", err)
+	}
+	if count != 0 {
+		t.Error("Expected user to be deleted")
+	}
+}

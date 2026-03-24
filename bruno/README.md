@@ -352,15 +352,16 @@ cd examples/batch
 go run main.go
 ```
 
-**Tests cover (14 tests):**
+**Tests cover (15 tests):**
 - Batch create, update, delete
 - Empty batch handling
 - Batch update/delete with non-existent IDs
 - Batch create with `?include=` on response
+- Nested batch create (variants under a product)
 
 ## Test Coverage
 
-**Total: 246 end-to-end API tests** across 13 example applications.
+**Total: 300 end-to-end API tests** across 16 example applications.
 
 These Bruno tests provide **end-to-end API coverage** for the example applications. They complement the unit tests by:
 

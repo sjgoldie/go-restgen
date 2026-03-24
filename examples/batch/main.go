@@ -104,7 +104,8 @@ func main() {
 		// Nested ProductVariants with relation name for ?include=Variants support
 		func(b *router.Builder) {
 			router.RegisterRoutes[ProductVariant](b, "/variants",
-				router.AllPublic(),
+				router.AllPublicWithBatch(),
+				router.WithBatchLimit(100),
 				router.WithRelationName("Variants"),
 			)
 		},

@@ -2321,7 +2321,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 go tool cover -func=/tmp/coverage.out
 ```
 
-For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 271 API tests across 15 example applications.
+For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 300 API tests across 16 example applications.
 
 You can override the default port (8080) using the `PORT` environment variable:
 

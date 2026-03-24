@@ -1029,7 +1029,15 @@ Requests exceeding the limit receive `413 Request Entity Too Large`.
 
 ### Multipart Uploads
 
-File upload endpoints using `multipart/form-data` are **not** affected by `WithMaxBodySize`. They use a separate 32 MB limit handled internally by the file upload handler.
+File upload endpoints using `multipart/form-data` are **not** affected by `WithMaxBodySize`. They default to a 32 MB limit. Use `WithMaxUploadSize` to configure per route:
+
+```go
+router.RegisterRoutes[Image](b, "/images",
+    router.AsFileResource(),
+    router.AllPublic(),
+    router.WithMaxUploadSize(10 << 20), // 10 MB limit
+)
+```
 
 ## Error Responses
 

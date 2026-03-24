@@ -118,7 +118,7 @@ type MaxBodySizeConfig struct {
 
 // WithMaxBodySize sets the maximum allowed size in bytes for JSON request bodies.
 // If not set, the default is 1 MB (metadata.DefaultMaxBodySize).
-// This does not affect multipart uploads which have their own 32 MB limit.
+// This does not affect multipart uploads — use WithMaxUploadSize for file resources.
 //
 // Example:
 //
@@ -128,6 +128,26 @@ type MaxBodySizeConfig struct {
 //	)
 func WithMaxBodySize(size int64) MaxBodySizeConfig {
 	return MaxBodySizeConfig{Size: size}
+}
+
+// MaxUploadSizeConfig holds the maximum multipart file upload size for file resource routes.
+type MaxUploadSizeConfig struct {
+	Size int64
+}
+
+// WithMaxUploadSize sets the maximum allowed size in bytes for multipart file uploads.
+// If not set, the default is 32 MB (metadata.DefaultMaxUploadSize).
+// This only affects file resource routes (registered with AsFileResource).
+//
+// Example:
+//
+//	router.RegisterRoutes[Image](b, "/images",
+//	    router.AsFileResource(),
+//	    router.AllPublic(),
+//	    router.WithMaxUploadSize(10 << 20), // 10 MB limit
+//	)
+func WithMaxUploadSize(size int64) MaxUploadSizeConfig {
+	return MaxUploadSizeConfig{Size: size}
 }
 
 // CustomBatchCreateConfig holds custom batch create handler configuration.

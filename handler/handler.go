@@ -12,9 +12,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -429,12 +429,11 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 		var fileMeta filestore.FileMetadata
 
 		// Parse request body - either multipart form or JSON
-		contentType := r.Header.Get("Content-Type")
-		if strings.HasPrefix(contentType, "multipart/form-data") {
+		mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if mediaType == "multipart/form-data" {
 			// Limit request body size to prevent memory exhaustion
-			const maxUploadSize = 32 << 20 // 32 MB
-			r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
-			if err := r.ParseMultipartForm(maxUploadSize); err != nil { // #nosec G120 -- body already bounded by MaxBytesReader above
+			r.Body = http.MaxBytesReader(w, r.Body, meta.MaxUploadSize)
+			if err := r.ParseMultipartForm(meta.MaxUploadSize); err != nil { // #nosec G120 -- body already bounded by MaxBytesReader above
 				slog.DebugContext(ctx, "failed to parse multipart form", "error", err)
 				WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 				return

@@ -128,6 +128,7 @@ func main() {
 			router.RegisterRoutes[Image](b, "/images",
 				router.AsFileResource(),
 				router.AllPublic(),
+				router.WithMaxUploadSize(10<<20), // 10 MB limit
 				router.WithFilters("Filename", "ContentType"),
 				router.WithSorts("Filename", "CreatedAt"),
 			)

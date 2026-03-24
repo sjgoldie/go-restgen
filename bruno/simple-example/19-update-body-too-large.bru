@@ -19,10 +19,15 @@ body:json {
 
 assert {
   res.status: eq 413
+  res.body.error: eq request_too_large
+  res.body.message: eq Request Entity Too Large
 }
 
 tests {
-  test("Oversized JSON body on update returns 413", function() {
+  test("Oversized JSON body on update returns 413 with JSON error", function() {
     expect(res.status).to.equal(413);
+    const body = res.getBody();
+    expect(body.error).to.equal("request_too_large");
+    expect(body.message).to.equal("Request Entity Too Large");
   });
 }

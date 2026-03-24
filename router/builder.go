@@ -593,7 +593,7 @@ func createParentIDMiddleware(paramUUID string) func(http.Handler) http.Handler 
 			// Keep as string to support both int and UUID PKs
 			parentID := chi.URLParam(r, paramUUID)
 			if parentID == "" {
-				http.Error(w, "missing parent ID", http.StatusBadRequest)
+				handler.WriteError(w, http.StatusBadRequest, handler.ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 				return
 			}
 

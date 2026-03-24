@@ -2856,7 +2856,7 @@ func TestHandler_GetAll_ErrorPaths(t *testing.T) {
 				return nil, 0, nil, context.DeadlineExceeded
 			},
 			expectedCode: http.StatusGatewayTimeout,
-			expectedBody: "request timeout",
+			expectedBody: "Gateway Timeout",
 		},
 		{
 			name: "service unavailable",
@@ -2864,7 +2864,7 @@ func TestHandler_GetAll_ErrorPaths(t *testing.T) {
 				return nil, 0, nil, apperrors.ErrUnavailable
 			},
 			expectedCode: http.StatusServiceUnavailable,
-			expectedBody: "service temporarily unavailable",
+			expectedBody: "Service Unavailable",
 		},
 		{
 			name: "generic error",
@@ -2872,7 +2872,7 @@ func TestHandler_GetAll_ErrorPaths(t *testing.T) {
 				return nil, 0, nil, fmt.Errorf("some internal error")
 			},
 			expectedCode: http.StatusInternalServerError,
-			expectedBody: "internal server error",
+			expectedBody: "Internal Server Error",
 		},
 	}
 

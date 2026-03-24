@@ -167,8 +167,8 @@ func TestBatchCreate_ExceedsLimit(t *testing.T) {
 		t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
 	}
 
-	if !strings.Contains(w.Body.String(), "batch size exceeds limit") {
-		t.Errorf("Expected error message about batch limit, got %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "bad_request") {
+		t.Errorf("Expected error code bad_request, got %s", w.Body.String())
 	}
 }
 
@@ -533,25 +533,25 @@ func TestBatchCreate_ErrorHandling(t *testing.T) {
 			name:           "DuplicateError",
 			err:            apperrors.ErrDuplicate,
 			expectedStatus: http.StatusBadRequest,
-			expectedMsg:    "already exist",
+			expectedMsg:    "duplicate",
 		},
 		{
 			name:           "InvalidReferenceError",
 			err:            apperrors.ErrInvalidReference,
 			expectedStatus: http.StatusBadRequest,
-			expectedMsg:    "invalid reference",
+			expectedMsg:    "invalid_reference",
 		},
 		{
 			name:           "DeadlineExceeded",
 			err:            context.DeadlineExceeded,
 			expectedStatus: http.StatusGatewayTimeout,
-			expectedMsg:    "timeout",
+			expectedMsg:    "request_timeout",
 		},
 		{
 			name:           "Unavailable",
 			err:            apperrors.ErrUnavailable,
 			expectedStatus: http.StatusServiceUnavailable,
-			expectedMsg:    "temporarily unavailable",
+			expectedMsg:    "service_unavailable",
 		},
 	}
 

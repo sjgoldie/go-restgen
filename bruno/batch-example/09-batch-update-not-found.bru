@@ -18,4 +18,6 @@ body:json {
 
 assert {
   res.status: eq 404
+  res.body.error: eq not_found
+  res.body.message: eq Not Found
 }

@@ -21,5 +21,6 @@ body:json {
 
 assert {
   res.status: eq 400
-  res.body: contains pending
+  res.body.error: eq validation_error
+  res.body.message: contains pending
 }

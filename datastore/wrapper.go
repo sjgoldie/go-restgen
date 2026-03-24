@@ -1538,7 +1538,8 @@ func (w *Wrapper[T]) getRelationNameForParent(childMeta, parentMeta *metadata.Ty
 
 // BatchCreate creates multiple items in a single transaction.
 // All-or-nothing: if any item fails, the entire batch is rolled back.
-// Ownership and parent validation are applied per-item.
+// Parent is validated once (all items share the same URL-derived parent).
+// FK, ownership, tenant, and validation are applied per-item.
 func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
@@ -1548,31 +1549,38 @@ func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 		return nil, err
 	}
 
+	// Validate parent once before the transaction — all items in a batch share the
+	// same URL-derived parent. The FK is still set per-item inside the loop.
+	var parentItem interface{}
+	var parentField string
+	if meta.ParentMeta != nil {
+		parentMeta := meta.ParentMeta
+		parentIDs, ok := ctx.Value(metadata.ParentIDsKey).(map[string]string)
+		if !ok || parentIDs == nil {
+			return nil, fmt.Errorf("parent context missing for nested resource")
+		}
+		parentID, exists := parentIDs[parentMeta.URLParamUUID]
+		if !exists {
+			return nil, fmt.Errorf("parent ID not found in context")
+		}
+		parentItem, err = w.getWithMeta(ctx, parentMeta, parentID)
+		if err != nil {
+			return nil, err
+		}
+		parentField = meta.ParentJoinField
+		if parentField == "" {
+			parentField = parentMeta.PKField
+		}
+	}
+
 	results := make([]*T, 0, len(items))
 
 	err = w.Store.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		for i := range items {
 			item := &items[i]
 
-			// Validate parent and set FK if nested
+			// Set FK per-item using the already-validated parent
 			if meta.ParentMeta != nil {
-				parentMeta := meta.ParentMeta
-				parentIDs, ok := ctx.Value(metadata.ParentIDsKey).(map[string]string)
-				if !ok || parentIDs == nil {
-					return fmt.Errorf("parent context missing for nested resource")
-				}
-				parentID, exists := parentIDs[parentMeta.URLParamUUID]
-				if !exists {
-					return fmt.Errorf("parent ID not found in context")
-				}
-				parentItem, err := w.getWithMeta(ctx, parentMeta, parentID)
-				if err != nil {
-					return err
-				}
-				parentField := meta.ParentJoinField
-				if parentField == "" {
-					parentField = parentMeta.PKField
-				}
 				if err := w.setForeignKey(item, meta.ForeignKeyCol, parentItem, parentField); err != nil {
 					return err
 				}

@@ -88,7 +88,7 @@ Tests verify:
 
 ### End-to-End API Tests (Bruno)
 
-Located in `bruno/` directory with ~197 tests across 12 example applications.
+Located in `bruno/` directory with 300 tests across 16 example applications.
 
 **Running All Tests:**
 ```bash
@@ -103,18 +103,22 @@ Located in `bruno/` directory with ~197 tests across 12 example applications.
 ```
 
 **Examples and Test Counts:**
-- **simple** (17 tests) - CRUD, filtering, sorting, pagination
+- **simple** (19 tests) - CRUD, filtering, sorting, pagination
 - **nested** (16 tests) - 3-level nested resources, parent validation
-- **auth** (35 tests) - Scopes, ownership, admin bypass
+- **auth** (48 tests) - Scopes, ownership, admin bypass
 - **uuid** (14 tests) - UUID primary keys
 - **validator** (16 tests) - Custom validation
 - **audit** (8 tests) - Audit logging
-- **relations** (23 tests) - Relation includes (?include=)
+- **relations** (24 tests) - Relation includes (?include=)
 - **files-proxy** (13 tests) - File upload with proxy mode
 - **files-signed** (13 tests) - File upload with signed URLs
 - **actions** (12 tests) - Custom action endpoints
-- **batch** (14 tests) - Batch create/update/delete
+- **batch** (15 tests) - Batch create/update/delete, nested batch create
 - **custom** (16 tests) - Custom handler functions
+- **custom-join** (11 tests) - Custom join fields
+- **query** (36 tests) - Filtering, sorting, pagination, sum
+- **tenant** (29 tests) - Multi-tenant isolation
+- **anything** (10 tests) - Anything funcs, SSE, webhooks
 
 See `bruno/README.md` for running instructions.
 

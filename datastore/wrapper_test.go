@@ -2953,6 +2953,171 @@ func TestWrapper_BatchCreate_NestedResource_MissingParent(t *testing.T) {
 	}
 }
 
+func setupBatchNestedSharedDB(t *testing.T) (*datastore.SQLite, func()) {
+	t.Helper()
+
+	db, err := datastore.NewSQLite("file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal("Failed to create test database:", err)
+	}
+
+	ctx := context.Background()
+	_, err = db.GetDB().NewCreateTable().Model((*BatchTestAuthor)(nil)).IfNotExists().Exec(ctx)
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create batch_authors table:", err)
+	}
+
+	_, err = db.GetDB().NewCreateTable().Model((*BatchTestArticle)(nil)).IfNotExists().Exec(ctx)
+	if err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to create batch_articles table:", err)
+	}
+
+	cleanup := func() {
+		db.GetDB().NewDropTable().Model((*BatchTestArticle)(nil)).IfExists().Exec(ctx)
+		db.GetDB().NewDropTable().Model((*BatchTestAuthor)(nil)).IfExists().Exec(ctx)
+		db.Cleanup()
+	}
+
+	return db, cleanup
+}
+
+func TestWrapper_BatchCreate_NestedResource_SetsForeignKey(t *testing.T) {
+	db, cleanup := setupBatchNestedSharedDB(t)
+	defer cleanup()
+
+	authorWrapper := &datastore.Wrapper[BatchTestAuthor]{Store: db}
+	ctxAuthor := ctxWithMeta(batchTestAuthorMeta)
+
+	author := BatchTestAuthor{Name: "Test Author", Email: "author@example.com"}
+	createdAuthor, err := authorWrapper.Create(ctxAuthor, author)
+	if err != nil {
+		t.Fatal("Failed to create author:", err)
+	}
+
+	articleWrapper := &datastore.Wrapper[BatchTestArticle]{Store: db}
+	ctxArticle := ctxWithMeta(batchTestArticleMeta)
+	ctxArticle = context.WithValue(ctxArticle, metadata.ParentIDsKey, map[string]string{
+		"authorId": strconv.Itoa(createdAuthor.ID),
+	})
+
+	articles := []BatchTestArticle{
+		{Title: "Article 1", Content: "Content 1"},
+		{Title: "Article 2", Content: "Content 2"},
+		{Title: "Article 3", Content: "Content 3"},
+	}
+
+	results, err := articleWrapper.BatchCreate(ctxArticle, articles)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("Expected 3 results, got %d", len(results))
+	}
+
+	for i, result := range results {
+		if result.AuthorID != createdAuthor.ID {
+			t.Errorf("Article %d: expected AuthorID %d, got %d", i, createdAuthor.ID, result.AuthorID)
+		}
+		if result.ID == 0 {
+			t.Errorf("Article %d: expected non-zero ID", i)
+		}
+	}
+}
+
+func TestWrapper_BatchCreate_NestedResource_OverwritesForeignKey(t *testing.T) {
+	db, cleanup := setupBatchNestedSharedDB(t)
+	defer cleanup()
+
+	authorWrapper := &datastore.Wrapper[BatchTestAuthor]{Store: db}
+	ctxAuthor := ctxWithMeta(batchTestAuthorMeta)
+
+	author := BatchTestAuthor{Name: "Real Author", Email: "real@example.com"}
+	createdAuthor, err := authorWrapper.Create(ctxAuthor, author)
+	if err != nil {
+		t.Fatal("Failed to create author:", err)
+	}
+
+	articleWrapper := &datastore.Wrapper[BatchTestArticle]{Store: db}
+	ctxArticle := ctxWithMeta(batchTestArticleMeta)
+	ctxArticle = context.WithValue(ctxArticle, metadata.ParentIDsKey, map[string]string{
+		"authorId": strconv.Itoa(createdAuthor.ID),
+	})
+
+	articles := []BatchTestArticle{
+		{Title: "Legit Article", Content: "Good content", AuthorID: 0},
+		{Title: "Sneaky Article", Content: "Sneaky content", AuthorID: 99999},
+		{Title: "Another Sneaky", Content: "More sneaky", AuthorID: 88888},
+	}
+
+	results, err := articleWrapper.BatchCreate(ctxArticle, articles)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	for i, result := range results {
+		if result.AuthorID != createdAuthor.ID {
+			t.Errorf("Article %d: expected AuthorID %d (overwritten), got %d", i, createdAuthor.ID, result.AuthorID)
+		}
+	}
+}
+
+type selectQueryCounter struct {
+	count int
+}
+
+func (h *selectQueryCounter) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
+	return ctx
+}
+
+func (h *selectQueryCounter) AfterQuery(_ context.Context, event *bun.QueryEvent) {
+	if event.Operation() == "SELECT" {
+		h.count++
+	}
+}
+
+func TestWrapper_BatchCreate_NestedResource_ParentValidatedOnce(t *testing.T) {
+	db, cleanup := setupBatchNestedSharedDB(t)
+	defer cleanup()
+
+	authorWrapper := &datastore.Wrapper[BatchTestAuthor]{Store: db}
+	ctxAuthor := ctxWithMeta(batchTestAuthorMeta)
+
+	author := BatchTestAuthor{Name: "Test Author", Email: "author@example.com"}
+	createdAuthor, err := authorWrapper.Create(ctxAuthor, author)
+	if err != nil {
+		t.Fatal("Failed to create author:", err)
+	}
+
+	hook := &selectQueryCounter{}
+	db.GetDB().AddQueryHook(hook)
+
+	articleWrapper := &datastore.Wrapper[BatchTestArticle]{Store: db}
+	ctxArticle := ctxWithMeta(batchTestArticleMeta)
+	ctxArticle = context.WithValue(ctxArticle, metadata.ParentIDsKey, map[string]string{
+		"authorId": strconv.Itoa(createdAuthor.ID),
+	})
+
+	articles := []BatchTestArticle{
+		{Title: "Article 1", Content: "Content 1"},
+		{Title: "Article 2", Content: "Content 2"},
+		{Title: "Article 3", Content: "Content 3"},
+		{Title: "Article 4", Content: "Content 4"},
+		{Title: "Article 5", Content: "Content 5"},
+	}
+
+	_, err = articleWrapper.BatchCreate(ctxArticle, articles)
+	if err != nil {
+		t.Fatal("BatchCreate failed:", err)
+	}
+
+	if hook.count != 1 {
+		t.Errorf("Expected 1 parent validation SELECT, got %d", hook.count)
+	}
+}
+
 func TestWrapper_BatchUpdate_Transactional(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()

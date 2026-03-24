@@ -148,7 +148,7 @@ go tool cover -func=/tmp/coverage.out
 go tool cover -html=/tmp/coverage.out
 ```
 
-### Integration Tests (~197 Bruno tests across 12 examples)
+### Integration Tests (300 Bruno tests across 16 examples)
 
 ```bash
 # Install Bruno CLI

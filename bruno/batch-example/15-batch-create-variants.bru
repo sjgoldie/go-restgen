@@ -1,0 +1,50 @@
+meta {
+  name: Batch Create Variants
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/products/{{productWithVariantsId}}/variants/batch
+  body: json
+  auth: none
+}
+
+body:json {
+  [
+    {"name": "Medium", "sku_suffix": "-M", "price_adjust": 0},
+    {"name": "XL", "sku_suffix": "-XL", "price_adjust": 10.00},
+    {"name": "XXL", "sku_suffix": "-XXL", "price_adjust": 15.00}
+  ]
+}
+
+assert {
+  res.status: eq 201
+  res.body: isArray
+}
+
+tests {
+  test("Batch create returns 3 variants", function() {
+    expect(res.body.length).to.equal(3);
+  });
+
+  test("All variants have correct product_id", function() {
+    const expectedProductId = parseInt(bru.getVar("productWithVariantsId"));
+    res.body.forEach(function(variant) {
+      expect(variant.product_id).to.equal(expectedProductId);
+    });
+  });
+
+  test("Variants have correct names", function() {
+    expect(res.body[0].name).to.equal("Medium");
+    expect(res.body[1].name).to.equal("XL");
+    expect(res.body[2].name).to.equal("XXL");
+  });
+
+  test("All variants have IDs", function() {
+    res.body.forEach(function(variant) {
+      expect(variant.id).to.be.a("number");
+      expect(variant.id).to.be.above(0);
+    });
+  });
+}

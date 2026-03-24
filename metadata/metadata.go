@@ -120,6 +120,9 @@ const ParentTenantKey parentTenantKeyType = "restgen_parent_tenant"
 // DefaultMaxBodySize is the default maximum size for JSON request bodies (1 MB).
 const DefaultMaxBodySize int64 = 1 << 20
 
+// DefaultMaxUploadSize is the default maximum size for multipart file uploads (32 MB).
+const DefaultMaxUploadSize int64 = 32 << 20
+
 // TypeMetadata contains all metadata for a registered type
 type TypeMetadata struct {
 	TypeID          string        // Unique UUID for this type
@@ -168,7 +171,8 @@ type TypeMetadata struct {
 	BatchLimit int // Maximum items in batch operations (0 = no limit)
 
 	// Request body limits
-	MaxBodySize int64 // Max JSON request body size in bytes (default: DefaultMaxBodySize)
+	MaxBodySize   int64 // Max JSON request body size in bytes (default: DefaultMaxBodySize)
+	MaxUploadSize int64 // Max multipart file upload size in bytes (default: DefaultMaxUploadSize)
 }
 
 // Clone returns a deep copy of the TypeMetadata.
@@ -196,6 +200,7 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 		IsFileResource:  m.IsFileResource,
 		BatchLimit:      m.BatchLimit,
 		MaxBodySize:     m.MaxBodySize,
+		MaxUploadSize:   m.MaxUploadSize,
 		TenantField:     m.TenantField,
 		IsTenantTable:   m.IsTenantTable,
 	}

@@ -19,6 +19,14 @@ import (
 const testFieldName = "Name"
 const testParentIDCol = "parent_id"
 
+// fileModel with bun tags for file resource tests (prepareMetadata needs bun table)
+type fileModel struct {
+	bun.BaseModel `bun:"table:file_models"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	Name          string `bun:"name"`
+	filestore.FileFields
+}
+
 type testModel struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
@@ -621,6 +629,58 @@ func TestCreateMetadataMiddleware(t *testing.T) {
 		n, _ := capturedBody.Body.Read(buf)
 		if n != 256 {
 			t.Errorf("expected to read 256 bytes at limit, got %d", n)
+		}
+	})
+}
+
+func TestWithMaxUploadSize(t *testing.T) {
+	t.Run("returns MaxUploadSizeConfig with given size", func(t *testing.T) {
+		config := WithMaxUploadSize(10 << 20)
+		if config.Size != 10<<20 {
+			t.Errorf("expected size %d, got %d", 10<<20, config.Size)
+		}
+	})
+}
+
+func TestMaxUploadSizeDefault(t *testing.T) {
+	if !filestore.IsInitialized() {
+		storage := &mockFileStorage{}
+		if err := filestore.Initialize(storage); err != nil {
+			t.Fatalf("failed to initialize filestore: %v", err)
+		}
+	}
+
+	t.Run("file resource gets DefaultMaxUploadSize when not specified", func(t *testing.T) {
+		r := chi.NewRouter()
+		b := NewBuilder(r)
+
+		_, setup := prepareMetadata[fileModel](b, "/files", nil, nil, nil, nil, 0, "", true, "", nil, "", false, 0, 0)
+
+		if setup.meta.MaxUploadSize != metadata.DefaultMaxUploadSize {
+			t.Errorf("expected default MaxUploadSize %d, got %d", metadata.DefaultMaxUploadSize, setup.meta.MaxUploadSize)
+		}
+	})
+
+	t.Run("custom MaxUploadSize is set on metadata", func(t *testing.T) {
+		r := chi.NewRouter()
+		b := NewBuilder(r)
+
+		customSize := int64(10 << 20)
+		_, setup := prepareMetadata[fileModel](b, "/files", nil, nil, nil, nil, 0, "", true, "", nil, "", false, 0, customSize)
+
+		if setup.meta.MaxUploadSize != customSize {
+			t.Errorf("expected MaxUploadSize %d, got %d", customSize, setup.meta.MaxUploadSize)
+		}
+	})
+
+	t.Run("non-file resource gets DefaultMaxUploadSize", func(t *testing.T) {
+		r := chi.NewRouter()
+		b := NewBuilder(r)
+
+		_, setup := prepareMetadata[testModel](b, "/items", nil, nil, nil, nil, 0, "", false, "", nil, "", false, 0, 0)
+
+		if setup.meta.MaxUploadSize != metadata.DefaultMaxUploadSize {
+			t.Errorf("expected default MaxUploadSize %d, got %d", metadata.DefaultMaxUploadSize, setup.meta.MaxUploadSize)
 		}
 	})
 }

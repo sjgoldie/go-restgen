@@ -2026,6 +2026,7 @@ var testFileMeta = &metadata.TypeMetadata{
 	PKField:        "ID",
 	ModelType:      reflect.TypeOf(TestFileModel{}),
 	IsFileResource: true,
+	MaxUploadSize:  metadata.DefaultMaxUploadSize,
 }
 
 // mockFileStorage is a mock implementation of FileStorage for testing
@@ -2625,6 +2626,94 @@ func TestCreate_MultipartFormParseError(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status %d, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
+	}
+}
+
+func TestCreate_MultipartFormExceedsMaxUploadSize(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	fileWriter, err := writer.CreateFormFile("file", "big-file.txt")
+	if err != nil {
+		t.Fatal("Failed to create form file:", err)
+	}
+	fileWriter.Write(bytes.Repeat([]byte("x"), 200))
+
+	metadataField, _ := writer.CreateFormField("metadata")
+	metadataField.Write([]byte(`{"name":"Big File"}`))
+	writer.Close()
+
+	smallUploadMeta := &metadata.TypeMetadata{
+		TypeID:         "test_file_model_id",
+		TypeName:       "TestFileModel",
+		TableName:      "test_file_models",
+		URLParamUUID:   "test_file_uuid",
+		PKField:        "ID",
+		ModelType:      reflect.TypeOf(TestFileModel{}),
+		IsFileResource: true,
+		MaxUploadSize:  100,
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/files", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, smallUploadMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Create(handler.StandardCreate[TestFileModel])(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d for upload exceeding MaxUploadSize, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
+	}
+}
+
+func TestCreate_MultipartFormWithinMaxUploadSize(t *testing.T) {
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_file_models table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	fileWriter, err := writer.CreateFormFile("file", "small-file.txt")
+	if err != nil {
+		t.Fatal("Failed to create form file:", err)
+	}
+	fileWriter.Write([]byte("small"))
+
+	metadataField, _ := writer.CreateFormField("metadata")
+	metadataField.Write([]byte(`{"name":"Small File"}`))
+	writer.Close()
+
+	uploadMeta := &metadata.TypeMetadata{
+		TypeID:         "test_file_model_id",
+		TypeName:       "TestFileModel",
+		TableName:      "test_file_models",
+		URLParamUUID:   "test_file_uuid",
+		PKField:        "ID",
+		ModelType:      reflect.TypeOf(TestFileModel{}),
+		IsFileResource: true,
+		MaxUploadSize:  1 << 20,
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/files", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, uploadMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Create(handler.StandardCreate[TestFileModel])(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("Expected status %d for upload within MaxUploadSize, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
 	}
 }
 

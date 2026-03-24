@@ -135,6 +135,7 @@ router.RegisterRoutes[Model](builder, "/path",
 
     // File uploads (model must embed filestore.FileFields)
     router.AsFileResource(),
+    router.WithMaxUploadSize(10 << 20),  // optional: max upload size in bytes (default: 32 MB)
 
     // Request body limits
     router.WithMaxBodySize(1024),        // optional: max JSON body size in bytes (default: 1 MB)

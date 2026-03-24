@@ -112,6 +112,7 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 	var tenantField string
 	var isTenantTable bool
 	var maxBodySize int64
+	var maxUploadSize int64
 
 	for _, opt := range options {
 		switch v := opt.(type) {
@@ -163,17 +164,19 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			isTenantTable = true
 		case MaxBodySizeConfig:
 			maxBodySize = v.Size
+		case MaxUploadSizeConfig:
+			maxUploadSize = v.Size
 		case func(*Builder):
 			nested = v
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, endpoints, sses, relationName, singleRoute, isFileResource, pkField, joinOn, tenantField, isTenantTable, maxBodySize)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, endpoints, sses, relationName, singleRoute, isFileResource, pkField, joinOn, tenantField, isTenantTable, maxBodySize, maxUploadSize)
 }
 
 // prepareMetadata assembles type metadata and auth configuration before route registration.
 // This extracts the setup phase from registerRoutesWithBuilder to reduce cyclomatic complexity.
-func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool, maxBodySize int64) (string, *metadataSetup) {
+func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool, maxBodySize int64, maxUploadSize int64) (string, *metadataSetup) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -311,6 +314,13 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 		meta.MaxBodySize = metadata.DefaultMaxBodySize
 	}
 
+	// Set max upload size for file resources
+	if maxUploadSize > 0 {
+		meta.MaxUploadSize = maxUploadSize
+	} else {
+		meta.MaxUploadSize = metadata.DefaultMaxUploadSize
+	}
+
 	// Create middleware to inject metadata into context
 	metadataMiddleware := createMetadataMiddleware(meta)
 
@@ -323,8 +333,8 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool, maxBodySize int64) {
-	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, isTenantTable, maxBodySize)
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool, maxBodySize int64, maxUploadSize int64) {
+	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, isTenantTable, maxBodySize, maxUploadSize)
 	meta := setup.meta
 	authMap := setup.authMap
 	metadataMiddleware := setup.metadataMiddleware

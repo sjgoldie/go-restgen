@@ -73,6 +73,20 @@ type CustomUpdateFunc[T any] func(
 	item T,
 ) (*T, error)
 
+// CustomPatchFunc is the signature for custom Patch handlers.
+// The custom function receives the ID, the existing item (before patch),
+// and the patched item (after JSON overlay). This allows custom handlers
+// to compare old and new states.
+type CustomPatchFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	id string,
+	existing *T,
+	patched T,
+) (*T, error)
+
 // CustomDeleteFunc is the signature for custom Delete handlers.
 // The custom function receives the ID and performs the deletion.
 type CustomDeleteFunc[T any] func(
@@ -114,6 +128,15 @@ type CustomBatchUpdateFunc[T any] func(
 	items []T,
 ) ([]*T, error)
 
+// CustomBatchPatchFunc is the signature for custom batch patch handlers.
+type CustomBatchPatchFunc[T any] func(
+	ctx context.Context,
+	svc *service.Common[T],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	items []T,
+) ([]*T, error)
+
 // CustomBatchDeleteFunc is the signature for custom batch delete handlers.
 type CustomBatchDeleteFunc[T any] func(
 	ctx context.Context,
@@ -123,13 +146,18 @@ type CustomBatchDeleteFunc[T any] func(
 	items []T,
 ) error
 
-// batchSetup holds common setup data for batch operations
+// batchBase holds common setup data shared by all batch operations.
+type batchBase[T any] struct {
+	svc  *service.Common[T]
+	meta *metadata.TypeMetadata
+	auth *metadata.AuthInfo
+	ctx  context.Context
+}
+
+// batchSetup extends batchBase with decoded items for batch create/update/delete.
 type batchSetup[T any] struct {
-	svc   *service.Common[T]
-	meta  *metadata.TypeMetadata
-	auth  *metadata.AuthInfo
+	batchBase[T]
 	items []T
-	ctx   context.Context
 }
 
 // handleBodyReadError handles errors from JSON decoding or body reading.
@@ -145,8 +173,8 @@ func handleBodyReadError(ctx context.Context, w http.ResponseWriter, err error, 
 	WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 }
 
-// handleMutationError handles errors from Create/Update operations
-func handleMutationError(ctx context.Context, w http.ResponseWriter, err error, operation string) {
+// handleOperationError handles errors from mutation operations (create, update, patch, delete, batch).
+func handleOperationError(ctx context.Context, w http.ResponseWriter, err error, operation string) {
 	if errors.Is(err, context.Canceled) {
 		return // Client disconnected, no response needed
 	}
@@ -154,7 +182,6 @@ func handleMutationError(ctx context.Context, w http.ResponseWriter, err error, 
 		WriteError(w, http.StatusGatewayTimeout, ErrCodeRequestTimeout, http.StatusText(http.StatusGatewayTimeout))
 		return
 	}
-	// Check for validation error - return developer-authored message to client
 	var validationErr *apperrors.ValidationError
 	if errors.As(err, &validationErr) {
 		WriteError(w, http.StatusBadRequest, ErrCodeValidationError, validationErr.Message)
@@ -177,7 +204,7 @@ func handleMutationError(ctx context.Context, w http.ResponseWriter, err error, 
 		WriteError(w, http.StatusServiceUnavailable, ErrCodeServiceUnavailable, http.StatusText(http.StatusServiceUnavailable))
 		return
 	}
-	slog.ErrorContext(ctx, "failed to "+operation+" item", "error", err)
+	slog.ErrorContext(ctx, "failed to "+operation, "error", err)
 	WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 }
 
@@ -229,7 +256,7 @@ func setupRequest[T any](w http.ResponseWriter, r *http.Request, getFunc CustomG
 	if getFunc != nil {
 		item, err = getFunc(ctx, svc, meta, auth, id)
 		if err != nil {
-			handleMutationError(ctx, w, err, "get item")
+			handleOperationError(ctx, w, err, "get item")
 			return zero, err
 		}
 	}
@@ -473,7 +500,7 @@ func Create[T any](createFunc CustomCreateFunc[T]) http.HandlerFunc {
 		// Call the provided function
 		savedItem, err := createFunc(ctx, svc, meta, auth, item, file, fileMeta)
 		if err != nil {
-			handleMutationError(ctx, w, err, "create")
+			handleOperationError(ctx, w, err, "create")
 			return
 		}
 
@@ -526,7 +553,7 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 
 		savedItem, err := updateFunc(rc.ctx, rc.svc, rc.meta, rc.auth, rc.id, item)
 		if err != nil {
-			handleMutationError(rc.ctx, w, err, "update")
+			handleOperationError(rc.ctx, w, err, "update")
 			return
 		}
 
@@ -534,6 +561,144 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(savedItem); err != nil {
 			slog.ErrorContext(rc.ctx, "failed to encode response", "error", err)
+		}
+	}
+}
+
+// StandardPatch is the default Patch implementation.
+// It delegates to svc.Patch with the pre-merged item so validators receive OpPatch.
+func StandardPatch[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, existing *T, patched T) (*T, error) {
+	return svc.Patch(ctx, id, patched)
+}
+
+// StandardPatchByParentRelation patches an item via the parent's relation field.
+// Used for single routes like /posts/{id}/author where the child ID is resolved from the parent.
+func StandardPatchByParentRelation[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, existing *T, patched T) (*T, error) {
+	return svc.PatchByParentRelation(ctx, id, patched)
+}
+
+// Patch handles PATCH requests for partial updates.
+// It fetches the existing item using getFunc, clones it, overlays the request body onto the clone,
+// and passes both old and new states to the patch function.
+func Patch[T any](patchFunc CustomPatchFunc[T], getFunc CustomGetFunc[T]) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rc, err := setupRequest(w, r, getFunc)
+		if err != nil {
+			return
+		}
+
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			handleBodyReadError(rc.ctx, w, err, "failed to read request body")
+			return
+		}
+
+		patched := *rc.item
+		if err := json.Unmarshal(bodyBytes, &patched); err != nil {
+			handleBodyReadError(rc.ctx, w, err, "failed to decode request body")
+			return
+		}
+
+		if rc.id != "" {
+			if err := common.SetFieldFromString(&patched, rc.meta.PKField, rc.id); err != nil {
+				slog.ErrorContext(rc.ctx, "failed to set ID field", "error", err)
+				WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
+				return
+			}
+		}
+
+		savedItem, err := patchFunc(rc.ctx, rc.svc, rc.meta, rc.auth, rc.id, rc.item, patched)
+		if err != nil {
+			handleOperationError(rc.ctx, w, err, "patch")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(savedItem); err != nil {
+			slog.ErrorContext(rc.ctx, "failed to encode response", "error", err)
+		}
+	}
+}
+
+// StandardBatchPatch is the default batch patch implementation.
+// Delegates to svc.BatchPatch so validators receive OpPatch.
+func StandardBatchPatch[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, items []T) ([]*T, error) {
+	return svc.BatchPatch(ctx, items)
+}
+
+// BatchPatch handles PATCH requests to /resources/batch for batch partial updates.
+// Each item in the array must include its primary key so the existing record can be fetched.
+// The handler fetches each existing item, clones it, overlays the patch body,
+// and passes the merged items to the batch patch function.
+func BatchPatch[T any](patchFunc CustomBatchPatchFunc[T]) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		base := setupBatchBase[T](w, r)
+		if base == nil {
+			return
+		}
+
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			handleBodyReadError(base.ctx, w, err, "failed to read request body")
+			return
+		}
+
+		var rawItems []json.RawMessage
+		if err := json.Unmarshal(bodyBytes, &rawItems); err != nil {
+			handleBodyReadError(base.ctx, w, err, "failed to decode batch request")
+			return
+		}
+
+		if len(rawItems) == 0 {
+			WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
+			return
+		}
+
+		if base.meta.BatchLimit > 0 && len(rawItems) > base.meta.BatchLimit {
+			WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
+			return
+		}
+
+		merged := make([]T, 0, len(rawItems))
+		for _, raw := range rawItems {
+			var partial T
+			if err := json.Unmarshal(raw, &partial); err != nil {
+				handleBodyReadError(base.ctx, w, err, "failed to decode batch item")
+				return
+			}
+
+			id := common.GetFieldAsString(&partial, base.meta.PKField)
+			if id == "" {
+				WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
+				return
+			}
+
+			existing, err := base.svc.Get(base.ctx, id)
+			if err != nil {
+				handleOperationError(base.ctx, w, err, "batch patch fetch")
+				return
+			}
+
+			patched := *existing
+			if err := json.Unmarshal(raw, &patched); err != nil {
+				handleBodyReadError(base.ctx, w, err, "failed to apply patch")
+				return
+			}
+
+			merged = append(merged, patched)
+		}
+
+		results, err := patchFunc(base.ctx, base.svc, base.meta, base.auth, merged)
+		if err != nil {
+			handleOperationError(base.ctx, w, err, "batch patch")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(results); err != nil {
+			slog.ErrorContext(base.ctx, "failed to encode response", "error", err)
 		}
 	}
 }
@@ -578,7 +743,7 @@ func Delete[T any](deleteFunc CustomDeleteFunc[T]) http.HandlerFunc {
 		}
 
 		if err := deleteFunc(rc.ctx, rc.svc, rc.meta, rc.auth, rc.id); err != nil {
-			handleMutationError(rc.ctx, w, err, "delete")
+			handleOperationError(rc.ctx, w, err, "delete")
 			return
 		}
 
@@ -601,7 +766,7 @@ func Download[T any]() http.HandlerFunc {
 				WriteError(w, http.StatusNotFound, ErrCodeNotFound, http.StatusText(http.StatusNotFound))
 				return
 			}
-			handleMutationError(rc.ctx, w, err, "download")
+			handleOperationError(rc.ctx, w, err, "download")
 			return
 		}
 
@@ -652,7 +817,7 @@ func Action[T any](actionFunc ActionFunc[T]) http.HandlerFunc {
 
 		result, err := actionFunc(rc.ctx, rc.svc, rc.meta, rc.auth, rc.id, rc.item, payload)
 		if err != nil {
-			handleMutationError(rc.ctx, w, err, "action")
+			handleOperationError(rc.ctx, w, err, "action")
 			return
 		}
 
@@ -684,9 +849,10 @@ func StandardBatchDelete[T any](ctx context.Context, svc *service.Common[T], met
 	return svc.BatchDelete(ctx, items)
 }
 
-// setupBatch performs common validation and setup for batch operations.
-// Returns nil if successful, otherwise writes error response and returns error.
-func setupBatch[T any](w http.ResponseWriter, r *http.Request) *batchSetup[T] {
+// setupBatchBase performs common validation and setup shared by all batch operations:
+// service creation, metadata extraction, file resource check, and auth extraction.
+// Returns nil if an error response has already been written.
+func setupBatchBase[T any](w http.ResponseWriter, r *http.Request) *batchBase[T] {
 	ctx := r.Context()
 
 	svc, err := service.New[T]()
@@ -708,16 +874,27 @@ func setupBatch[T any](w http.ResponseWriter, r *http.Request) *batchSetup[T] {
 		return nil
 	}
 
+	auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
+
+	return &batchBase[T]{
+		svc:  svc,
+		meta: meta,
+		auth: auth,
+		ctx:  ctx,
+	}
+}
+
+// setupBatch performs full setup for batch create/update/delete: base setup + body decoding.
+// Returns nil if an error response has already been written.
+func setupBatch[T any](w http.ResponseWriter, r *http.Request) *batchSetup[T] {
+	base := setupBatchBase[T](w, r)
+	if base == nil {
+		return nil
+	}
+
 	var items []T
 	if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			slog.DebugContext(ctx, "failed to decode batch request", "error", err)
-			WriteError(w, http.StatusRequestEntityTooLarge, ErrCodeRequestTooLarge, http.StatusText(http.StatusRequestEntityTooLarge))
-			return nil
-		}
-		slog.DebugContext(ctx, "failed to decode batch request", "error", err)
-		WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
+		handleBodyReadError(base.ctx, w, err, "failed to decode batch request")
 		return nil
 	}
 
@@ -726,19 +903,14 @@ func setupBatch[T any](w http.ResponseWriter, r *http.Request) *batchSetup[T] {
 		return nil
 	}
 
-	if meta.BatchLimit > 0 && len(items) > meta.BatchLimit {
+	if base.meta.BatchLimit > 0 && len(items) > base.meta.BatchLimit {
 		WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 		return nil
 	}
 
-	auth, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
-
 	return &batchSetup[T]{
-		svc:   svc,
-		meta:  meta,
-		auth:  auth,
-		items: items,
-		ctx:   ctx,
+		batchBase: *base,
+		items:     items,
 	}
 }
 
@@ -752,7 +924,7 @@ func BatchCreate[T any](createFunc CustomBatchCreateFunc[T]) http.HandlerFunc {
 
 		results, err := createFunc(setup.ctx, setup.svc, setup.meta, setup.auth, setup.items)
 		if err != nil {
-			handleBatchError(setup.ctx, w, err, "batch create")
+			handleOperationError(setup.ctx, w, err, "batch create")
 			return
 		}
 
@@ -774,7 +946,7 @@ func BatchUpdate[T any](updateFunc CustomBatchUpdateFunc[T]) http.HandlerFunc {
 
 		results, err := updateFunc(setup.ctx, setup.svc, setup.meta, setup.auth, setup.items)
 		if err != nil {
-			handleBatchError(setup.ctx, w, err, "batch update")
+			handleOperationError(setup.ctx, w, err, "batch update")
 			return
 		}
 
@@ -795,45 +967,10 @@ func BatchDelete[T any](deleteFunc CustomBatchDeleteFunc[T]) http.HandlerFunc {
 		}
 
 		if err := deleteFunc(setup.ctx, setup.svc, setup.meta, setup.auth, setup.items); err != nil {
-			handleBatchError(setup.ctx, w, err, "batch delete")
+			handleOperationError(setup.ctx, w, err, "batch delete")
 			return
 		}
 
 		w.WriteHeader(http.StatusNoContent)
 	}
-}
-
-// handleBatchError handles errors from batch operations
-func handleBatchError(ctx context.Context, w http.ResponseWriter, err error, operation string) {
-	if errors.Is(err, context.Canceled) {
-		return
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		WriteError(w, http.StatusGatewayTimeout, ErrCodeRequestTimeout, http.StatusText(http.StatusGatewayTimeout))
-		return
-	}
-	var validationErr *apperrors.ValidationError
-	if errors.As(err, &validationErr) {
-		WriteError(w, http.StatusBadRequest, ErrCodeValidationError, validationErr.Message)
-		return
-	}
-	if errors.Is(err, apperrors.ErrDuplicate) {
-		WriteError(w, http.StatusBadRequest, ErrCodeDuplicate, http.StatusText(http.StatusBadRequest))
-		return
-	}
-	if errors.Is(err, apperrors.ErrInvalidReference) {
-		WriteError(w, http.StatusBadRequest, ErrCodeInvalidReference, http.StatusText(http.StatusBadRequest))
-		return
-	}
-	if errors.Is(err, apperrors.ErrNotFound) {
-		WriteError(w, http.StatusNotFound, ErrCodeNotFound, http.StatusText(http.StatusNotFound))
-		return
-	}
-	if errors.Is(err, apperrors.ErrUnavailable) {
-		w.Header().Set("Retry-After", "5")
-		WriteError(w, http.StatusServiceUnavailable, ErrCodeServiceUnavailable, http.StatusText(http.StatusServiceUnavailable))
-		return
-	}
-	slog.ErrorContext(ctx, "failed to "+operation, "error", err)
-	WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 }

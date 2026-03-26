@@ -18,6 +18,7 @@ type Operation string
 const (
 	OpCreate Operation = "create"
 	OpUpdate Operation = "update"
+	OpPatch  Operation = "patch"
 	OpDelete Operation = "delete"
 )
 

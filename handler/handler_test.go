@@ -3067,3 +3067,230 @@ func TestStandardDelete_NonFileResource_Succeeds(t *testing.T) {
 		t.Error("Expected user to be deleted")
 	}
 }
+
+func TestHandler_Patch(t *testing.T) {
+	tests := []struct {
+		name          string
+		setupUser     *TestUser
+		patchBody     string
+		requestID     string
+		expectedCode  int
+		expectedName  string
+		expectedEmail string
+	}{
+		{
+			name:          "patch name only preserves email",
+			setupUser:     &TestUser{Name: "Original", Email: "original@example.com"},
+			patchBody:     `{"name": "Patched"}`,
+			requestID:     "1",
+			expectedCode:  http.StatusOK,
+			expectedName:  "Patched",
+			expectedEmail: "original@example.com",
+		},
+		{
+			name:          "patch email only preserves name",
+			setupUser:     &TestUser{Name: "Original", Email: "original@example.com"},
+			patchBody:     `{"email": "patched@example.com"}`,
+			requestID:     "1",
+			expectedCode:  http.StatusOK,
+			expectedName:  "Original",
+			expectedEmail: "patched@example.com",
+		},
+		{
+			name:         "not found",
+			setupUser:    nil,
+			patchBody:    `{"name": "Patched"}`,
+			requestID:    "999",
+			expectedCode: http.StatusNotFound,
+		},
+		{
+			name:         "invalid json",
+			setupUser:    &TestUser{Name: "User", Email: "user@example.com"},
+			patchBody:    `invalid`,
+			requestID:    "1",
+			expectedCode: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cleanTable(t)
+
+			if tt.setupUser != nil {
+				db, _ := datastore.Get()
+				_, err := db.GetDB().NewInsert().Model(tt.setupUser).Returning("*").Exec(context.Background())
+				if err != nil {
+					t.Fatal("Failed to insert test user:", err)
+				}
+			}
+
+			r := chi.NewRouter()
+			r.Use(withMeta(userMeta))
+			r.Patch("/users/{id}", handler.Patch[TestUser](handler.StandardPatch[TestUser], handler.StandardGet[TestUser]))
+
+			req := httptest.NewRequest(http.MethodPatch, "/users/"+tt.requestID, bytes.NewReader([]byte(tt.patchBody)))
+			req.Header.Set("Content-Type", "application/json")
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != tt.expectedCode {
+				t.Errorf("Expected status %d, got %d: %s", tt.expectedCode, w.Code, w.Body.String())
+			}
+
+			if tt.expectedCode == http.StatusOK {
+				var result TestUser
+				if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+					t.Fatal("Failed to decode response:", err)
+				}
+
+				if result.Name != tt.expectedName {
+					t.Errorf("Expected name %q, got %q", tt.expectedName, result.Name)
+				}
+
+				if result.Email != tt.expectedEmail {
+					t.Errorf("Expected email %q, got %q", tt.expectedEmail, result.Email)
+				}
+			}
+		})
+	}
+}
+
+func TestCustomPatch(t *testing.T) {
+	cleanTable(t)
+
+	_, err := testDB.GetDB().NewInsert().Model(&TestUser{ID: 201, Name: "Original", Email: "original@test.com"}).Exec(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	defer testDB.GetDB().NewDelete().Model((*TestUser)(nil)).Where("id = 201").Exec(context.Background())
+
+	var capturedExisting *TestUser
+	var capturedPatched TestUser
+
+	customPatch := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, existing *TestUser, patched TestUser) (*TestUser, error) {
+		capturedExisting = existing
+		capturedPatched = patched
+		patched.Name += "-custom"
+		return svc.Update(ctx, id, patched)
+	}
+
+	body := []byte(`{"name": "Patched"}`)
+	req := httptest.NewRequest(http.MethodPatch, "/users/201", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(userMeta.URLParamUUID, "201")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = ctxWithMeta(ctx, userMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Patch[TestUser](customPatch, handler.StandardGet[TestUser])(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		return
+	}
+
+	if capturedExisting == nil {
+		t.Fatal("Expected existing to be non-nil")
+	}
+	if capturedExisting.Name != "Original" {
+		t.Errorf("Expected existing name 'Original', got %q", capturedExisting.Name)
+	}
+	if capturedExisting.Email != "original@test.com" {
+		t.Errorf("Expected existing email 'original@test.com', got %q", capturedExisting.Email)
+	}
+
+	if capturedPatched.Name != "Patched" {
+		t.Errorf("Expected patched name 'Patched', got %q", capturedPatched.Name)
+	}
+	if capturedPatched.Email != "original@test.com" {
+		t.Errorf("Expected patched email 'original@test.com', got %q", capturedPatched.Email)
+	}
+
+	var result TestUser
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if result.Name != "Patched-custom" {
+		t.Errorf("Expected name 'Patched-custom', got %q", result.Name)
+	}
+}
+
+func TestBatchPatch_FileResource_Returns501(t *testing.T) {
+	body := bytes.NewReader([]byte(`[{"id":1,"name":"test"}]`))
+	req := httptest.NewRequest(http.MethodPatch, "/files/batch", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.BatchPatch[TestFileModel](handler.StandardBatchPatch[TestFileModel])(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("Expected status %d for file resource batch patch, got %d: %s",
+			http.StatusNotImplemented, w.Code, w.Body.String())
+	}
+}
+
+func TestBatchCreate_FileResource_Returns501(t *testing.T) {
+	body := bytes.NewReader([]byte(`[{"name":"test"}]`))
+	req := httptest.NewRequest(http.MethodPost, "/files/batch", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.BatchCreate[TestFileModel](handler.StandardBatchCreate[TestFileModel])(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("Expected status %d for file resource batch create, got %d: %s",
+			http.StatusNotImplemented, w.Code, w.Body.String())
+	}
+}
+
+func TestBatchUpdate_FileResource_Returns501(t *testing.T) {
+	body := bytes.NewReader([]byte(`[{"id":1,"name":"test"}]`))
+	req := httptest.NewRequest(http.MethodPut, "/files/batch", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.BatchUpdate[TestFileModel](handler.StandardBatchUpdate[TestFileModel])(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("Expected status %d for file resource batch update, got %d: %s",
+			http.StatusNotImplemented, w.Code, w.Body.String())
+	}
+}
+
+func TestBatchDelete_FileResource_Returns501(t *testing.T) {
+	body := bytes.NewReader([]byte(`[{"id":1}]`))
+	req := httptest.NewRequest(http.MethodDelete, "/files/batch", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.BatchDelete[TestFileModel](handler.StandardBatchDelete[TestFileModel])(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("Expected status %d for file resource batch delete, got %d: %s",
+			http.StatusNotImplemented, w.Code, w.Body.String())
+	}
+}

@@ -2340,3 +2340,106 @@ func TestTenantAuth_WithOwnership_BothEnforced(t *testing.T) {
 		}
 	}
 }
+
+func TestAuth_PatchRoute_AllPublic(t *testing.T) {
+	r := setupAuthTest(t, func(b *router.Builder) {
+		router.RegisterRoutes[AuthTestUser](b, "/users", router.AllPublic())
+	})
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	_, _ = db.NewInsert().Model(&AuthTestUser{Name: "Test User"}).Exec(context.Background())
+
+	body := `{"name": "Patched"}`
+	req := httptest.NewRequest("PATCH", "/users/1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == http.StatusMethodNotAllowed {
+		t.Error("PATCH should not return 405; AllPublic must include MethodPatch")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAuth_PatchRoute_MethodSpecific(t *testing.T) {
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	if _, err := db.NewCreateTable().Model((*AuthTestPost)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create posts table: %v", err)
+	}
+	_, _ = db.NewDelete().Model((*AuthTestPost)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.Exec("DELETE FROM sqlite_sequence WHERE name = 'auth_test_posts'")
+	_, _ = db.NewInsert().Model(&AuthTestPost{UserID: "user123", Title: "Test Post"}).Exec(ctx)
+
+	r := addAuthMiddleware(chi.NewRouter(), "user123", []string{"user"})
+	b := router.NewBuilder(r)
+	router.RegisterRoutes[AuthTestPost](b, "/posts",
+		router.AuthConfig{
+			Methods: []string{router.MethodPut},
+			Scopes:  []string{"admin"},
+		},
+		router.AuthConfig{
+			Methods: []string{router.MethodPatch},
+			Scopes:  []string{"user"},
+		},
+		router.AuthConfig{
+			Methods: []string{router.MethodGet, router.MethodList, router.MethodPost, router.MethodDelete},
+			Scopes:  []string{router.ScopePublic},
+		},
+	)
+
+	putBody := `{"title": "Updated", "user_id": "user123"}`
+	req := httptest.NewRequest("PUT", "/posts/1", bytes.NewBufferString(putBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected PUT to return 403 (requires admin), got %d", w.Code)
+	}
+
+	patchBody := `{"title": "Patched"}`
+	req = httptest.NewRequest("PATCH", "/posts/1", bytes.NewBufferString(patchBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == http.StatusMethodNotAllowed {
+		t.Error("PATCH should not return 405")
+	}
+	if w.Code == http.StatusForbidden {
+		t.Error("PATCH should not return 403 for user with 'user' scope")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected PATCH to return 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAuth_BatchPatchRoute(t *testing.T) {
+	r := setupAuthTest(t, func(b *router.Builder) {
+		router.RegisterRoutes[AuthTestUser](b, "/users", router.AllPublicWithBatch())
+	})
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	_, _ = db.NewInsert().Model(&AuthTestUser{Name: "User 1"}).Exec(context.Background())
+	_, _ = db.NewInsert().Model(&AuthTestUser{Name: "User 2"}).Exec(context.Background())
+
+	body := `[{"id": 1, "name": "Patched 1"}]`
+	req := httptest.NewRequest("PATCH", "/users/batch", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == http.StatusMethodNotAllowed || w.Code == http.StatusNotFound {
+		t.Errorf("Batch PATCH route should exist; got %d", w.Code)
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}

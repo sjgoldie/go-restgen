@@ -30,6 +30,7 @@ type customHandlers[T any] struct {
 	getAll handler.CustomGetAllFunc[T]
 	create handler.CustomCreateFunc[T]
 	update handler.CustomUpdateFunc[T]
+	patch  handler.CustomPatchFunc[T]
 	delete handler.CustomDeleteFunc[T]
 }
 
@@ -37,6 +38,7 @@ type customHandlers[T any] struct {
 type batchHandlers[T any] struct {
 	create handler.CustomBatchCreateFunc[T]
 	update handler.CustomBatchUpdateFunc[T]
+	patch  handler.CustomBatchPatchFunc[T]
 	delete handler.CustomBatchDeleteFunc[T]
 }
 
@@ -132,6 +134,8 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			custom.create = v.Fn
 		case CustomUpdateConfig[T]:
 			custom.update = v.Fn
+		case CustomPatchConfig[T]:
+			custom.patch = v.Fn
 		case CustomDeleteConfig[T]:
 			custom.delete = v.Fn
 		case BatchLimitConfig:
@@ -140,6 +144,8 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			batch.create = v.Fn
 		case CustomBatchUpdateConfig[T]:
 			batch.update = v.Fn
+		case CustomBatchPatchConfig[T]:
+			batch.patch = v.Fn
 		case CustomBatchDeleteConfig[T]:
 			batch.delete = v.Fn
 		case ActionConfig[T]:
@@ -332,6 +338,37 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	}
 }
 
+// registerSingleRoutes registers GET (and optionally PUT/PATCH) for single-object routes.
+func registerSingleRoutes[T any](r chi.Router, b *Builder, meta *metadata.TypeMetadata, singleRoute *SingleRouteConfig, relationName string, custom customHandlers[T], authMap map[string]*AuthConfig) {
+	// Use parent's URL param UUID so handler gets parent ID, or empty for root-level
+	meta.URLParamUUID = ""
+	if b.parentMeta != nil {
+		meta.URLParamUUID = b.parentMeta.URLParamUUID
+	}
+	meta.RelationName = relationName
+	meta.ParentFKField = singleRoute.ParentFKField
+
+	getFunc := custom.get
+	if getFunc == nil {
+		getFunc = handler.StandardGetByParentRelation[T]
+	}
+	r.Method("GET", "/", wrapHandler(handler.Get[T](getFunc), authMap[MethodGet]))
+
+	if singleRoute.WithUpdate {
+		updateFunc := custom.update
+		if updateFunc == nil {
+			updateFunc = handler.StandardUpdateByParentRelation[T]
+		}
+		r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), authMap[MethodPut]))
+
+		patchFunc := custom.patch
+		if patchFunc == nil {
+			patchFunc = handler.StandardPatchByParentRelation[T]
+		}
+		r.Method("PATCH", "/", wrapHandler(handler.Patch[T](patchFunc, handler.StandardGetByParentRelation[T]), authMap[MethodPatch]))
+	}
+}
+
 // registerRoutesWithBuilder is the internal implementation
 func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool, maxBodySize int64, maxUploadSize int64) {
 	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, isTenantTable, maxBodySize, maxUploadSize)
@@ -347,31 +384,7 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 		var nestedRouter chi.Router
 
 		if singleRoute != nil {
-			// Single route registration (for belongs-to relations like /posts/{id}/author)
-			// Use parent's URL param UUID so handler gets parent ID, or empty for root-level
-			meta.URLParamUUID = ""
-			if b.parentMeta != nil {
-				meta.URLParamUUID = b.parentMeta.URLParamUUID
-			}
-			meta.RelationName = relationName
-			meta.ParentFKField = singleRoute.ParentFKField
-
-			// GET endpoint - returns the single related object
-			getFunc := custom.get
-			if getFunc == nil {
-				getFunc = handler.StandardGetByParentRelation[T]
-			}
-			r.Method("GET", "/", wrapHandler(handler.Get[T](getFunc), authMap[MethodGet]))
-
-			// PUT endpoint - updates the single related object (optional)
-			if singleRoute.WithPut {
-				updateFunc := custom.update
-				if updateFunc == nil {
-					updateFunc = handler.StandardUpdateByParentRelation[T]
-				}
-				r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), authMap[MethodPut]))
-			}
-
+			registerSingleRoutes[T](r, b, meta, singleRoute, relationName, custom, authMap)
 			nestedRouter = r
 		} else {
 			// Standard CRUD routes
@@ -412,6 +425,15 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 						r.Method("PUT", "/", wrapHandler(handler.BatchUpdate[T](batchUpdateFunc), authMap[MethodBatchUpdate]))
 					}
 
+					// Batch patch - PATCH /resources/batch
+					if authMap[MethodBatchPatch] != nil {
+						batchPatchFunc := batch.patch
+						if batchPatchFunc == nil {
+							batchPatchFunc = handler.StandardBatchPatch[T]
+						}
+						r.Method("PATCH", "/", wrapHandler(handler.BatchPatch[T](batchPatchFunc), authMap[MethodBatchPatch]))
+					}
+
 					// Batch delete - DELETE /resources/batch
 					if authMap[MethodBatchDelete] != nil {
 						batchDeleteFunc := batch.delete
@@ -445,6 +467,16 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 						updateFunc = handler.StandardUpdate[T]
 					}
 					r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), authMap[MethodPut]))
+				}
+
+				// Patch endpoint - PATCH /resources/{id}
+				// File resources don't support patch (you delete and re-upload)
+				if !isFileResource {
+					patchFunc := custom.patch
+					if patchFunc == nil {
+						patchFunc = handler.StandardPatch[T]
+					}
+					r.Method("PATCH", "/", wrapHandler(handler.Patch[T](patchFunc, handler.StandardGet[T]), authMap[MethodPatch]))
 				}
 
 				// Delete endpoint - DELETE /resources/{id}

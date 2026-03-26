@@ -2596,6 +2596,169 @@ func TestWrapper_UpdateByParentRelation_DivergentIDs(t *testing.T) {
 	}
 }
 
+// TestWrapper_PatchByParentRelation tests patching an item via parent's FK field
+func TestWrapper_PatchByParentRelation(t *testing.T) {
+	db, cleanup := setupIncludeTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	authorWrapper := &datastore.Wrapper[TestIncludeAuthor]{Store: db}
+	authorMeta := &metadata.TypeMetadata{
+		TypeID:       "test_author_id",
+		TypeName:     "TestIncludeAuthor",
+		TableName:    "include_authors",
+		URLParamUUID: "author_id",
+		PKField:      "ID",
+		ModelType:    reflect.TypeOf(TestIncludeAuthor{}),
+	}
+	authorCtx := context.WithValue(ctx, metadata.MetadataKey, authorMeta)
+	author, err := authorWrapper.Create(authorCtx, TestIncludeAuthor{Name: "Original Name"})
+	if err != nil {
+		t.Fatal("Failed to create author:", err)
+	}
+
+	postWrapper := &datastore.Wrapper[TestIncludePost]{Store: db}
+	postMeta := &metadata.TypeMetadata{
+		TypeID:       "test_post_id",
+		TypeName:     "TestIncludePost",
+		TableName:    "include_posts",
+		URLParamUUID: "post_id",
+		ModelType:    reflect.TypeOf(TestIncludePost{}),
+	}
+	postCtx := context.WithValue(ctx, metadata.MetadataKey, postMeta)
+	post, err := postWrapper.Create(postCtx, TestIncludePost{AuthorID: author.ID, OwnerID: "alice", Title: "Test Post"})
+	if err != nil {
+		t.Fatal("Failed to create post:", err)
+	}
+
+	authorFromPostMeta := &metadata.TypeMetadata{
+		TypeID:        "test_author_from_post_id",
+		TypeName:      "TestIncludeAuthor",
+		TableName:     "include_authors",
+		URLParamUUID:  postMeta.URLParamUUID,
+		PKField:       "ID",
+		ModelType:     reflect.TypeOf(TestIncludeAuthor{}),
+		ParentType:    reflect.TypeOf(TestIncludePost{}),
+		ParentMeta:    postMeta,
+		ParentFKField: "AuthorID",
+	}
+	authorFromPostCtx := context.WithValue(ctx, metadata.MetadataKey, authorFromPostMeta)
+
+	patched, err := authorWrapper.PatchByParentRelation(authorFromPostCtx, strconv.Itoa(post.ID), TestIncludeAuthor{Name: "Patched Name", CreatedAt: author.CreatedAt})
+	if err != nil {
+		t.Fatal("PatchByParentRelation failed:", err)
+	}
+
+	if patched.Name != "Patched Name" {
+		t.Errorf("Expected patched name 'Patched Name', got %s", patched.Name)
+	}
+	if patched.ID != author.ID {
+		t.Errorf("Expected returned author ID %d, got %d", author.ID, patched.ID)
+	}
+
+	retrieved, err := authorWrapper.Get(authorCtx, strconv.Itoa(author.ID))
+	if err != nil {
+		t.Fatal("Failed to get author:", err)
+	}
+	if retrieved.Name != "Patched Name" {
+		t.Errorf("Expected persisted name 'Patched Name', got %s", retrieved.Name)
+	}
+}
+
+// TestWrapper_PatchByParentRelation_DivergentIDs tests that PatchByParentRelation
+// resolves the correct child ID when parent ID != child ID.
+func TestWrapper_PatchByParentRelation_DivergentIDs(t *testing.T) {
+	db, cleanup := setupIncludeTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	authorWrapper := &datastore.Wrapper[TestIncludeAuthor]{Store: db}
+	authorMeta := &metadata.TypeMetadata{
+		TypeID:       "test_author_id",
+		TypeName:     "TestIncludeAuthor",
+		TableName:    "include_authors",
+		URLParamUUID: "author_id",
+		PKField:      "ID",
+		ModelType:    reflect.TypeOf(TestIncludeAuthor{}),
+	}
+	authorCtx := context.WithValue(ctx, metadata.MetadataKey, authorMeta)
+
+	_, err := authorWrapper.Create(authorCtx, TestIncludeAuthor{Name: "Dummy"})
+	if err != nil {
+		t.Fatal("Failed to create dummy author:", err)
+	}
+
+	author, err := authorWrapper.Create(authorCtx, TestIncludeAuthor{Name: "Real Author"})
+	if err != nil {
+		t.Fatal("Failed to create author:", err)
+	}
+	if author.ID == 1 {
+		t.Fatal("Expected author ID != 1, got 1 — dummy offset failed")
+	}
+
+	postWrapper := &datastore.Wrapper[TestIncludePost]{Store: db}
+	postMeta := &metadata.TypeMetadata{
+		TypeID:       "test_post_id",
+		TypeName:     "TestIncludePost",
+		TableName:    "include_posts",
+		URLParamUUID: "post_id",
+		PKField:      "ID",
+		ModelType:    reflect.TypeOf(TestIncludePost{}),
+	}
+	postCtx := context.WithValue(ctx, metadata.MetadataKey, postMeta)
+	post, err := postWrapper.Create(postCtx, TestIncludePost{AuthorID: author.ID, OwnerID: "alice", Title: "Test Post"})
+	if err != nil {
+		t.Fatal("Failed to create post:", err)
+	}
+	if post.ID == author.ID {
+		t.Fatalf("Test requires post.ID (%d) != author.ID (%d)", post.ID, author.ID)
+	}
+
+	authorFromPostMeta := &metadata.TypeMetadata{
+		TypeID:        "test_author_from_post_id",
+		TypeName:      "TestIncludeAuthor",
+		TableName:     "include_authors",
+		URLParamUUID:  postMeta.URLParamUUID,
+		PKField:       "ID",
+		ModelType:     reflect.TypeOf(TestIncludeAuthor{}),
+		ParentType:    reflect.TypeOf(TestIncludePost{}),
+		ParentMeta:    postMeta,
+		ParentFKField: "AuthorID",
+	}
+	authorFromPostCtx := context.WithValue(ctx, metadata.MetadataKey, authorFromPostMeta)
+
+	patchedAuthor := TestIncludeAuthor{ID: post.ID, Name: "Patched Via Parent", CreatedAt: author.CreatedAt}
+	patched, err := authorWrapper.PatchByParentRelation(authorFromPostCtx, strconv.Itoa(post.ID), patchedAuthor)
+	if err != nil {
+		t.Fatal("PatchByParentRelation failed:", err)
+	}
+
+	if patched.ID != author.ID {
+		t.Errorf("Expected returned author ID %d, got %d", author.ID, patched.ID)
+	}
+	if patched.Name != "Patched Via Parent" {
+		t.Errorf("Expected name 'Patched Via Parent', got %q", patched.Name)
+	}
+
+	retrieved, err := authorWrapper.Get(authorCtx, strconv.Itoa(author.ID))
+	if err != nil {
+		t.Fatal("Failed to get author:", err)
+	}
+	if retrieved.Name != "Patched Via Parent" {
+		t.Errorf("Expected persisted name 'Patched Via Parent', got %q", retrieved.Name)
+	}
+
+	dummy, err := authorWrapper.Get(authorCtx, "1")
+	if err != nil {
+		t.Fatal("Failed to get dummy author:", err)
+	}
+	if dummy.Name != "Dummy" {
+		t.Errorf("Dummy author was incorrectly modified: got name %q", dummy.Name)
+	}
+}
+
 // Batch operation tests
 
 // BatchTestAuthor is a test model for batch nested tests

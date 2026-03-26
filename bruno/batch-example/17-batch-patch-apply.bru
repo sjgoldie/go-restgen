@@ -1,0 +1,26 @@
+meta {
+  name: Batch Patch Apply
+  type: http
+  seq: 17
+}
+
+patch {
+  url: {{baseUrl}}/products/batch
+  body: json
+  auth: none
+}
+
+body:json {
+  [
+    {"id": {{patchTargetId1}}, "name": "Patch Target A Patched"},
+    {"id": {{patchTargetId2}}, "price": 19.99}
+  ]
+}
+
+assert {
+  res.status: eq 200
+  res.body[0].name: eq Patch Target A Patched
+  res.body[0].sku: eq PTA01
+  res.body[1].price: eq 19.99
+  res.body[1].name: eq Patch Target B
+}

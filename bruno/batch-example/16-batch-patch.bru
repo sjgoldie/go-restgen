@@ -1,0 +1,29 @@
+meta {
+  name: Batch Patch Products
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/products/batch
+  body: json
+  auth: none
+}
+
+body:json {
+  [
+    {"name": "Patch Target A", "sku": "PTA01", "price": 9.99, "stock": 100},
+    {"name": "Patch Target B", "sku": "PTB01", "price": 14.99, "stock": 50}
+  ]
+}
+
+assert {
+  res.status: eq 201
+  res.body[0].id: isDefined
+  res.body[1].id: isDefined
+}
+
+script:post-response {
+  bru.setVar("patchTargetId1", res.body[0].id);
+  bru.setVar("patchTargetId2", res.body[1].id);
+}

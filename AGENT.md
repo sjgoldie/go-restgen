@@ -111,7 +111,7 @@ router.RegisterRoutes[Model](builder, "/path",
     },
 
     // Single resource (for belongs-to relations or /me endpoints)
-    router.AsSingleRouteWithPut(""),       // GET and PUT only, ID from parent FK or custom handler
+    router.AsSingleRouteWithUpdate(""),        // GET, PUT, and PATCH — ID from parent FK or custom handler
 
     // Ownership (users only see their data, admins bypass)
     router.AllWithOwnershipUnless([]string{"UserID"}, "admin"),
@@ -131,6 +131,7 @@ router.RegisterRoutes[Model](builder, "/path",
     router.WithCustomGetAll(customGetAllFn),
     router.WithCustomCreate(customCreateFn),
     router.WithCustomUpdate(customUpdateFn),
+    router.WithCustomPatch(customPatchFn),
     router.WithCustomDelete(customDeleteFn),
 
     // File uploads (model must embed filestore.FileFields)
@@ -201,9 +202,9 @@ router.RegisterRoutes[Blog](b, "/blogs", router.AllPublic(), func(b *router.Buil
 
 Creates routes:
 - `GET/POST /blogs`
-- `GET/PUT/DELETE /blogs/{blogId}`
+- `GET/PUT/PATCH/DELETE /blogs/{blogId}`
 - `GET/POST /blogs/{blogId}/posts`
-- `GET/PUT/DELETE /blogs/{blogId}/posts/{postId}`
+- `GET/PUT/PATCH/DELETE /blogs/{blogId}/posts/{postId}`
 
 The framework automatically validates parent exists and sets `BlogID` on create.
 
@@ -334,6 +335,20 @@ func customUpdate(
     item User,
 ) (*User, error) {
     return svc.Update(ctx, id, item)
+}
+
+// Patch item (partial update)
+// Receives existing (before patch) and patched (after JSON overlay)
+func customPatch(
+    ctx context.Context,
+    svc *service.Common[User],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    existing *User,
+    patched User,
+) (*User, error) {
+    return svc.Patch(ctx, id, patched)
 }
 
 // Delete item
@@ -576,7 +591,8 @@ For each resource:
 - [ ] `GET /resources` returns list
 - [ ] `GET /resources/{id}` returns single item
 - [ ] `POST /resources` creates item
-- [ ] `PUT /resources/{id}` updates item
+- [ ] `PUT /resources/{id}` updates item (full replace)
+- [ ] `PATCH /resources/{id}` partially updates item (only sent fields)
 - [ ] `DELETE /resources/{id}` deletes item
 - [ ] Unauthorized requests are rejected
 - [ ] Ownership filters work correctly

@@ -320,9 +320,9 @@ func main() {
 	b := router.NewBuilder(r)
 
 	// /me endpoint - single route with custom Get and Update using auth token
-	// AsSingleRouteWithPut("") creates GET /me and PUT /me (no {id} parameter)
+	// AsSingleRouteWithUpdate("") creates GET, PUT, and PATCH /me (no {id} parameter)
 	router.RegisterRoutes[User](b, "/me",
-		router.AsSingleRouteWithPut(""), // Empty string = no parent FK, ID from custom logic
+		router.AsSingleRouteWithUpdate(""), // Empty string = no parent FK, ID from custom logic
 		router.IsAuthenticated(),
 		router.WithCustomGet(customGetMe),
 		router.WithCustomUpdate(customUpdateMe),

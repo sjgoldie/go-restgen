@@ -25,7 +25,7 @@ router.RegisterRoutes[Model](builder, "/path",
 
     // Single resource (belongs-to or /me)
     router.AsSingleRoute("AuthorID"),
-    router.AsSingleRouteWithPut(""),
+    router.AsSingleRouteWithUpdate(""),
 
     // Query options (individual)
     router.WithFilters("Status", "Name"),
@@ -54,11 +54,13 @@ router.RegisterRoutes[Model](builder, "/path",
     router.WithCustomGetAll(customGetAllFn),
     router.WithCustomCreate(customCreateFn),
     router.WithCustomUpdate(customUpdateFn),
+    router.WithCustomPatch(customPatchFn),
     router.WithCustomDelete(customDeleteFn),
 
     // Custom batch handlers
     router.WithCustomBatchCreate(customBatchCreateFn),
     router.WithCustomBatchUpdate(customBatchUpdateFn),
+    router.WithCustomBatchPatch(customBatchPatchFn),
     router.WithCustomBatchDelete(customBatchDeleteFn),
     router.WithBatchLimit(100),
 
@@ -134,6 +136,18 @@ type CustomUpdateFunc[T any] func(
     auth *metadata.AuthInfo,
     id string,
     item T,
+) (*T, error)
+
+// PATCH /resource/{id} (partial update)
+// Receives existing (before) and patched (after JSON overlay)
+type CustomPatchFunc[T any] func(
+    ctx context.Context,
+    svc *service.Common[T],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    existing *T,
+    patched T,
 ) (*T, error)
 
 // DELETE /resource/{id}
@@ -240,6 +254,14 @@ type CustomBatchUpdateFunc[T any] func(
     items []T,
 ) ([]*T, error)
 
+type CustomBatchPatchFunc[T any] func(
+    ctx context.Context,
+    svc *service.Common[T],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    items []T,
+) ([]*T, error)
+
 type CustomBatchDeleteFunc[T any] func(
     ctx context.Context,
     svc *service.Common[T],
@@ -254,7 +276,7 @@ type CustomBatchDeleteFunc[T any] func(
 ```go
 // Validator — return error to reject with 400
 router.WithValidator(func(vc metadata.ValidationContext[T]) error {
-    // vc.Operation: metadata.OpCreate, OpUpdate, OpDelete
+    // vc.Operation: metadata.OpCreate, OpUpdate, OpPatch, OpDelete
     // vc.New: incoming item (nil for delete)
     // vc.Old: existing item (nil for create)
     // vc.Ctx: request context
@@ -349,9 +371,9 @@ defer datastore.Cleanup()
 ## Auth Method Constants
 
 ```go
-router.MethodGet, router.MethodList, router.MethodPost, router.MethodPut, router.MethodDelete
-router.MethodAll           // Expands to Get, List, Post, Put, Delete (excludes batch)
-router.MethodBatchCreate, router.MethodBatchUpdate, router.MethodBatchDelete
+router.MethodGet, router.MethodList, router.MethodPost, router.MethodPut, router.MethodPatch, router.MethodDelete
+router.MethodAll           // Expands to Get, List, Post, Put, Patch, Delete (excludes batch)
+router.MethodBatchCreate, router.MethodBatchUpdate, router.MethodBatchPatch, router.MethodBatchDelete
 router.MethodAllWithBatch  // All including batch
 router.ScopePublic         // No auth required
 router.ScopeAuthOnly       // Auth required, no scope check

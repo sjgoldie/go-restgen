@@ -31,10 +31,10 @@ func WithJoinOn(childCol, parentCol string) JoinOnConfig {
 
 // SingleRouteConfig marks this route as a single-object route (not a collection)
 // Used for belongs-to relations like /posts/{id}/author
-// Only GET is registered; the ID is resolved from the parent's FK field
+// Only GET is registered by default; the ID is resolved from the parent's FK field
 type SingleRouteConfig struct {
 	ParentFKField string // Field name on parent that holds the child's ID (e.g., "AuthorID")
-	WithPut       bool   // If true, also register PUT endpoint
+	WithUpdate    bool   // If true, also register PUT and PATCH endpoints
 }
 
 // AsSingleRoute marks this as a single-object route with GET only
@@ -42,11 +42,11 @@ type SingleRouteConfig struct {
 // Example: AsSingleRoute("AuthorID") for /posts/{id}/author where Post.AuthorID holds User.ID
 // Pass empty string for routes like /api/me where ID comes from auth context
 func AsSingleRoute(parentFKField string) SingleRouteConfig {
-	return SingleRouteConfig{ParentFKField: parentFKField, WithPut: false}
+	return SingleRouteConfig{ParentFKField: parentFKField}
 }
 
-// AsSingleRouteWithPut marks this as a single-object route with GET and PUT
+// AsSingleRouteWithUpdate marks this as a single-object route with GET, PUT, and PATCH
 // parentFKField is the field name on the parent that holds this object's ID
-func AsSingleRouteWithPut(parentFKField string) SingleRouteConfig {
-	return SingleRouteConfig{ParentFKField: parentFKField, WithPut: true}
+func AsSingleRouteWithUpdate(parentFKField string) SingleRouteConfig {
+	return SingleRouteConfig{ParentFKField: parentFKField, WithUpdate: true}
 }

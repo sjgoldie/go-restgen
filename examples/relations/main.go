@@ -208,20 +208,20 @@ func main() {
 		router.AllPublic(),
 	)
 
-	// /me - single route with custom get/put that returns current user from auth
-	// This demonstrates AsSingleRouteWithPut("") with no parent FK - ID comes from auth context
+	// /me - single route with custom get/put/patch that returns current user from auth
+	// This demonstrates AsSingleRouteWithUpdate("") with no parent FK - ID comes from auth context
 	router.RegisterRoutes[User](b, "/me",
-		router.AsSingleRouteWithPut(""),
-		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut}, Scopes: []string{"user"}},
+		router.AsSingleRouteWithUpdate(""),
+		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut, router.MethodPatch}, Scopes: []string{"user"}},
 		router.WithCustomGet(getMe),
 		router.WithCustomUpdate(updateMe),
 	)
 
-	// /broken-me - single route without custom get/put (should return 500)
-	// This demonstrates what happens when AsSingleRouteWithPut("") is used without custom handlers
+	// /broken-me - single route without custom get/put/patch (should return 500)
+	// This demonstrates what happens when AsSingleRouteWithUpdate("") is used without custom handlers
 	router.RegisterRoutes[User](b, "/broken-me",
-		router.AsSingleRouteWithPut(""),
-		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut}, Scopes: []string{"user"}},
+		router.AsSingleRouteWithUpdate(""),
+		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut, router.MethodPatch}, Scopes: []string{"user"}},
 	)
 
 	// Posts - top level, ownership-based with admin bypass
@@ -229,11 +229,11 @@ func main() {
 	router.RegisterRoutes[Post](b, "/posts",
 		router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
 		func(b *router.Builder) {
-			// Author - single route for belongs-to relation (GET/PUT /posts/{id}/author)
+			// Author - single route for belongs-to relation (GET/PUT/PATCH /posts/{id}/author)
 			// Also enables ?include=Author on Post
 			router.RegisterRoutes[User](b, "/author",
 				router.WithRelationName("Author"),
-				router.AsSingleRouteWithPut("AuthorID"),
+				router.AsSingleRouteWithUpdate("AuthorID"),
 				router.AllPublic(),
 			)
 			// Comments - has-many collection route (GET /posts/{id}/comments)

@@ -45,8 +45,8 @@ func TestAsSingleRoute(t *testing.T) {
 		if config.ParentFKField != "AuthorID" {
 			t.Errorf("expected ParentFKField 'AuthorID', got '%s'", config.ParentFKField)
 		}
-		if config.WithPut {
-			t.Error("expected WithPut to be false")
+		if config.WithUpdate {
+			t.Error("expected WithUpdate to be false")
 		}
 	})
 
@@ -56,32 +56,32 @@ func TestAsSingleRoute(t *testing.T) {
 		if config.ParentFKField != "" {
 			t.Errorf("expected empty ParentFKField, got '%s'", config.ParentFKField)
 		}
-		if config.WithPut {
-			t.Error("expected WithPut to be false")
+		if config.WithUpdate {
+			t.Error("expected WithUpdate to be false")
 		}
 	})
 }
 
-func TestAsSingleRouteWithPut(t *testing.T) {
+func TestAsSingleRouteWithUpdate(t *testing.T) {
 	t.Run("with parent FK field", func(t *testing.T) {
-		config := AsSingleRouteWithPut("AuthorID")
+		config := AsSingleRouteWithUpdate("AuthorID")
 
 		if config.ParentFKField != "AuthorID" {
 			t.Errorf("expected ParentFKField 'AuthorID', got '%s'", config.ParentFKField)
 		}
-		if !config.WithPut {
-			t.Error("expected WithPut to be true")
+		if !config.WithUpdate {
+			t.Error("expected WithUpdate to be true")
 		}
 	})
 
 	t.Run("with empty parent FK field for root routes", func(t *testing.T) {
-		config := AsSingleRouteWithPut("")
+		config := AsSingleRouteWithUpdate("")
 
 		if config.ParentFKField != "" {
 			t.Errorf("expected empty ParentFKField, got '%s'", config.ParentFKField)
 		}
-		if !config.WithPut {
-			t.Error("expected WithPut to be true")
+		if !config.WithUpdate {
+			t.Error("expected WithUpdate to be true")
 		}
 	})
 }

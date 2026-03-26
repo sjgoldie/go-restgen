@@ -14,12 +14,14 @@ const (
 	MethodList   = "LIST" // Collection: GET /resources
 	MethodPost   = "POST"
 	MethodPut    = "PUT"
+	MethodPatch  = "PATCH" // Partial update: PATCH /resources/{id}
 	MethodDelete = "DELETE"
-	MethodAll    = "ALL" // Expands to single operations only (GET, LIST, POST, PUT, DELETE)
+	MethodAll    = "ALL" // Expands to single operations only (GET, LIST, POST, PUT, PATCH, DELETE)
 
 	// Batch methods for bulk operations via /resources/batch
 	MethodBatchCreate = "BATCH_CREATE" // POST /resources/batch
 	MethodBatchUpdate = "BATCH_UPDATE" // PUT /resources/batch
+	MethodBatchPatch  = "BATCH_PATCH"  // PATCH /resources/batch
 	MethodBatchDelete = "BATCH_DELETE" // DELETE /resources/batch
 
 	// MethodAllWithBatch expands to all methods including batch operations
@@ -83,11 +85,11 @@ func expandMethods(methods []string) []string {
 		switch method {
 		case MethodAll:
 			// MethodAll expands to single operations only (no batch)
-			expanded = append(expanded, MethodGet, MethodList, MethodPost, MethodPut, MethodDelete)
+			expanded = append(expanded, MethodGet, MethodList, MethodPost, MethodPut, MethodPatch, MethodDelete)
 		case MethodAllWithBatch:
 			// MethodAllWithBatch expands to all methods including batch
-			expanded = append(expanded, MethodGet, MethodList, MethodPost, MethodPut, MethodDelete,
-				MethodBatchCreate, MethodBatchUpdate, MethodBatchDelete)
+			expanded = append(expanded, MethodGet, MethodList, MethodPost, MethodPut, MethodPatch, MethodDelete,
+				MethodBatchCreate, MethodBatchUpdate, MethodBatchPatch, MethodBatchDelete)
 		default:
 			expanded = append(expanded, method)
 		}
@@ -198,5 +200,6 @@ func AllScopedWithBatch(scopes ...string) AuthConfig {
 func hasBatchMethods(authMap map[string]*AuthConfig) bool {
 	return authMap[MethodBatchCreate] != nil ||
 		authMap[MethodBatchUpdate] != nil ||
+		authMap[MethodBatchPatch] != nil ||
 		authMap[MethodBatchDelete] != nil
 }

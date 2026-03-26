@@ -53,7 +53,7 @@ router.RegisterRoutes[Product](b, "/products",
 )
 ```
 
-This generates: `GET/POST /products`, `GET/PUT/DELETE /products/{id}`.
+This generates: `GET/POST /products`, `GET/PUT/PATCH/DELETE /products/{id}`.
 
 ## Auth Patterns
 
@@ -69,7 +69,7 @@ router.AuthConfig{
     Scopes:  []string{router.ScopePublic},
 },
 router.AuthConfig{
-    Methods: []string{router.MethodPost, router.MethodPut, router.MethodDelete},
+    Methods: []string{router.MethodPost, router.MethodPut, router.MethodPatch, router.MethodDelete},
     Scopes:  []string{"admin"},
 },
 ```

@@ -1,0 +1,18 @@
+meta {
+  name: Verify Batch Patch
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{baseUrl}}/products/{{patchTargetId1}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.name: eq Patch Target A Patched
+  res.body.sku: eq PTA01
+  res.body.stock: eq 100
+}

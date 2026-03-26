@@ -1,0 +1,24 @@
+meta {
+  name: Patch User Name Only
+  type: http
+  seq: 21
+}
+
+patch {
+  url: {{baseUrl}}/users/{{patchUserId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Patched Name"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{patchUserId}}
+  res.body.name: eq Patched Name
+  res.body.email: eq patchtest@example.com
+}

@@ -644,3 +644,127 @@ func TestBatchDelete_NoMetadata(t *testing.T) {
 		t.Errorf("Expected status 500, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestBatchPatch_Success(t *testing.T) {
+	cleanTable(t)
+
+	db := testDB.GetDB()
+	user1 := &TestUser{Name: "User 1", Email: "user1@example.com"}
+	user2 := &TestUser{Name: "User 2", Email: "user2@example.com"}
+	_, err := db.NewInsert().Model(user1).Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test user 1:", err)
+	}
+	_, err = db.NewInsert().Model(user2).Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test user 2:", err)
+	}
+
+	r := chi.NewRouter()
+	r.Route("/users", func(r chi.Router) {
+		r.Use(withMeta(userMeta))
+		r.Patch("/batch", handler.BatchPatch[TestUser](handler.StandardBatchPatch[TestUser]))
+	})
+
+	body := `[{"id": 1, "name": "Patched User 1"}, {"id": 2, "email": "patched2@example.com"}]`
+	req := httptest.NewRequest("PATCH", "/users/batch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var results []TestUser
+	if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+		t.Fatal("Failed to unmarshal response:", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("Expected 2 results, got %d", len(results))
+	}
+
+	if results[0].Name != "Patched User 1" {
+		t.Errorf("Expected name 'Patched User 1', got %q", results[0].Name)
+	}
+	if results[0].Email != "user1@example.com" {
+		t.Errorf("Expected email 'user1@example.com' (preserved), got %q", results[0].Email)
+	}
+
+	if results[1].Name != "User 2" {
+		t.Errorf("Expected name 'User 2' (preserved), got %q", results[1].Name)
+	}
+	if results[1].Email != "patched2@example.com" {
+		t.Errorf("Expected email 'patched2@example.com', got %q", results[1].Email)
+	}
+}
+
+func TestBatchPatch_EmptyArray(t *testing.T) {
+	cleanTable(t)
+
+	r := chi.NewRouter()
+	r.Route("/users", func(r chi.Router) {
+		r.Use(withMeta(userMeta))
+		r.Patch("/batch", handler.BatchPatch[TestUser](handler.StandardBatchPatch[TestUser]))
+	})
+
+	body := `[]`
+	req := httptest.NewRequest("PATCH", "/users/batch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBatchPatch_FileResource(t *testing.T) {
+	cleanTable(t)
+	testFileResourceRejection(t, "PATCH", "/files", `[{"id": 1, "name": "Patched File 1"}]`,
+		func(r chi.Router, _ *metadata.TypeMetadata) {
+			r.Patch("/batch", handler.BatchPatch[TestUser](handler.StandardBatchPatch[TestUser]))
+		})
+}
+
+func TestBatchPatch_NotFound(t *testing.T) {
+	cleanTable(t)
+
+	r := chi.NewRouter()
+	r.Route("/users", func(r chi.Router) {
+		r.Use(withMeta(userMeta))
+		r.Patch("/batch", handler.BatchPatch[TestUser](handler.StandardBatchPatch[TestUser]))
+	})
+
+	body := `[{"id": 999, "name": "Nonexistent"}]`
+	req := httptest.NewRequest("PATCH", "/users/batch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBatchPatch_NoMetadata(t *testing.T) {
+	cleanTable(t)
+
+	r := chi.NewRouter()
+	r.Patch("/users/batch", handler.BatchPatch[TestUser](handler.StandardBatchPatch[TestUser]))
+
+	body := `[{"id": 1, "name": "Patched"}]`
+	req := httptest.NewRequest("PATCH", "/users/batch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status 500, got %d: %s", w.Code, w.Body.String())
+	}
+}

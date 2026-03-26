@@ -250,6 +250,18 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 // Update updates an existing item of type T in the datastore
 // The id parameter is a string to support both integer and UUID primary keys
 func (w *Wrapper[T]) Update(ctx context.Context, id string, item T) (*T, error) {
+	return w.updateWithOp(ctx, id, item, metadata.OpUpdate)
+}
+
+// Patch partially updates an existing item of type T in the datastore.
+// Identical to Update but passes OpPatch to validators and auditors
+// so they can distinguish partial updates from full replacements.
+func (w *Wrapper[T]) Patch(ctx context.Context, id string, item T) (*T, error) {
+	return w.updateWithOp(ctx, id, item, metadata.OpPatch)
+}
+
+// updateWithOp is the shared implementation for Update and Patch.
+func (w *Wrapper[T]) updateWithOp(ctx context.Context, id string, item T, op metadata.Operation) (*T, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -272,7 +284,7 @@ func (w *Wrapper[T]) Update(ctx context.Context, id string, item T) (*T, error) 
 	}
 
 	// Run custom validation with old and new values
-	if err := w.runValidation(ctx, meta, metadata.OpUpdate, existing, &item); err != nil {
+	if err := w.runValidation(ctx, meta, op, existing, &item); err != nil {
 		return nil, err
 	}
 
@@ -285,7 +297,7 @@ func (w *Wrapper[T]) Update(ctx context.Context, id string, item T) (*T, error) 
 				return err
 			}
 			// Run audit with old and new values
-			return w.runAudit(ctx, tx, meta, metadata.OpUpdate, existing, &item)
+			return w.runAudit(ctx, tx, meta, op, existing, &item)
 		})
 	} else {
 		// No audit, just update directly
@@ -1339,6 +1351,27 @@ func (w *Wrapper[T]) UpdateByParentRelation(ctx context.Context, parentID string
 	return w.Update(ctx, childID, item)
 }
 
+// PatchByParentRelation patches a single item of type T via the parent's foreign key field.
+// Fetches the parent, extracts the FK value, sets it on the item struct (so WherePK targets
+// the correct row), then calls normal Patch (preserving security checks and OpPatch propagation).
+func (w *Wrapper[T]) PatchByParentRelation(ctx context.Context, parentID string, item T) (*T, error) {
+	childID, err := w.resolveChildIDFromParent(ctx, parentID)
+	if err != nil {
+		return nil, err
+	}
+
+	meta, err := metadata.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := common.SetFieldFromString(&item, meta.PKField, childID); err != nil {
+		return nil, fmt.Errorf("failed to set child PK: %w", err)
+	}
+
+	return w.Patch(ctx, childID, item)
+}
+
 // resolveChildIDFromParent fetches the parent and extracts the foreign key value
 // For belongs-to relations like /posts/{id}/author, Post.AuthorID points to User.ID
 func (w *Wrapper[T]) resolveChildIDFromParent(ctx context.Context, parentID string) (string, error) {
@@ -1631,6 +1664,17 @@ func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 // All-or-nothing: if any item fails, the entire batch is rolled back.
 // Ownership validation is applied per-item via Get before the transaction starts.
 func (w *Wrapper[T]) BatchUpdate(ctx context.Context, items []T) ([]*T, error) {
+	return w.batchUpdateWithOp(ctx, items, metadata.OpUpdate)
+}
+
+// BatchPatch partially updates multiple items in a single transaction.
+// Identical to BatchUpdate but passes OpPatch to validators and auditors.
+func (w *Wrapper[T]) BatchPatch(ctx context.Context, items []T) ([]*T, error) {
+	return w.batchUpdateWithOp(ctx, items, metadata.OpPatch)
+}
+
+// batchUpdateWithOp is the shared implementation for BatchUpdate and BatchPatch.
+func (w *Wrapper[T]) batchUpdateWithOp(ctx context.Context, items []T, op metadata.Operation) ([]*T, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -1640,7 +1684,7 @@ func (w *Wrapper[T]) BatchUpdate(ctx context.Context, items []T) ([]*T, error) {
 	}
 
 	// Pre-fetch all existing items and validate before starting transaction
-	preFetch, err := w.preFetchItems(ctx, meta, items, metadata.OpUpdate)
+	preFetch, err := w.preFetchItems(ctx, meta, items, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1665,7 +1709,7 @@ func (w *Wrapper[T]) BatchUpdate(ctx context.Context, items []T) ([]*T, error) {
 			}
 
 			// Run audit within transaction
-			if err := w.runAudit(ctx, tx, meta, metadata.OpUpdate, preFetch.existingItems[i], item); err != nil {
+			if err := w.runAudit(ctx, tx, meta, op, preFetch.existingItems[i], item); err != nil {
 				return err
 			}
 

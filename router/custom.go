@@ -57,6 +57,18 @@ func WithCustomUpdate[T any](fn handler.CustomUpdateFunc[T]) CustomUpdateConfig[
 	return CustomUpdateConfig[T]{Fn: fn}
 }
 
+// CustomPatchConfig holds custom Patch handler configuration for route registration.
+type CustomPatchConfig[T any] struct {
+	Fn handler.CustomPatchFunc[T]
+}
+
+// WithCustomPatch creates a CustomPatchConfig for use in RegisterRoutes.
+// The custom function replaces the standard patch call. It receives both the existing
+// item (before patch) and the patched item (after JSON overlay on clone of existing).
+func WithCustomPatch[T any](fn handler.CustomPatchFunc[T]) CustomPatchConfig[T] {
+	return CustomPatchConfig[T]{Fn: fn}
+}
+
 // CustomDeleteConfig holds custom Delete handler configuration for route registration.
 type CustomDeleteConfig[T any] struct {
 	Fn handler.CustomDeleteFunc[T]
@@ -168,6 +180,16 @@ type CustomBatchUpdateConfig[T any] struct {
 // WithCustomBatchUpdate creates a CustomBatchUpdateConfig for use in RegisterRoutes.
 func WithCustomBatchUpdate[T any](fn handler.CustomBatchUpdateFunc[T]) CustomBatchUpdateConfig[T] {
 	return CustomBatchUpdateConfig[T]{Fn: fn}
+}
+
+// CustomBatchPatchConfig holds custom batch patch handler configuration.
+type CustomBatchPatchConfig[T any] struct {
+	Fn handler.CustomBatchPatchFunc[T]
+}
+
+// WithCustomBatchPatch creates a CustomBatchPatchConfig for use in RegisterRoutes.
+func WithCustomBatchPatch[T any](fn handler.CustomBatchPatchFunc[T]) CustomBatchPatchConfig[T] {
+	return CustomBatchPatchConfig[T]{Fn: fn}
 }
 
 // CustomBatchDeleteConfig holds custom batch delete handler configuration.

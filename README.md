@@ -416,7 +416,7 @@ See the [relations example](./examples/relations) for a complete working example
 
 ## Single Routes (Belongs-To Relations)
 
-go-restgen supports single-object routes for belongs-to relationships. Unlike collection routes that return arrays, single routes return a single object and only support GET (and optionally PUT).
+go-restgen supports single-object routes for belongs-to relationships. Unlike collection routes that return arrays, single routes return a single object and only support GET (and optionally PUT and/or PATCH).
 
 ### Use Cases
 
@@ -425,7 +425,7 @@ go-restgen supports single-object routes for belongs-to relationships. Unlike co
 
 ### Nested Single Route (Parent FK Field)
 
-When a parent has a foreign key to a child (e.g., `Post.AuthorID` → `User.ID`), use `AsSingleRoute()` or `AsSingleRouteWithPut()`:
+When a parent has a foreign key to a child (e.g., `Post.AuthorID` → `User.ID`), use `AsSingleRoute()` or `AsSingleRouteWithUpdate()`:
 
 ```go
 type Post struct {
@@ -448,11 +448,11 @@ router.RegisterRoutes[Post](b, "/posts",
 )
 ```
 
-To also allow PUT on the single route:
+To also allow PUT and PATCH on the single route:
 
 ```go
 router.RegisterRoutes[User](b, "/author",
-    router.AsSingleRouteWithPut("AuthorID"),  // Enables both GET and PUT
+    router.AsSingleRouteWithUpdate("AuthorID"),  // Enables GET, PUT, and PATCH
     router.AllPublic(),
 )
 ```
@@ -482,21 +482,21 @@ func updateMe(ctx context.Context, svc *service.Common[User], meta *metadata.Typ
 }
 
 router.RegisterRoutes[User](b, "/me",
-    router.AsSingleRouteWithPut(""),  // Empty string = no parent FK
+    router.AsSingleRouteWithUpdate(""),  // Empty string = no parent FK
     router.IsAuthenticated(),
     router.WithCustomGet(getMe),
     router.WithCustomUpdate(updateMe),
 )
 ```
 
-**Important**: Without custom handlers on root-level single routes, GET/PUT will fail because there's no way to determine the ID.
+**Important**: Without custom handlers on root-level single routes, GET/PUT/PATCH will fail because there's no way to determine the ID.
 
 ### Key Differences from Collection Routes
 
 | Feature | Collection Route | Single Route |
 |---------|-----------------|--------------|
 | Response | Array `[...]` | Single object `{...}` |
-| Endpoints | GET, POST, PUT, DELETE | GET only (or GET + PUT with `WithPut`) |
+| Endpoints | GET, POST, PUT, PATCH, DELETE | GET only (or GET + PUT + PATCH with `WithUpdate`) |
 | ID source | URL parameter | Parent's FK field or custom logic |
 | Use case | Has-many relations | Belongs-to relations |
 
@@ -585,7 +585,7 @@ router.RegisterRoutes[Post](b, "/posts",
         Scopes:  []string{router.ScopePublic},  // Public reads
     },
     router.AuthConfig{
-        Methods: []string{router.MethodPost, router.MethodPut, router.MethodDelete},
+        Methods: []string{router.MethodPost, router.MethodPut, router.MethodPatch, router.MethodDelete},
         Scopes:  []string{"user"},  // Authenticated writes
     },
 )
@@ -632,7 +632,7 @@ router.RegisterRoutes[Post](b, "/posts", router.AuthConfig{
 **How Ownership Works:**
 - **CREATE**: Automatically sets `UserID` from `AuthInfo.UserID` (ignores JSON body value)
 - **GET/LIST**: Auto-applies `WHERE user_id = <authUserID>` filter
-- **UPDATE/DELETE**: Validates resource belongs to user before allowing operation
+- **UPDATE/PATCH/DELETE**: Validates resource belongs to user before allowing operation
 - **Returns 404** if resource doesn't belong to user (doesn't leak existence)
 
 ### Ownership with Admin Bypass
@@ -696,9 +696,9 @@ router.RegisterRoutes[Post](b, "/posts",
             BypassScopes: []string{},
         },
     },
-    // Owners can update/delete their own, admins can update/delete any
+    // Owners can update/patch/delete their own, admins can do any
     router.AuthConfig{
-        Methods: []string{router.MethodPut, router.MethodDelete},
+        Methods: []string{router.MethodPut, router.MethodPatch, router.MethodDelete},
         Ownership: &router.OwnershipConfig{
             Fields:       []string{"UserID"},
             BypassScopes: []string{"admin"},
@@ -713,8 +713,8 @@ router.RegisterRoutes[Post](b, "/posts",
 // HTTP Methods
 router.MethodGet     // Single item: GET /resources/{id}
 router.MethodList    // Collection: GET /resources
-router.MethodPost, router.MethodPut, router.MethodDelete
-router.MethodAll     // Expands to Get, List, Post, Put, Delete (excludes batch)
+router.MethodPost, router.MethodPut, router.MethodPatch, router.MethodDelete
+router.MethodAll     // Expands to Get, List, Post, Put, Patch, Delete (excludes batch)
 
 // Special Scopes
 router.ScopePublic    // "__restgen_public__" - No auth required
@@ -837,7 +837,7 @@ func authMiddleware(next http.Handler) http.Handler {
 |-----------|----------|
 | **CREATE** | Tenant field auto-set from `AuthInfo.TenantID` (ignores JSON body value) |
 | **GET/LIST** | Auto-applies `WHERE org_id = <tenantID>` filter |
-| **UPDATE** | Re-enforces tenant field (prevents cross-tenant moves via PUT) |
+| **UPDATE/PATCH** | Re-enforces tenant field (prevents cross-tenant moves via PUT/PATCH) |
 | **DELETE** | Validates resource belongs to tenant before deletion |
 | **Cross-tenant access** | Returns 404 (doesn't leak existence) |
 | **Missing TenantID** | Returns 401 Unauthorized |
@@ -850,7 +850,7 @@ Tenant scoping works with all other go-restgen features:
 - **Ownership** — Tenant filter + ownership filter stack (e.g., Alice in org-a only sees her projects in org-a)
 - **Nested routes** — Children inherit tenant scope; parent chain validation includes tenant filtering
 - **Relation includes** — `?include=Tasks` respects tenant boundaries
-- **Batch operations** — Tenant field enforced on every item in batch create/update
+- **Batch operations** — Tenant field enforced on every item in batch create/update/patch
 - **Query parameters** — Filters, sorts, and pagination apply within tenant scope
 
 See the [tenant example](./examples/tenant) for a complete working example with organizations, projects, tasks, and comprehensive cross-tenant isolation tests.
@@ -1023,7 +1023,7 @@ router.RegisterRoutes[User](b, "/users",
 )
 ```
 
-The limit applies to all JSON-consuming endpoints for the resource: Create, Update, Batch Create, Batch Update, Batch Delete, Actions, and Endpoints.
+The limit applies to all JSON-consuming endpoints for the resource: Create, Update, Patch, Batch Create, Batch Update, Batch Patch, Batch Delete, Actions, and Endpoints.
 
 Requests exceeding the limit receive `413 Request Entity Too Large`.
 
@@ -1377,6 +1377,18 @@ type CustomUpdateFunc[T any] func(
     item T,
 ) (*T, error)
 
+// CustomPatchFunc - for PATCH /resource/{id}
+// Receives both the existing item (before patch) and the patched item (after JSON overlay).
+type CustomPatchFunc[T any] func(
+    ctx context.Context,
+    svc *service.Common[T],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    existing *T,
+    patched T,
+) (*T, error)
+
 // CustomDeleteFunc - for DELETE /resource/{id}
 type CustomDeleteFunc[T any] func(
     ctx context.Context,
@@ -1404,7 +1416,7 @@ func customGetMe(ctx context.Context, svc *service.Common[User], meta *metadata.
 }
 
 router.RegisterRoutes[User](b, "/me",
-    router.AsSingleRouteWithPut(""),  // Empty string = no parent FK, ID from custom logic
+    router.AsSingleRouteWithUpdate(""),  // Empty string = no parent FK, ID from custom logic
     router.IsAuthenticated(),
     router.WithCustomGet(customGetMe),
 )
@@ -1727,9 +1739,85 @@ router.RegisterRoutes[Order](b, "/orders",
 
 See the [anything funcs example](./examples/anything) for a complete working example with all four endpoint types.
 
+## Partial Updates (PATCH)
+
+go-restgen supports `PATCH` for partial updates. Unlike `PUT` which requires the complete resource body, `PATCH` only requires the fields you want to change. Omitted fields are preserved.
+
+### How It Works
+
+1. The framework fetches the existing item from the database
+2. Clones it (`patched := *existing`)
+3. Overlays your request body onto the clone via `json.Unmarshal`
+4. Saves the merged result
+
+```bash
+# Only update the title — email, name, etc. are preserved
+PATCH /users/1
+Content-Type: application/json
+
+{"title": "New Title"}
+
+# Response: 200 OK
+{"id": 1, "title": "New Title", "email": "original@example.com", ...}
+```
+
+### PATCH is Included in MethodAll
+
+`router.AllPublic()`, `router.AllScoped()`, and `router.MethodAll` all include PATCH automatically. No extra configuration needed.
+
+To configure PATCH auth separately from PUT:
+
+```go
+router.RegisterRoutes[Post](b, "/posts",
+    router.AuthConfig{
+        Methods: []string{router.MethodPut},
+        Scopes:  []string{"admin"},  // Only admins can full-replace
+    },
+    router.AuthConfig{
+        Methods: []string{router.MethodPatch},
+        Scopes:  []string{"user"},  // Regular users can partial-update
+    },
+)
+```
+
+### Custom Patch Handler
+
+The custom patch handler receives both the existing and patched items, allowing comparison:
+
+```go
+router.WithCustomPatch(func(
+    ctx context.Context, svc *service.Common[Post],
+    meta *metadata.TypeMetadata, auth *metadata.AuthInfo,
+    id string, existing *Post, patched Post,
+) (*Post, error) {
+    // Compare existing vs patched to detect what changed
+    if existing.Status != patched.Status {
+        // Status changed — apply business logic
+    }
+    return svc.Patch(ctx, id, patched)
+})
+```
+
+### Validators Distinguish PATCH from PUT
+
+Custom validators receive `metadata.OpPatch` for PATCH requests and `metadata.OpUpdate` for PUT, so you can enforce different rules:
+
+```go
+router.WithValidator(func(vc metadata.ValidationContext[Post]) error {
+    if vc.Operation == metadata.OpPatch {
+        // Relaxed validation for partial updates
+    }
+    return nil
+})
+```
+
+### Parent-Only Scope
+
+Both PUT and PATCH only affect the parent resource's own fields. Child relations (e.g., `Posts` on a `Blog`) are managed through their own endpoints. Sending child data in a PUT or PATCH body has no effect — use the child's dedicated CRUD endpoints instead.
+
 ## Batch Operations
 
-go-restgen supports batch create, update, and delete operations via `/resource/batch` endpoints. Batch operations run in a transaction for all-or-nothing semantics.
+go-restgen supports batch create, update, patch, and delete operations via `/resource/batch` endpoints. Batch operations run in a transaction for all-or-nothing semantics.
 
 ### Enabling Batch Operations
 
@@ -1746,7 +1834,7 @@ router.RegisterRoutes[Post](b, "/posts",
 router.RegisterRoutes[Post](b, "/posts",
     router.AllPublic(),
     router.AuthConfig{
-        Methods: []string{router.MethodBatchCreate, router.MethodBatchUpdate, router.MethodBatchDelete},
+        Methods: []string{router.MethodBatchCreate, router.MethodBatchUpdate, router.MethodBatchPatch, router.MethodBatchDelete},
         Scopes:  []string{"admin"},
     },
 )
@@ -1759,6 +1847,7 @@ router.RegisterRoutes[Post](b, "/posts",
 ```
 POST   /posts/batch  → Batch create
 PUT    /posts/batch  → Batch update
+PATCH  /posts/batch  → Batch patch (partial update)
 DELETE /posts/batch  → Batch delete
 ```
 
@@ -1797,6 +1886,26 @@ Content-Type: application/json
 [
     {"id": 1, "title": "Updated Post 1", ...},
     {"id": 2, "title": "Updated Post 2", ...}
+]
+```
+
+### Batch Patch (Partial Update)
+
+```bash
+PATCH /posts/batch
+Content-Type: application/json
+
+[
+    {"id": 1, "title": "Updated Title Only"},
+    {"id": 2, "content": "Updated Content Only"}
+]
+
+# Response: 200 OK
+# Each item is fetched, the request body is overlaid onto a clone,
+# and the merged item is saved. Only the fields you send are changed.
+[
+    {"id": 1, "title": "Updated Title Only", "content": "original content", ...},
+    {"id": 2, "title": "Original Title", "content": "Updated Content Only", ...}
 ]
 ```
 
@@ -1854,12 +1963,14 @@ Batch operations have special handling for file resources:
 - **Batch DELETE works** - Legitimate use case for bulk cleanup
 - **Batch CREATE returns 501** - File uploads require multipart form
 - **Batch UPDATE returns 501** - File resources don't support update
+- **Batch PATCH returns 501** - File resources don't support patch
 
 ### Method Constants
 
 ```go
 router.MethodBatchCreate    // "BATCH_CREATE"
 router.MethodBatchUpdate    // "BATCH_UPDATE"
+router.MethodBatchPatch     // "BATCH_PATCH"
 router.MethodBatchDelete    // "BATCH_DELETE"
 router.MethodAllWithBatch   // Expands to all methods including batch
 ```
@@ -2392,7 +2503,8 @@ go-restgen builds on these excellent projects:
 - [x] Single routes for belongs-to relations (`AsSingleRoute`)
 - [x] File upload/download with pluggable storage (proxy and signed URL modes)
 - [x] Action endpoints for custom operations (`POST /resource/{id}/action`)
-- [x] Batch operations for bulk create/update/delete (`/resource/batch`)
+- [x] Batch operations for bulk create/update/patch/delete (`/resource/batch`)
+- [x] PATCH endpoint for partial updates (field-level, no deep patch)
 - [x] Custom join columns via `WithJoinOn` for non-FK relationships
 - [x] Multi-tenant data isolation with `WithTenantScope` and `IsTenantTable`
 - [ ] MySQL support

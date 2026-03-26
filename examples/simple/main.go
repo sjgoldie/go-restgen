@@ -101,6 +101,7 @@ func main() {
 	fmt.Println("  GET    http://localhost:8080/users")
 	fmt.Println("  GET    http://localhost:8080/users/{id}")
 	fmt.Println("  PUT    http://localhost:8080/users/{id}")
+	fmt.Println("  PATCH  http://localhost:8080/users/{id}")
 	fmt.Println("  DELETE http://localhost:8080/users/{id}")
 	fmt.Println("\nQuery parameters for GET /users:")
 	fmt.Println("  filter[Name]=value     Filter by name (eq, neq, gt, gte, lt, lte, like)")

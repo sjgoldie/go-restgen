@@ -1,8 +1,10 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -681,6 +683,57 @@ func TestMaxUploadSizeDefault(t *testing.T) {
 
 		if setup.meta.MaxUploadSize != metadata.DefaultMaxUploadSize {
 			t.Errorf("expected default MaxUploadSize %d, got %d", metadata.DefaultMaxUploadSize, setup.meta.MaxUploadSize)
+		}
+	})
+}
+
+func TestRegisterRoutes_UnrecognizedOption(t *testing.T) {
+	t.Run("logs warning for unrecognized option type", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		original := slog.Default()
+		slog.SetDefault(logger)
+		defer slog.SetDefault(original)
+
+		r := chi.NewRouter()
+		b := NewBuilder(r)
+		RegisterRoutes[testModel](b, "/test", "bogus-option")
+
+		output := buf.String()
+		if !strings.Contains(output, "unrecognized option type") {
+			t.Errorf("expected warning about unrecognized option type, got: %s", output)
+		}
+		if !strings.Contains(output, "string") {
+			t.Errorf("expected warning to include type name \"string\", got: %s", output)
+		}
+		if !strings.Contains(output, "/test") {
+			t.Errorf("expected warning to include path \"/test\", got: %s", output)
+		}
+	})
+
+	t.Run("unrecognized option does not prevent valid options from working", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		original := slog.Default()
+		slog.SetDefault(logger)
+		defer slog.SetDefault(original)
+
+		r := chi.NewRouter()
+		b := NewBuilder(r)
+		RegisterRoutes[testModel](b, "/test",
+			AuthConfig{
+				Methods: []string{MethodAll},
+				Scopes:  []string{ScopePublic},
+			},
+			12345,
+		)
+
+		output := buf.String()
+		if !strings.Contains(output, "unrecognized option type") {
+			t.Errorf("expected warning for unrecognized int option, got: %s", output)
+		}
+		if !strings.Contains(output, "int") {
+			t.Errorf("expected warning to include type name \"int\", got: %s", output)
 		}
 	})
 }

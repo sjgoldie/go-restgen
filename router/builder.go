@@ -174,6 +174,11 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			maxUploadSize = v.Size
 		case func(*Builder):
 			nested = v
+		default:
+			slog.WarnContext(context.Background(), "RegisterRoutes: unrecognized option type (skipped)",
+				"type", reflect.TypeOf(v).String(),
+				"value", v,
+				"path", path)
 		}
 	}
 

@@ -12,12 +12,12 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 tests {
-  test("X-Sum-FakeField header returns 0 for non-existent field", function() {
+  test("Sums return 0 for non-existent field", function() {
     // Non-existent field should return 0 (security - don't reveal field existence)
-    expect(res.headers['x-sum-fakefield']).to.equal('0');
+    expect(res.body.sums.FakeField).to.equal(0);
   });
 }

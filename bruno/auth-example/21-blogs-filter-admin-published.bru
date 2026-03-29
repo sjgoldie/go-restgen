@@ -16,17 +16,17 @@ auth:bearer {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 tests {
   test("Admin sees ALL published blogs from all users (bypass ownership + status filter)", function() {
-    expect(res.body).to.be.an('array');
+    expect(res.body.data).to.be.an('array');
     // All results should be published
-    expect(res.body.every(blog => blog.status === "published")).to.be.true;
+    expect(res.body.data.every(blog => blog.status === "published")).to.be.true;
     // Should see published blogs from multiple users (Alice + Bob)
-    expect(res.body.length).to.equal(2);
-    const authors = res.body.map(b => b.author_id);
+    expect(res.body.data.length).to.equal(2);
+    const authors = res.body.data.map(b => b.author_id);
     expect(authors).to.include("alice");
     expect(authors).to.include("bob");
   });

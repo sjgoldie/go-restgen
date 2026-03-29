@@ -29,6 +29,21 @@ func ColumnName(tType reflect.Type, goName string) (string, error) {
 	return "", fmt.Errorf("field %s not found on type %s", goName, tType.Name())
 }
 
+// FieldName resolves a SQL column name back to its Go struct field name using Bun's schema.
+func FieldName(tType reflect.Type, colName string) (string, error) {
+	store, err := Get()
+	if err != nil {
+		return "", err
+	}
+	table := store.GetDB().Table(tType)
+	for _, field := range table.Fields {
+		if field.Name == colName {
+			return field.GoName, nil
+		}
+	}
+	return "", fmt.Errorf("column %s not found on type %s", colName, tType.Name())
+}
+
 // TableName returns the SQL table name for a model type using Bun's schema.
 func TableName(tType reflect.Type) string {
 	store, err := Get()

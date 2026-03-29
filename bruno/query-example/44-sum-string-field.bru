@@ -12,13 +12,13 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 tests {
-  test("X-Sum-Name header returns database SUM of varchar field", function() {
+  test("Sums return database SUM of varchar field", function() {
     // SQLite coerces numeric-looking text to numbers: "123" → 123, "Apple" → 0
     // Product "123" contributes 123, all others contribute 0 → SUM = 123
-    expect(res.headers['x-sum-name']).to.equal('123');
+    expect(res.body.sums.Name).to.equal(123);
   });
 }

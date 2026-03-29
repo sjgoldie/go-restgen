@@ -1,0 +1,29 @@
+meta {
+  name: Cursor Pagination - Filter second page
+  type: http
+  seq: 56
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Category]=Vegetable&limit=1&after={{cursorVegNext}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 1
+  res.body.pagination.has_more: eq false
+}
+
+tests {
+  test("Returns second vegetable", function() {
+    expect(res.body.data[0].name).to.equal("Eggplant");
+    expect(res.body.data[0].category).to.equal("Vegetable");
+  });
+
+  test("No more pages", function() {
+    expect(res.body.pagination.next_cursor).to.be.undefined;
+  });
+}

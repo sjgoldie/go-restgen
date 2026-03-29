@@ -12,13 +12,13 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
-  res.body: length 1
-  res.body[0].name: eq "123"
+  res.body.data: isArray
+  res.body.data: length 1
+  res.body.data[0].name: eq "123"
 }
 
 tests {
   test("String filter with numeric value stays as string", function() {
-    expect(res.body[0].name).to.equal("123");
+    expect(res.body.data[0].name).to.equal("123");
   });
 }

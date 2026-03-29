@@ -195,11 +195,13 @@ func TestBatch_CustomBatchUpdate(t *testing.T) {
 	}
 
 	// Get the created ID from response
-	var created []BatchTestItem
-	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+	var envelope struct {
+		Data []BatchTestItem `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	itemID := created[0].ID
+	itemID := envelope.Data[0].ID
 
 	// Now update
 	updateBody := fmt.Sprintf(`[{"id": %d, "name": "Updated", "value": 2}]`, itemID)
@@ -244,11 +246,13 @@ func TestBatch_CustomBatchDelete(t *testing.T) {
 	}
 
 	// Get the created ID from response
-	var created []BatchTestItem
-	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+	var envelope struct {
+		Data []BatchTestItem `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	itemID := created[0].ID
+	itemID := envelope.Data[0].ID
 
 	// Now delete
 	deleteBody := fmt.Sprintf(`[{"id": %d}]`, itemID)

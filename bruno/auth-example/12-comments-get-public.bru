@@ -16,13 +16,13 @@ auth:bearer {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 tests {
   test("Blog owner can get comments", function() {
     expect(res.status).to.equal(200);
-    expect(res.body).to.be.an('array');
+    expect(res.body.data).to.be.an('array');
   });
 }
 

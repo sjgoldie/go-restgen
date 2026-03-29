@@ -12,12 +12,12 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
-  res.body: length 4
+  res.body.data: isArray
+  res.body.data: length 4
 }
 
 tests {
   test("All results have Price outside 50-100 range", function() {
-    expect(res.body.every(p => p.price < 50 || p.price > 100)).to.be.true;
+    expect(res.body.data.every(p => p.price < 50 || p.price > 100)).to.be.true;
   });
 }

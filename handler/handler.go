@@ -40,14 +40,14 @@ type CustomGetFunc[T any] func(
 ) (*T, error)
 
 // CustomGetAllFunc is the signature for custom GetAll handlers.
-// The custom function receives all parsed/validated inputs and returns items with count and sums.
+// The custom function receives all parsed/validated inputs and returns items with count, sums, and cursor info.
 // Query options are available via metadata.QueryOptionsFromContext(ctx) if needed.
 type CustomGetAllFunc[T any] func(
 	ctx context.Context,
 	svc *service.Common[T],
 	meta *metadata.TypeMetadata,
 	auth *metadata.AuthInfo,
-) ([]*T, int, map[string]float64, error)
+) ([]*T, int, map[string]float64, *metadata.CursorInfo, error)
 
 // CustomCreateFunc is the signature for custom Create handlers.
 // The custom function receives the decoded item and optional file data.
@@ -273,7 +273,7 @@ func setupRequest[T any](w http.ResponseWriter, r *http.Request, getFunc CustomG
 
 // StandardGetAll is the default GetAll implementation that calls svc.GetAll.
 // Use this when no custom logic is needed.
-func StandardGetAll[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*T, int, map[string]float64, error) {
+func StandardGetAll[T any](ctx context.Context, svc *service.Common[T], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*T, int, map[string]float64, *metadata.CursorInfo, error) {
 	return svc.GetAll(ctx)
 }
 
@@ -311,7 +311,7 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 		opts := metadata.QueryOptionsFromContext(ctx)
 
 		// Call the provided function
-		items, totalCount, sums, err := getAllFunc(ctx, svc, meta, auth)
+		items, totalCount, sums, cursorInfo, err := getAllFunc(ctx, svc, meta, auth)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return // Client disconnected, no response needed
@@ -330,30 +330,50 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 			return
 		}
 
-		// Set pagination headers
-		if opts.CountTotal && totalCount > 0 {
-			w.Header().Set("X-Total-Count", strconv.Itoa(totalCount))
-		}
-		if opts.Limit > 0 {
-			w.Header().Set("X-Limit", strconv.Itoa(opts.Limit))
-		}
-		if opts.Offset > 0 {
-			w.Header().Set("X-Offset", strconv.Itoa(opts.Offset))
-		}
+		// Build response envelope
+		response := ListResponse{Data: items}
 
-		// Set sum headers
-		for field, value := range sums {
-			headerName := "X-Sum-" + field
-			if value == float64(int64(value)) {
-				w.Header().Set(headerName, strconv.FormatInt(int64(value), 10))
-			} else {
-				w.Header().Set(headerName, strconv.FormatFloat(value, 'f', -1, 64))
+		// Build pagination info
+		var pagination *PaginationInfo
+		if cursorInfo != nil {
+			// Cursor-based pagination
+			pagination = &PaginationInfo{
+				HasMore: &cursorInfo.HasMore,
 			}
+			if cursorInfo.NextCursor != "" {
+				pagination.NextCursor = &cursorInfo.NextCursor
+			}
+			if cursorInfo.PrevCursor != "" {
+				pagination.PrevCursor = &cursorInfo.PrevCursor
+			}
+			if opts != nil && opts.CountTotal && totalCount > 0 {
+				pagination.TotalCount = &totalCount
+			}
+		} else if opts != nil && (opts.Limit > 0 || opts.Offset > 0 || (opts.CountTotal && totalCount > 0)) {
+			// Offset-based pagination
+			pagination = &PaginationInfo{}
+			if opts.Limit > 0 {
+				limit := opts.Limit
+				pagination.Limit = &limit
+			}
+			if opts.Offset > 0 {
+				offset := opts.Offset
+				pagination.Offset = &offset
+			}
+			if opts.CountTotal && totalCount > 0 {
+				pagination.TotalCount = &totalCount
+			}
+		}
+		response.Pagination = pagination
+
+		// Include sums if any were requested
+		if len(sums) > 0 {
+			response.Sums = sums
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(items); err != nil {
+		if err := json.NewEncoder(w).Encode(response); err != nil {
 			slog.ErrorContext(ctx, "failed to encode response", "error", err)
 		}
 	}
@@ -697,7 +717,7 @@ func BatchPatch[T any](patchFunc CustomBatchPatchFunc[T]) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(results); err != nil {
+		if err := json.NewEncoder(w).Encode(BatchResponse{Data: results}); err != nil {
 			slog.ErrorContext(base.ctx, "failed to encode response", "error", err)
 		}
 	}
@@ -930,7 +950,7 @@ func BatchCreate[T any](createFunc CustomBatchCreateFunc[T]) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		if err := json.NewEncoder(w).Encode(results); err != nil {
+		if err := json.NewEncoder(w).Encode(BatchResponse{Data: results}); err != nil {
 			slog.ErrorContext(setup.ctx, "failed to encode response", "error", err)
 		}
 	}
@@ -952,7 +972,7 @@ func BatchUpdate[T any](updateFunc CustomBatchUpdateFunc[T]) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(results); err != nil {
+		if err := json.NewEncoder(w).Encode(BatchResponse{Data: results}); err != nil {
 			slog.ErrorContext(setup.ctx, "failed to encode response", "error", err)
 		}
 	}

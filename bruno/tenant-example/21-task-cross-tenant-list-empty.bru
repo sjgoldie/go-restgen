@@ -20,8 +20,8 @@ assert {
 
 tests {
   test("Cross-tenant task list returns empty array", function() {
-    expect(res.body).to.be.an('array');
-    expect(res.body.length).to.equal(0);
+    expect(res.body.data).to.be.an('array');
+    expect(res.body.data.length).to.equal(0);
   });
 }
 

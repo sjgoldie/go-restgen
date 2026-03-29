@@ -1,0 +1,30 @@
+meta {
+  name: Cursor Pagination - With filter (Vegetable, limit=1)
+  type: http
+  seq: 55
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Category]=Vegetable&limit=1
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 1
+  res.body.pagination.has_more: eq true
+  res.body.pagination.next_cursor: isDefined
+}
+
+tests {
+  test("Returns first vegetable sorted by Name", function() {
+    expect(res.body.data[0].name).to.equal("Carrot");
+    expect(res.body.data[0].category).to.equal("Vegetable");
+  });
+}
+
+script:post-response {
+  bru.setVar("cursorVegNext", res.body.pagination.next_cursor);
+}

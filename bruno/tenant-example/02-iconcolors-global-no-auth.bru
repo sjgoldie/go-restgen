@@ -12,13 +12,13 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 tests {
   test("Global route returns seeded icon colors without auth", function() {
-    expect(res.body).to.be.an('array');
-    expect(res.body.length).to.equal(3);
+    expect(res.body.data).to.be.an('array');
+    expect(res.body.data.length).to.equal(3);
   });
 }
 

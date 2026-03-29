@@ -19,8 +19,8 @@ body:json {
 
 assert {
   res.status: eq 200
-  res.body[0].name: eq Widget A Updated
-  res.body[0].price: eq 8.99
-  res.body[1].name: eq Widget B Updated
-  res.body[1].price: eq 12.99
+  res.body.data[0].name: eq Widget A Updated
+  res.body.data[0].price: eq 8.99
+  res.body.data[1].name: eq Widget B Updated
+  res.body.data[1].price: eq 12.99
 }

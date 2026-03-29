@@ -682,6 +682,9 @@ func mergeQueryConfigs(meta *metadata.TypeMetadata, queryConfigs []QueryConfig) 
 		if qc.DefaultLimit > 0 {
 			result.DefaultLimit = qc.DefaultLimit
 		}
+		if qc.Pagination != metadata.NoPagination {
+			result.Pagination = qc.Pagination
+		}
 		if qc.MaxLimit > 0 {
 			result.MaxLimit = qc.MaxLimit
 		}

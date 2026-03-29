@@ -165,10 +165,13 @@ func TestBuilder_BasicRoutes(t *testing.T) {
 			path:           "/users",
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, body []byte) {
-				var users []*TestUser
-				if err := json.Unmarshal(body, &users); err != nil {
+				var envelope struct {
+					Data []*TestUser `json:"data"`
+				}
+				if err := json.Unmarshal(body, &envelope); err != nil {
 					t.Fatalf("failed to unmarshal response: %v", err)
 				}
+				users := envelope.Data
 				if len(users) != 1 {
 					t.Errorf("expected 1 user, got %d", len(users))
 				}
@@ -261,10 +264,13 @@ func TestBuilder_NestedRoutes(t *testing.T) {
 			path:           "/users/1/posts",
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, body []byte) {
-				var posts []*TestPost
-				if err := json.Unmarshal(body, &posts); err != nil {
+				var envelope struct {
+					Data []*TestPost `json:"data"`
+				}
+				if err := json.Unmarshal(body, &envelope); err != nil {
 					t.Fatalf("failed to unmarshal response: %v", err)
 				}
+				posts := envelope.Data
 				if len(posts) != 1 {
 					t.Errorf("expected 1 post, got %d", len(posts))
 				}
@@ -360,10 +366,13 @@ func TestBuilder_ThreeLevels(t *testing.T) {
 		t.Errorf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
 	}
 
-	var comments []*TestComment
-	if err := json.Unmarshal(w.Body.Bytes(), &comments); err != nil {
+	var envelope struct {
+		Data []*TestComment `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
+	comments := envelope.Data
 
 	if len(comments) != 1 {
 		t.Errorf("expected 1 comment, got %d", len(comments))
@@ -498,8 +507,11 @@ func TestMultiReg_SameModelRootAndNested(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var items []MultiRegItem
-		json.Unmarshal(w.Body.Bytes(), &items)
+		var envelope struct {
+			Data []MultiRegItem `json:"data"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &envelope)
+		items := envelope.Data
 		if len(items) != 2 {
 			t.Errorf("expected 2 items from root, got %d", len(items))
 		}
@@ -515,8 +527,11 @@ func TestMultiReg_SameModelRootAndNested(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var items []MultiRegItem
-		json.Unmarshal(w.Body.Bytes(), &items)
+		var envelope struct {
+			Data []MultiRegItem `json:"data"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &envelope)
+		items := envelope.Data
 		if len(items) != 1 {
 			t.Errorf("expected 1 item from nested, got %d", len(items))
 		}
@@ -605,8 +620,11 @@ func TestMultiReg_SameModelDifferentParents(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var items []MultiRegItem
-		json.Unmarshal(w.Body.Bytes(), &items)
+		var envelope struct {
+			Data []MultiRegItem `json:"data"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &envelope)
+		items := envelope.Data
 		if len(items) != 1 {
 			t.Errorf("expected 1 item for project, got %d", len(items))
 		}
@@ -624,8 +642,11 @@ func TestMultiReg_SameModelDifferentParents(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var items []MultiRegItem
-		json.Unmarshal(w.Body.Bytes(), &items)
+		var envelope struct {
+			Data []MultiRegItem `json:"data"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &envelope)
+		items := envelope.Data
 		if len(items) != 1 {
 			t.Errorf("expected 1 item for user, got %d", len(items))
 		}
@@ -708,8 +729,11 @@ func TestMultiReg_DifferentOwnershipPerRegistration(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var items []MultiRegItem
-		json.Unmarshal(w.Body.Bytes(), &items)
+		var envelope struct {
+			Data []MultiRegItem `json:"data"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &envelope)
+		items := envelope.Data
 		if len(items) != 2 {
 			t.Errorf("expected 2 items from root (no ownership), got %d", len(items))
 		}
@@ -725,8 +749,11 @@ func TestMultiReg_DifferentOwnershipPerRegistration(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var items []MultiRegItem
-		json.Unmarshal(w.Body.Bytes(), &items)
+		var envelope struct {
+			Data []MultiRegItem `json:"data"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &envelope)
+		items := envelope.Data
 		if len(items) != 1 {
 			t.Errorf("expected 1 item for alice (ownership filtered), got %d", len(items))
 		}
@@ -789,8 +816,11 @@ func TestMultiReg_DifferentBypassScopesPerRegistration(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var items []MultiRegItem
-		json.Unmarshal(w.Body.Bytes(), &items)
+		var envelope struct {
+			Data []MultiRegItem `json:"data"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &envelope)
+		items := envelope.Data
 		if len(items) != 1 {
 			t.Errorf("admin should see project item, got %d items", len(items))
 		}
@@ -825,8 +855,11 @@ func TestMultiReg_DifferentBypassScopesPerRegistration(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var items []MultiRegItem
-		json.Unmarshal(w.Body.Bytes(), &items)
+		var envelope struct {
+			Data []MultiRegItem `json:"data"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &envelope)
+		items := envelope.Data
 		// Admin should see 0 items (ownership enforced, admin_user != charlie)
 		if len(items) != 0 {
 			t.Errorf("admin should NOT bypass user items (no moderator scope), got %d items", len(items))
@@ -862,8 +895,11 @@ func TestMultiReg_DifferentBypassScopesPerRegistration(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var items []MultiRegItem
-		json.Unmarshal(w.Body.Bytes(), &items)
+		var envelope struct {
+			Data []MultiRegItem `json:"data"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &envelope)
+		items := envelope.Data
 		if len(items) != 1 {
 			t.Errorf("moderator should see user item, got %d items", len(items))
 		}
@@ -913,8 +949,11 @@ func TestBuilder_QueryConfigOptions(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var result []MultiRegItem
-		json.Unmarshal(w.Body.Bytes(), &result)
+		var envelope struct {
+			Data []MultiRegItem `json:"data"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &envelope)
+		result := envelope.Data
 		if len(result) != 1 {
 			t.Errorf("expected 1 item filtered by title, got %d", len(result))
 		}
@@ -932,8 +971,11 @@ func TestBuilder_QueryConfigOptions(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var result []MultiRegItem
-		json.Unmarshal(w.Body.Bytes(), &result)
+		var envelope struct {
+			Data []MultiRegItem `json:"data"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &envelope)
+		result := envelope.Data
 		if len(result) != 3 {
 			t.Errorf("expected 3 items, got %d", len(result))
 		}
@@ -957,8 +999,11 @@ func TestBuilder_QueryConfigOptions(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var result []MultiRegItem
-		json.Unmarshal(w.Body.Bytes(), &result)
+		var envelope struct {
+			Data []MultiRegItem `json:"data"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &envelope)
+		result := envelope.Data
 		if len(result) != 2 {
 			t.Errorf("expected 2 items with limit=2, got %d", len(result))
 		}
@@ -974,8 +1019,11 @@ func TestBuilder_QueryConfigOptions(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var result []MultiRegItem
-		json.Unmarshal(w.Body.Bytes(), &result)
+		var envelope struct {
+			Data []MultiRegItem `json:"data"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &envelope)
+		result := envelope.Data
 		// Should return all 3 items (invalid filter ignored)
 		if len(result) != 3 {
 			t.Errorf("expected 3 items (invalid filter ignored), got %d", len(result))
@@ -1017,18 +1065,20 @@ func TestBuilder_ParentValidation(t *testing.T) {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
 
-	var posts []*TestPost
-	if err := json.Unmarshal(w.Body.Bytes(), &posts); err != nil {
+	var envelope struct {
+		Data []*TestPost `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
 	// Should only get User1's post
-	if len(posts) != 1 {
-		t.Errorf("expected 1 post for user1, got %d", len(posts))
+	if len(envelope.Data) != 1 {
+		t.Errorf("expected 1 post for user1, got %d", len(envelope.Data))
 	}
 
-	if len(posts) > 0 && posts[0].Title != "User1's Post" {
-		t.Errorf("expected 'User1's Post', got %q", posts[0].Title)
+	if len(envelope.Data) > 0 && envelope.Data[0].Title != "User1's Post" {
+		t.Errorf("expected 'User1's Post', got %q", envelope.Data[0].Title)
 	}
 
 	// Verify User2's post with User1's ID returns 404
@@ -1303,7 +1353,7 @@ func TestBuilder_CustomHandlers(t *testing.T) {
 			customGetCalled = true
 			return svc.Get(ctx, id)
 		}),
-		router.WithCustomGetAll(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*MultiRegItem, int, map[string]float64, error) {
+		router.WithCustomGetAll(func(ctx context.Context, svc *service.Common[MultiRegItem], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*MultiRegItem, int, map[string]float64, *metadata.CursorInfo, error) {
 			customGetAllCalled = true
 			return svc.GetAll(ctx)
 		}),

@@ -1,0 +1,16 @@
+meta {
+  name: Cursor Pagination - Invalid cursor string
+  type: http
+  seq: 60
+}
+
+get {
+  url: {{baseUrl}}/products?after=not-a-valid-cursor
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 500
+  res.body.error: eq internal_error
+}

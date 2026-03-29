@@ -12,12 +12,12 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 tests {
   test("Post should have 2 comments", function() {
-    expect(res.body).to.be.an('array');
-    expect(res.body.length).to.equal(2);
+    expect(res.body.data).to.be.an('array');
+    expect(res.body.data.length).to.equal(2);
   });
 }

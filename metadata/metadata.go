@@ -118,6 +118,19 @@ type parentTenantKeyType string
 // Value is []*TypeMetadata - list of parent types in the chain that require tenant checks
 const ParentTenantKey parentTenantKeyType = "restgen_parent_tenant"
 
+// PaginationMode controls whether cursor-based or offset-based pagination is used.
+// Zero value means no pagination mode configured.
+type PaginationMode int
+
+const (
+	// NoPagination means pagination is not configured (zero value).
+	NoPagination PaginationMode = iota
+	// CursorPagination uses cursor-based (keyset) pagination.
+	CursorPagination
+	// OffsetPagination uses traditional offset-based pagination.
+	OffsetPagination
+)
+
 // DefaultMaxBodySize is the default maximum size for JSON request bodies (1 MB).
 const DefaultMaxBodySize int64 = 1 << 20
 
@@ -152,12 +165,13 @@ type TypeMetadata struct {
 	ParentFKField string // Field name on parent that holds this object's ID (e.g., "AuthorID")
 
 	// Query options for GetAll
-	FilterableFields []string // Field names allowed for filtering (empty = no filtering)
-	SortableFields   []string // Field names allowed for sorting (empty = no sorting)
-	SummableFields   []string // Field names allowed for sum aggregation (empty = no sums)
-	DefaultSort      string   // Default sort field (prefix with - for descending)
-	DefaultLimit     int      // Default page size (0 = no limit)
-	MaxLimit         int      // Maximum allowed limit (0 = no max)
+	FilterableFields []string       // Field names allowed for filtering (empty = no filtering)
+	SortableFields   []string       // Field names allowed for sorting (empty = no sorting)
+	SummableFields   []string       // Field names allowed for sum aggregation (empty = no sums)
+	DefaultSort      string         // Default sort field (prefix with - for descending)
+	DefaultLimit     int            // Default page size (0 = no limit)
+	MaxLimit         int            // Maximum allowed limit (0 = no max)
+	Pagination       PaginationMode // Pagination strategy (CursorPagination or OffsetPagination)
 
 	// Validation
 	Validator any // ValidatorFunc[T] stored as any for type erasure
@@ -196,6 +210,7 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 		DefaultSort:     m.DefaultSort,
 		DefaultLimit:    m.DefaultLimit,
 		MaxLimit:        m.MaxLimit,
+		Pagination:      m.Pagination,
 		Validator:       m.Validator,
 		Auditor:         m.Auditor,
 		IsFileResource:  m.IsFileResource,
@@ -245,6 +260,8 @@ type QueryOptions struct {
 	Sort       []SortField            // ordered list of sort fields
 	Limit      int                    // 0 means use default
 	Offset     int                    // 0 means start from beginning
+	After      string                 // cursor for forward pagination (next page)
+	Before     string                 // cursor for backward pagination (previous page)
 	CountTotal bool                   // whether to return total count
 	Include    []string               // relation names to include via ?include=
 	Sums       []string               // field names to compute sum aggregates via ?sum=
@@ -391,6 +408,10 @@ func ParseQueryOptions(query url.Values) *QueryOptions {
 			opts.Offset = offset
 		}
 	}
+
+	// Parse cursor pagination
+	opts.After = query.Get("after")
+	opts.Before = query.Get("before")
 
 	// Parse count flag
 	if countStr := query.Get("count"); countStr == "true" || countStr == "1" {

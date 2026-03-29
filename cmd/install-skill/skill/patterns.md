@@ -30,7 +30,8 @@ router.RegisterRoutes[Model](builder, "/path",
     // Query options (individual)
     router.WithFilters("Status", "Name"),
     router.WithSorts("Name", "CreatedAt"),
-    router.WithPagination(20, 100),
+    router.WithPagination(20, 100),                // cursor-based (default)
+    router.WithPagination(20, 100, router.OffsetMode), // offset-based (opt-in)
     router.WithDefaultSort("-CreatedAt"),
     router.WithSums("Price", "Stock"),
 
@@ -42,6 +43,7 @@ router.RegisterRoutes[Model](builder, "/path",
         DefaultSort:      "-CreatedAt",
         DefaultLimit:     20,
         MaxLimit:         100,
+        Pagination:       router.CursorMode, // default; use router.OffsetMode for offset-based
     }),
 
     // Relations
@@ -115,7 +117,7 @@ type CustomGetAllFunc[T any] func(
     svc *service.Common[T],
     meta *metadata.TypeMetadata,
     auth *metadata.AuthInfo,
-) ([]*T, int, map[string]float64, error)
+) ([]*T, int, map[string]float64, *metadata.CursorInfo, error)
 
 // POST /resource
 type CustomCreateFunc[T any] func(
@@ -297,11 +299,17 @@ router.WithAudit(func(ac metadata.AuditContext[T]) any {
 | Filter | `?filter[Status]=active` | Exact match |
 | Filter ops | `?filter[Age][gt]=18` | Operators: eq, neq, gt, gte, lt, lte, like, in, nin, bt, nbt |
 | Sort | `?sort=Name,-CreatedAt` | `-` prefix for descending |
-| Limit | `?limit=10` | Max results |
-| Offset | `?offset=20` | Skip results |
-| Count | `?count=true` | X-Total-Count header |
+| Limit | `?limit=10` | Max results per page |
+| After | `?after=<cursor>` | Next page (cursor from `pagination.next_cursor`) |
+| Before | `?before=<cursor>` | Previous page (cursor from `pagination.prev_cursor`) |
+| Offset | `?offset=20` | Skip results (switches to offset pagination) |
+| Count | `?count=true` | Include `total_count` in `pagination` |
 | Include | `?include=Posts.Comments` | Load relations (dot notation for nested) |
-| Sum | `?sum=Price,Stock` | X-Sum-Price, X-Sum-Stock headers |
+| Sum | `?sum=Price,Stock` | Returns in `sums` object in response body |
+
+**Response envelope (GetAll):** `{"data": [...], "pagination": {...}, "sums": {...}}`.
+Cursor mode: `has_more`, `next_cursor`, `prev_cursor`, `total_count`. Offset mode: `limit`, `offset`, `total_count`.
+Batch responses: `{"data": [...]}`. Single-item responses: raw object (no envelope).
 
 **Nested includes:** child direction needs `WithRelationName` at each level. Parent direction (e.g., `?include=Author`) auto-derived from `rel:belongs-to` tags. Auth is cumulative AND, ownership is cumulative OR.
 

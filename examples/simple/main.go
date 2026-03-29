@@ -108,12 +108,14 @@ func main() {
 	fmt.Println("  filter[Email]=value    Filter by email")
 	fmt.Println("  sort=Name,-Email       Sort by fields (- prefix for descending)")
 	fmt.Println("  limit=10               Limit results (max 100)")
-	fmt.Println("  offset=20              Skip results for pagination")
-	fmt.Println("  count=true             Include X-Total-Count header")
+	fmt.Println("  after=<cursor>         Next page (cursor from pagination.next_cursor)")
+	fmt.Println("  before=<cursor>        Previous page (cursor from pagination.prev_cursor)")
+	fmt.Println("  offset=20              Skip results (switches to offset pagination)")
+	fmt.Println("  count=true             Include total_count in pagination")
 	fmt.Println("\nExamples:")
 	fmt.Println("  curl 'http://localhost:8080/users?filter[Name]=Alice'")
 	fmt.Println("  curl 'http://localhost:8080/users?sort=-CreatedAt&limit=10'")
-	fmt.Println("  curl 'http://localhost:8080/users?limit=10&offset=20&count=true'")
+	fmt.Println("  curl 'http://localhost:8080/users?limit=10&count=true'")
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

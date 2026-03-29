@@ -12,8 +12,8 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
-  res.body: length 2
-  res.body[0].name: eq Bob Smith
-  res.body[1].name: eq Charlie Brown
+  res.body.data: isArray
+  res.body.data: length 2
+  res.body.data[0].name: eq Bob Smith
+  res.body.data[1].name: eq Charlie Brown
 }

@@ -16,12 +16,12 @@ auth:bearer {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 tests {
   test("Alice should only see her own blog due to ownership filtering", function() {
-    expect(res.body).to.be.an('array');
-    expect(res.body.every(blog => blog.author_id === "alice")).to.be.true;
+    expect(res.body.data).to.be.an('array');
+    expect(res.body.data.every(blog => blog.author_id === "alice")).to.be.true;
   });
 }

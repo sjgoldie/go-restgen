@@ -16,15 +16,15 @@ auth:bearer {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 tests {
   test("IsTenantTable list shows only own org", function() {
-    expect(res.body).to.be.an('array');
-    expect(res.body.length).to.equal(1);
-    expect(res.body[0].id).to.equal("org-a");
-    expect(res.body[0].name).to.equal("Acme Corp");
+    expect(res.body.data).to.be.an('array');
+    expect(res.body.data.length).to.equal(1);
+    expect(res.body.data[0].id).to.equal("org-a");
+    expect(res.body.data[0].name).to.equal("Acme Corp");
   });
 }
 

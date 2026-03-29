@@ -33,8 +33,8 @@ func TestWithCustomGet(t *testing.T) {
 }
 
 func TestWithCustomGetAll(t *testing.T) {
-	customFunc := func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*CustomTestModel, int, map[string]float64, error) {
-		return []*CustomTestModel{{ID: 1, Name: "test"}}, 1, nil, nil
+	customFunc := func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*CustomTestModel, int, map[string]float64, *metadata.CursorInfo, error) {
+		return []*CustomTestModel{{ID: 1, Name: "test"}}, 1, nil, nil, nil
 	}
 
 	config := WithCustomGetAll(customFunc)
@@ -95,8 +95,8 @@ func TestCustomConfigTypesInSwitch(t *testing.T) {
 		return nil, nil
 	})
 
-	getAllConfig := WithCustomGetAll(func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*CustomTestModel, int, map[string]float64, error) {
-		return nil, 0, nil, nil
+	getAllConfig := WithCustomGetAll(func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*CustomTestModel, int, map[string]float64, *metadata.CursorInfo, error) {
+		return nil, 0, nil, nil, nil
 	})
 
 	createConfig := WithCustomCreate(func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item CustomTestModel, _ io.Reader, _ filestore.FileMetadata) (*CustomTestModel, error) {
@@ -154,8 +154,8 @@ func TestCustomFuncTypesMatchHandler(t *testing.T) {
 		return nil, nil
 	}
 
-	var _ handler.CustomGetAllFunc[CustomTestModel] = func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*CustomTestModel, int, map[string]float64, error) {
-		return nil, 0, nil, nil
+	var _ handler.CustomGetAllFunc[CustomTestModel] = func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*CustomTestModel, int, map[string]float64, *metadata.CursorInfo, error) {
+		return nil, 0, nil, nil, nil
 	}
 
 	var _ handler.CustomCreateFunc[CustomTestModel] = func(ctx context.Context, svc *service.Common[CustomTestModel], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, item CustomTestModel, _ io.Reader, _ filestore.FileMetadata) (*CustomTestModel, error) {

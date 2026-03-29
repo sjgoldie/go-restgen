@@ -1,0 +1,27 @@
+meta {
+  name: Cursor Pagination - With count=true
+  type: http
+  seq: 59
+}
+
+get {
+  url: {{baseUrl}}/products?limit=3&count=true
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 3
+  res.body.pagination.has_more: eq true
+  res.body.pagination.total_count: eq 7
+  res.body.pagination.next_cursor: isDefined
+}
+
+tests {
+  test("Count reflects total items, not page size", function() {
+    expect(res.body.pagination.total_count).to.equal(7);
+    expect(res.body.data).to.have.length(3);
+  });
+}

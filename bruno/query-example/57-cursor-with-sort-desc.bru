@@ -1,0 +1,34 @@
+meta {
+  name: Cursor Pagination - Sort by Price DESC
+  type: http
+  seq: 57
+}
+
+get {
+  url: {{baseUrl}}/products?limit=3&sort=-Price
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 3
+  res.body.pagination.has_more: eq true
+  res.body.pagination.next_cursor: isDefined
+}
+
+tests {
+  test("Returns products sorted by price descending", function() {
+    expect(res.body.data[0].name).to.equal("123");
+    expect(res.body.data[0].price).to.equal(999);
+    expect(res.body.data[1].name).to.equal("FalseItem");
+    expect(res.body.data[1].price).to.equal(888);
+    expect(res.body.data[2].name).to.equal("Donut");
+    expect(res.body.data[2].price).to.equal(150);
+  });
+}
+
+script:post-response {
+  bru.setVar("cursorPriceDescNext", res.body.pagination.next_cursor);
+}

@@ -219,7 +219,7 @@ func TestWrapper_Nested_GetAll(t *testing.T) {
 	ctx1 = context.WithValue(ctx1, metadata.ParentIDsKey, map[string]string{
 		"authorId": itoa(author1.ID),
 	})
-	articles1, _, _, err := articleWrapper.GetAll(ctx1)
+	articles1, _, _, _, err := articleWrapper.GetAll(ctx1)
 	if err != nil {
 		t.Fatal("Failed to get articles for author1:", err)
 	}
@@ -232,7 +232,7 @@ func TestWrapper_Nested_GetAll(t *testing.T) {
 	ctx2 = context.WithValue(ctx2, metadata.ParentIDsKey, map[string]string{
 		"authorId": itoa(author2.ID),
 	})
-	articles2, _, _, err := articleWrapper.GetAll(ctx2)
+	articles2, _, _, _, err := articleWrapper.GetAll(ctx2)
 	if err != nil {
 		t.Fatal("Failed to get articles for author2:", err)
 	}
@@ -504,7 +504,7 @@ func TestCustomJoin_ListFiltersByParentJoinCol(t *testing.T) {
 	ctxList = context.WithValue(ctxList, metadata.ParentIDsKey, map[string]string{
 		"siteId": itoa(site.ID),
 	})
-	results, _, _, err := usageWrapper.GetAll(ctxList)
+	results, _, _, _, err := usageWrapper.GetAll(ctxList)
 	if err != nil {
 		t.Fatal("Failed to list usage data:", err)
 	}
@@ -608,7 +608,7 @@ func TestCustomJoin_MultipleParentsShareJoinCol(t *testing.T) {
 	ctxSite1 = context.WithValue(ctxSite1, metadata.ParentIDsKey, map[string]string{
 		"siteId": itoa(site1.ID),
 	})
-	results1, _, _, err := usageWrapper.GetAll(ctxSite1)
+	results1, _, _, _, err := usageWrapper.GetAll(ctxSite1)
 	if err != nil {
 		t.Fatal("Failed to list usage data for site1:", err)
 	}
@@ -617,7 +617,7 @@ func TestCustomJoin_MultipleParentsShareJoinCol(t *testing.T) {
 	ctxSite2 = context.WithValue(ctxSite2, metadata.ParentIDsKey, map[string]string{
 		"siteId": itoa(site2.ID),
 	})
-	results2, _, _, err := usageWrapper.GetAll(ctxSite2)
+	results2, _, _, _, err := usageWrapper.GetAll(ctxSite2)
 	if err != nil {
 		t.Fatal("Failed to list usage data for site2:", err)
 	}

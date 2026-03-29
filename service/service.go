@@ -7,6 +7,7 @@ import (
 
 	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/sjgoldie/go-restgen/filestore"
+	"github.com/sjgoldie/go-restgen/metadata"
 )
 
 // Common provides generic CRUD operations for any model type
@@ -25,8 +26,8 @@ type DownloadResult struct {
 }
 
 // GetAll retrieves all items of type T
-// Returns items, total count (0 if not requested), sums (nil if not requested), and error
-func (s *Common[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64, error) {
+// Returns items, total count (0 if not requested), sums (nil if not requested), cursor info (nil if not cursor mode), and error
+func (s *Common[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64, *metadata.CursorInfo, error) {
 	return s.store.GetAll(ctx)
 }
 

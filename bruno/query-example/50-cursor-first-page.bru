@@ -1,0 +1,35 @@
+meta {
+  name: Cursor Pagination - First page (limit=3)
+  type: http
+  seq: 50
+}
+
+get {
+  url: {{baseUrl}}/products?limit=3
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 3
+  res.body.pagination.has_more: eq true
+  res.body.pagination.next_cursor: isDefined
+}
+
+tests {
+  test("Returns first 3 products sorted by Name ASC", function() {
+    expect(res.body.data[0].name).to.equal("123");
+    expect(res.body.data[1].name).to.equal("Apple");
+    expect(res.body.data[2].name).to.equal("Banana");
+  });
+
+  test("No prev_cursor on first page", function() {
+    expect(res.body.pagination.prev_cursor).to.be.undefined;
+  });
+}
+
+script:post-response {
+  bru.setVar("cursorPage1Next", res.body.pagination.next_cursor);
+}

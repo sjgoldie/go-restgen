@@ -1,0 +1,33 @@
+meta {
+  name: Cursor Pagination - Second page (after cursor)
+  type: http
+  seq: 51
+}
+
+get {
+  url: {{baseUrl}}/products?limit=3&after={{cursorPage1Next}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 3
+  res.body.pagination.has_more: eq true
+  res.body.pagination.next_cursor: isDefined
+  res.body.pagination.prev_cursor: isDefined
+}
+
+tests {
+  test("Returns next 3 products", function() {
+    expect(res.body.data[0].name).to.equal("Carrot");
+    expect(res.body.data[1].name).to.equal("Donut");
+    expect(res.body.data[2].name).to.equal("Eggplant");
+  });
+}
+
+script:post-response {
+  bru.setVar("cursorPage2Next", res.body.pagination.next_cursor);
+  bru.setVar("cursorPage2Prev", res.body.pagination.prev_cursor);
+}

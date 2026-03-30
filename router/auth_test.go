@@ -440,10 +440,13 @@ func TestAuth_Ownership_List(t *testing.T) {
 		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var posts []AuthTestPost
-	if err := json.Unmarshal(w.Body.Bytes(), &posts); err != nil {
+	var envelope struct {
+		Data []AuthTestPost `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
+	posts := envelope.Data
 
 	// Should only see user1's post
 	if len(posts) != 1 {
@@ -487,10 +490,13 @@ func TestAuth_Ownership_BypassScope(t *testing.T) {
 		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var posts []AuthTestPost
-	if err := json.Unmarshal(w.Body.Bytes(), &posts); err != nil {
+	var envelope struct {
+		Data []AuthTestPost `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
+	posts := envelope.Data
 
 	// Admin should see all posts
 	if len(posts) != 2 {
@@ -1859,10 +1865,13 @@ func TestAuth_Issue28_ParentOwnershipFiltering(t *testing.T) {
 				t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
 			}
 
-			var tasks []OwnershipTestTask
-			if err := json.Unmarshal(w.Body.Bytes(), &tasks); err != nil {
+			var envelope struct {
+				Data []OwnershipTestTask `json:"data"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 				t.Fatalf("failed to parse response: %v", err)
 			}
+			tasks := envelope.Data
 
 			if len(tasks) != tt.expectedTasks {
 				t.Errorf("expected %d tasks, got %d", tt.expectedTasks, len(tasks))
@@ -2047,10 +2056,13 @@ func TestTenantAuth_List_FiltersByTenant(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var projects []TenantTestProject
-	if err := json.Unmarshal(w.Body.Bytes(), &projects); err != nil {
+	var envelope struct {
+		Data []TenantTestProject `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
+	projects := envelope.Data
 
 	if len(projects) != 1 {
 		t.Errorf("expected 1 project for org-a, got %d", len(projects))
@@ -2187,10 +2199,13 @@ func TestTenantAuth_IsTenantTable_ViewOwnOrg(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var orgs []TenantTestOrg
-	if err := json.Unmarshal(w.Body.Bytes(), &orgs); err != nil {
+	var envelope struct {
+		Data []TenantTestOrg `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
+	orgs := envelope.Data
 
 	if len(orgs) != 1 {
 		t.Errorf("expected 1 org (own), got %d", len(orgs))
@@ -2270,10 +2285,13 @@ func TestTenantAuth_ChildInheritsTenantScope(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var tasks []TenantTestTask
-	if err := json.Unmarshal(w.Body.Bytes(), &tasks); err != nil {
+	var envelope struct {
+		Data []TenantTestTask `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
+	tasks := envelope.Data
 
 	if len(tasks) != 1 {
 		t.Errorf("expected 1 task for org-a, got %d", len(tasks))
@@ -2287,10 +2305,13 @@ func TestTenantAuth_ChildInheritsTenantScope(t *testing.T) {
 	// Parent project belongs to org-b — should be blocked
 	// Either 404 (parent not found) or empty results
 	if w2.Code == http.StatusOK {
-		var crossTasks []TenantTestTask
-		if err := json.Unmarshal(w2.Body.Bytes(), &crossTasks); err != nil {
+		var crossEnvelope struct {
+			Data []TenantTestTask `json:"data"`
+		}
+		if err := json.Unmarshal(w2.Body.Bytes(), &crossEnvelope); err != nil {
 			t.Fatalf("failed to unmarshal cross-tenant tasks: %v", err)
 		}
+		crossTasks := crossEnvelope.Data
 		if len(crossTasks) != 0 {
 			t.Errorf("expected 0 tasks for cross-tenant parent, got %d", len(crossTasks))
 		}
@@ -2326,10 +2347,13 @@ func TestTenantAuth_WithOwnership_BothEnforced(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var projects []TenantTestProject
-	if err := json.Unmarshal(w.Body.Bytes(), &projects); err != nil {
+	var envelope struct {
+		Data []TenantTestProject `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to parse: %v", err)
 	}
+	projects := envelope.Data
 
 	if len(projects) != 1 {
 		t.Errorf("expected 1 project (alice in org-a), got %d", len(projects))

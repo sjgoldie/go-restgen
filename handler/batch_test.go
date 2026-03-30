@@ -72,9 +72,15 @@ func TestBatchCreate_Success(t *testing.T) {
 		t.Errorf("Expected status 201, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var results []TestUser
-	if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+	var envelope handler.BatchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatal("Failed to unmarshal response:", err)
+	}
+
+	resultsRaw, _ := json.Marshal(envelope.Data)
+	var results []TestUser
+	if err := json.Unmarshal(resultsRaw, &results); err != nil {
+		t.Fatal("Failed to unmarshal data:", err)
 	}
 
 	if len(results) != 2 {
@@ -215,9 +221,15 @@ func TestBatchUpdate_Success(t *testing.T) {
 		t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var results []TestUser
-	if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+	var envelope handler.BatchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatal("Failed to unmarshal response:", err)
+	}
+
+	resultsRaw, _ := json.Marshal(envelope.Data)
+	var results []TestUser
+	if err := json.Unmarshal(resultsRaw, &results); err != nil {
+		t.Fatal("Failed to unmarshal data:", err)
 	}
 
 	if len(results) != 2 {
@@ -389,9 +401,15 @@ func TestBatchCreate_CustomHandler(t *testing.T) {
 		t.Errorf("Expected status 201, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var results []TestUser
-	if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+	var envelope handler.BatchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatal("Failed to unmarshal response:", err)
+	}
+
+	resultsRaw, _ := json.Marshal(envelope.Data)
+	var results []TestUser
+	if err := json.Unmarshal(resultsRaw, &results); err != nil {
+		t.Fatal("Failed to unmarshal data:", err)
 	}
 
 	if len(results) != 1 {
@@ -677,9 +695,15 @@ func TestBatchPatch_Success(t *testing.T) {
 		t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var results []TestUser
-	if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+	var envelope handler.BatchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatal("Failed to unmarshal response:", err)
+	}
+
+	resultsRaw, _ := json.Marshal(envelope.Data)
+	var results []TestUser
+	if err := json.Unmarshal(resultsRaw, &results); err != nil {
+		t.Fatal("Failed to unmarshal data:", err)
 	}
 
 	if len(results) != 2 {

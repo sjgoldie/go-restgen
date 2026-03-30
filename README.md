@@ -868,7 +868,7 @@ router.RegisterRoutes[User](b, "/users",
     router.AllPublic(),
     router.WithFilters("Name", "Email", "Status"),      // Allow filtering by these fields
     router.WithSorts("Name", "Email", "CreatedAt"),     // Allow sorting by these fields
-    router.WithPagination(20, 100),                     // Default 20 items, max 100
+    router.WithPagination(20, 100),                     // Cursor-based pagination (default), 20 items, max 100
     router.WithDefaultSort("-CreatedAt"),               // Default sort (- prefix = descending)
 )
 ```
@@ -885,6 +885,7 @@ router.RegisterRoutes[User](b, "/users",
         DefaultSort:      "-CreatedAt",
         DefaultLimit:     20,
         MaxLimit:         100,
+        Pagination:       router.CursorMode, // default; use router.OffsetMode for offset-based
     }),
 )
 ```
@@ -940,30 +941,74 @@ GET /users?sort=Status,-CreatedAt
 
 ### Pagination
 
-Control result size with `limit` and `offset`:
+go-restgen supports two pagination modes. **Cursor-based** is the default when using `WithPagination`.
+
+#### Cursor-Based Pagination (Default)
+
+Cursor pagination uses opaque cursors for efficient, consistent page navigation:
 
 ```bash
-# First 10 results
+# First page
 GET /users?limit=10
 
-# Skip first 20, get next 10
-GET /users?limit=10&offset=20
+# Next page (use next_cursor from previous response)
+GET /users?limit=10&after=<cursor>
+
+# Previous page (use prev_cursor from previous response)
+GET /users?limit=10&before=<cursor>
 ```
 
-**Response Headers:**
-- `X-Limit` - The limit applied to the query
-- `X-Offset` - The offset applied to the query
+**Response body** includes pagination metadata:
+```json
+{
+  "data": [...],
+  "pagination": {
+    "has_more": true,
+    "next_cursor": "eyJ2IjpbIkFsaWNlIl0sInBrIjoxfQ==",
+    "prev_cursor": "eyJ2IjpbIkJvYiJdLCJwayI6Mn0=",
+    "total_count": 47
+  }
+}
+```
+
+- `has_more` — whether more items exist beyond the current page
+- `next_cursor` — pass to `?after=` for the next page (absent on last page)
+- `prev_cursor` — pass to `?before=` for the previous page (absent on first page)
+- `total_count` — only included when `?count=true` is requested
+
+#### Offset-Based Pagination (Opt-In)
+
+Use `?offset=` to switch to traditional offset pagination, or configure it as the default:
+
+```go
+router.WithPagination(20, 100, router.OffsetMode) // offset-based as default
+```
+
+```bash
+GET /users?limit=10&offset=20&count=true
+```
+
+**Response body:**
+```json
+{
+  "data": [...],
+  "pagination": {
+    "limit": 10,
+    "offset": 20,
+    "total_count": 47
+  }
+}
+```
 
 ### Total Count
 
 Request total count (useful for pagination UI) with `count=true`:
 
 ```bash
-GET /users?limit=10&offset=20&count=true
+GET /users?limit=10&count=true
 ```
 
-**Response Headers:**
-- `X-Total-Count` - Total number of records (before pagination)
+The count is returned in `pagination.total_count` in the response body.
 
 ### Sum Aggregation
 
@@ -988,9 +1033,13 @@ GET /products?sum=Price,Stock
 GET /products?filter[Category]=Electronics&sum=Price,Stock&count=true
 ```
 
-**Response Headers:**
-- `X-Sum-Price` - Sum of the Price field across matching records
-- `X-Sum-Stock` - Sum of the Stock field across matching records
+**Response body** includes sums alongside data:
+```json
+{
+  "data": [...],
+  "sums": {"Price": 1500.0, "Stock": 200.0}
+}
+```
 
 Fields not listed in `WithSums` are silently ignored (returns 0). Bool fields return the count of `true` values. The database validates types — summing a non-numeric column (e.g. a string) returns a database error.
 
@@ -999,13 +1048,20 @@ See the [query example](./examples/query) for a complete working example with al
 ### Complete Example
 
 ```bash
-# Get active users, sorted by newest first, page 2 (10 per page), with total count
+# Cursor pagination: first page of active users, sorted by newest first, with total count
+curl 'http://localhost:8080/users?filter[Status]=active&sort=-CreatedAt&limit=10&count=true'
+
+# Response body:
+# {"data": [...], "pagination": {"has_more": true, "next_cursor": "...", "total_count": 47}}
+
+# Next page using cursor from previous response
+curl 'http://localhost:8080/users?filter[Status]=active&sort=-CreatedAt&limit=10&after=<next_cursor>'
+
+# Offset pagination (opt-in via offset parameter)
 curl 'http://localhost:8080/users?filter[Status]=active&sort=-CreatedAt&limit=10&offset=10&count=true'
 
-# Response headers include:
-# X-Total-Count: 47
-# X-Limit: 10
-# X-Offset: 10
+# Response body:
+# {"data": [...], "pagination": {"limit": 10, "offset": 10, "total_count": 47}}
 ```
 
 ## Request Body Size Limits
@@ -1353,7 +1409,7 @@ type CustomGetAllFunc[T any] func(
     svc *service.Common[T],
     meta *metadata.TypeMetadata,
     auth *metadata.AuthInfo,
-) ([]*T, int, map[string]float64, error)
+) ([]*T, int, map[string]float64, *metadata.CursorInfo, error)
 
 // CustomCreateFunc - for POST /resource
 // Includes file parameters for file resource support (nil for regular JSON requests).
@@ -1443,14 +1499,14 @@ router.RegisterRoutes[Task](b, "/tasks",
 ### Example: Filter GetAll by Owner
 
 ```go
-func customGetMyTasks(ctx context.Context, svc *service.Common[Task], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*Task, int, map[string]float64, error) {
+func customGetMyTasks(ctx context.Context, svc *service.Common[Task], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*Task, int, map[string]float64, *metadata.CursorInfo, error) {
     if auth == nil {
-        return nil, 0, nil, fmt.Errorf("not authenticated")
+        return nil, 0, nil, nil, fmt.Errorf("not authenticated")
     }
     // Return only tasks owned by current user
     tasks := []*Task{}
     err := db.GetDB().NewSelect().Model(&tasks).Where("owner_id = ?", auth.UserID).Scan(ctx)
-    return tasks, len(tasks), nil, err
+    return tasks, len(tasks), nil, nil, err
 }
 
 router.RegisterRoutes[Task](b, "/my-tasks",
@@ -2402,7 +2458,7 @@ func myCustomHandler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    users, _, _, err := svc.GetAll(r.Context())
+    users, _, _, _, err := svc.GetAll(r.Context())
     // ... handle response
 }
 ```
@@ -2495,7 +2551,7 @@ go-restgen builds on these excellent projects:
 - [x] Nested resource support with automatic parent validation
 - [x] Multi-registration support (same model at different routes with different configs)
 - [x] Query parameter filtering and sorting
-- [x] Pagination with limit/offset and total count
+- [x] Cursor-based pagination (default) with offset pagination opt-in
 - [x] Custom validation for business rules
 - [x] Transactional audit logging
 - [x] UUID primary key support

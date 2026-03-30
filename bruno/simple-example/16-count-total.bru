@@ -12,6 +12,6 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
-  res.body: length 1
+  res.body.data: isArray
+  res.body.data: length 1
 }

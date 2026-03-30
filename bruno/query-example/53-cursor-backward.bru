@@ -1,0 +1,27 @@
+meta {
+  name: Cursor Pagination - Backward (before cursor)
+  type: http
+  seq: 53
+}
+
+get {
+  url: {{baseUrl}}/products?limit=3&before={{cursorPage3Prev}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 3
+  res.body.pagination.next_cursor: isDefined
+  res.body.pagination.prev_cursor: isDefined
+}
+
+tests {
+  test("Returns previous page in natural order", function() {
+    expect(res.body.data[0].name).to.equal("Carrot");
+    expect(res.body.data[1].name).to.equal("Donut");
+    expect(res.body.data[2].name).to.equal("Eggplant");
+  });
+}

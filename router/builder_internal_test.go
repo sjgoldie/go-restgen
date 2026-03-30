@@ -189,6 +189,69 @@ func TestMergeQueryConfigs(t *testing.T) {
 			t.Error("original metadata was mutated")
 		}
 	})
+
+	t.Run("cursor pagination mode is applied from config", func(t *testing.T) {
+		original := &metadata.TypeMetadata{
+			TypeID: "test",
+		}
+
+		configs := []QueryConfig{
+			{
+				DefaultLimit: 20,
+				MaxLimit:     100,
+				Pagination:   CursorMode,
+			},
+		}
+
+		result := mergeQueryConfigs(original, configs)
+
+		if result.Pagination != metadata.CursorPagination {
+			t.Errorf("expected CursorPagination, got %d", result.Pagination)
+		}
+		if result.DefaultLimit != 20 {
+			t.Errorf("expected DefaultLimit 20, got %d", result.DefaultLimit)
+		}
+	})
+
+	t.Run("offset pagination mode is applied from config", func(t *testing.T) {
+		original := &metadata.TypeMetadata{
+			TypeID: "test",
+		}
+
+		configs := []QueryConfig{
+			{
+				DefaultLimit: 20,
+				MaxLimit:     100,
+				Pagination:   OffsetMode,
+			},
+		}
+
+		result := mergeQueryConfigs(original, configs)
+
+		if result.Pagination != metadata.OffsetPagination {
+			t.Errorf("expected OffsetPagination, got %d", result.Pagination)
+		}
+	})
+
+	t.Run("pagination mode not overridden when config has NoPagination", func(t *testing.T) {
+		original := &metadata.TypeMetadata{
+			TypeID:     "test",
+			Pagination: metadata.CursorPagination,
+		}
+
+		configs := []QueryConfig{
+			{
+				// Only setting filters, no pagination mode
+				FilterableFields: []string{"Name"},
+			},
+		}
+
+		result := mergeQueryConfigs(original, configs)
+
+		if result.Pagination != metadata.CursorPagination {
+			t.Errorf("expected original CursorPagination preserved, got %d", result.Pagination)
+		}
+	})
 }
 
 func TestRegisterChildAuthConfig(t *testing.T) {

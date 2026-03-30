@@ -49,7 +49,7 @@ router.RegisterRoutes[Product](b, "/products",
     router.AllPublic(),
     router.WithFilters("Name", "Price"),
     router.WithSorts("Name", "Price", "CreatedAt"),
-    router.WithPagination(20, 100),
+    router.WithPagination(20, 100),  // cursor-based pagination (default)
 )
 ```
 

@@ -1,0 +1,25 @@
+meta {
+  name: Cursor Pagination - Empty result set
+  type: http
+  seq: 62
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Category]=NonExistent&limit=3
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 0
+}
+
+tests {
+  test("Empty result has correct pagination", function() {
+    expect(res.body.pagination.has_more).to.be.false;
+    expect(res.body.pagination.next_cursor).to.be.undefined;
+    expect(res.body.pagination.prev_cursor).to.be.undefined;
+  });
+}

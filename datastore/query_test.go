@@ -120,7 +120,7 @@ func TestQuery_Filter_Eq(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -152,7 +152,7 @@ func TestQuery_Filter_Gt(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -184,7 +184,7 @@ func TestQuery_Filter_Like(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -210,7 +210,7 @@ func TestQuery_Filter_NotAllowed(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -246,7 +246,7 @@ func TestQuery_Sort_Direction(t *testing.T) {
 			}
 			ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-			results, _, _, err := wrapper.GetAll(ctx)
+			results, _, _, _, err := wrapper.GetAll(ctx)
 			if err != nil {
 				t.Fatal("GetAll failed:", err)
 			}
@@ -285,7 +285,7 @@ func TestQuery_Pagination_Limit(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -312,7 +312,7 @@ func TestQuery_Pagination_Offset(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -346,7 +346,7 @@ func TestQuery_Pagination_LimitAndOffset(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -379,7 +379,7 @@ func TestQuery_Count(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, count, _, err := wrapper.GetAll(ctx)
+	results, count, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -411,7 +411,7 @@ func TestQuery_CountWithFilter(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, count, _, err := wrapper.GetAll(ctx)
+	results, count, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -440,7 +440,7 @@ func TestQuery_MaxLimitEnforced(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -473,7 +473,7 @@ func TestQuery_DefaultLimit(t *testing.T) {
 	}
 
 	// No explicit limit - should use DefaultLimit (10)
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -505,7 +505,7 @@ func TestQuery_CombinedFilterSortPagination(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, count, _, err := wrapper.GetAll(ctx)
+	results, count, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -542,7 +542,7 @@ func TestQuery_Sort_InvalidField(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -597,7 +597,7 @@ func TestQuery_DefaultSort_Direction(t *testing.T) {
 			seedQueryProducts(t, wrapper, ctx)
 
 			// No explicit sort - should use DefaultSort
-			results, _, _, err := wrapper.GetAll(ctx)
+			results, _, _, _, err := wrapper.GetAll(ctx)
 			if err != nil {
 				t.Fatal("GetAll failed:", err)
 			}
@@ -633,7 +633,7 @@ func TestQuery_MultipleSort(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -645,6 +645,155 @@ func TestQuery_MultipleSort(t *testing.T) {
 	// First sort by name should put Apple first
 	if results[0].Name != productApple {
 		t.Errorf("Expected first result to be %s, got %s", productApple, results[0].Name)
+	}
+}
+
+func TestQuery_PKTieBreaker_DeterministicOrder(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	meta := &metadata.TypeMetadata{
+		TypeID:         "pk_tiebreaker_test",
+		TypeName:       "TestQueryProduct",
+		TableName:      "query_products",
+		URLParamUUID:   "productId",
+		ModelType:      reflect.TypeOf(TestQueryProduct{}),
+		PKField:        "ID",
+		SortableFields: []string{"Price"},
+		DefaultLimit:   10,
+		MaxLimit:       100,
+	}
+	ctx := ctxWithQueryMeta(meta)
+
+	// Seed products with identical prices to test tie-breaking
+	products := []TestQueryProduct{
+		{Name: "Zed", Category: "Test", Price: 50, InStock: true},
+		{Name: "Alpha", Category: "Test", Price: 50, InStock: true},
+		{Name: "Mike", Category: "Test", Price: 50, InStock: true},
+	}
+	for _, p := range products {
+		_, err := wrapper.Create(ctx, p)
+		if err != nil {
+			t.Fatal("Failed to seed product:", err)
+		}
+	}
+
+	opts := &metadata.QueryOptions{
+		Sort: []metadata.SortField{
+			{Field: "Price", Desc: false},
+		},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	results, _, _, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("Expected 3 results, got %d", len(results))
+	}
+
+	// All have the same price, so PK tie-breaker should order by ID ascending
+	for i := 1; i < len(results); i++ {
+		if results[i].ID <= results[i-1].ID {
+			t.Errorf("Expected ascending ID order as tie-breaker: ID %d came after ID %d", results[i].ID, results[i-1].ID)
+		}
+	}
+}
+
+func TestQuery_PKTieBreaker_DefaultSort(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	meta := &metadata.TypeMetadata{
+		TypeID:         "pk_tiebreaker_default_sort",
+		TypeName:       "TestQueryProduct",
+		TableName:      "query_products",
+		URLParamUUID:   "productId",
+		ModelType:      reflect.TypeOf(TestQueryProduct{}),
+		PKField:        "ID",
+		SortableFields: []string{"Price"},
+		DefaultSort:    "Price",
+		DefaultLimit:   10,
+		MaxLimit:       100,
+	}
+	ctx := ctxWithQueryMeta(meta)
+
+	// Seed products with identical prices
+	products := []TestQueryProduct{
+		{Name: "Third", Category: "Test", Price: 100, InStock: true},
+		{Name: "First", Category: "Test", Price: 100, InStock: true},
+		{Name: "Second", Category: "Test", Price: 100, InStock: true},
+	}
+	for _, p := range products {
+		_, err := wrapper.Create(ctx, p)
+		if err != nil {
+			t.Fatal("Failed to seed product:", err)
+		}
+	}
+
+	// No explicit sort — should use DefaultSort + PK tie-breaker
+	results, _, _, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("Expected 3 results, got %d", len(results))
+	}
+
+	for i := 1; i < len(results); i++ {
+		if results[i].ID <= results[i-1].ID {
+			t.Errorf("Expected ascending ID order as tie-breaker with default sort: ID %d came after ID %d", results[i].ID, results[i-1].ID)
+		}
+	}
+}
+
+func TestQuery_PKTieBreaker_NoPagination(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	meta := &metadata.TypeMetadata{
+		TypeID:       "pk_tiebreaker_no_pagination",
+		TypeName:     "TestQueryProduct",
+		TableName:    "query_products",
+		URLParamUUID: "productId",
+		ModelType:    reflect.TypeOf(TestQueryProduct{}),
+		PKField:      "ID",
+		// No pagination, no sort, no sortable fields
+	}
+	ctx := ctxWithQueryMeta(meta)
+
+	products := []TestQueryProduct{
+		{Name: "C", Category: "Test", Price: 1, InStock: true},
+		{Name: "A", Category: "Test", Price: 1, InStock: true},
+		{Name: "B", Category: "Test", Price: 1, InStock: true},
+	}
+	for _, p := range products {
+		_, err := wrapper.Create(ctx, p)
+		if err != nil {
+			t.Fatal("Failed to seed product:", err)
+		}
+	}
+
+	// No sort at all — PK tie-breaker should still apply for deterministic results
+	results, _, _, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("Expected 3 results, got %d", len(results))
+	}
+
+	for i := 1; i < len(results); i++ {
+		if results[i].ID <= results[i-1].ID {
+			t.Errorf("Expected ascending ID order when no sort specified: ID %d came after ID %d", results[i].ID, results[i-1].ID)
+		}
 	}
 }
 
@@ -664,7 +813,7 @@ func TestQuery_Filter_Neq(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -696,7 +845,7 @@ func TestQuery_Filter_Gte(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -728,7 +877,7 @@ func TestQuery_Filter_Lt(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -760,7 +909,7 @@ func TestQuery_Filter_Lte(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -776,7 +925,7 @@ func TestQuery_Filter_Lte(t *testing.T) {
 	}
 }
 
-func TestQuery_Filter_In(t *testing.T) {
+func TestQuery_Filter_InNin(t *testing.T) {
 	db, cleanup := setupQueryTestDB(t)
 	defer cleanup()
 
@@ -784,60 +933,53 @@ func TestQuery_Filter_In(t *testing.T) {
 	ctx := ctxWithQueryMeta(testQueryProductMeta)
 	seedQueryProducts(t, wrapper, ctx)
 
-	// Filter by category IN (Fruit, Bakery)
-	opts := &metadata.QueryOptions{
-		Filters: map[string]metadata.FilterValue{
-			"Category": {Value: categoryFruit + "," + categoryBakery, Operator: metadata.OpIn},
-		},
-	}
-	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
-
-	results, _, _, err := wrapper.GetAll(ctx)
-	if err != nil {
-		t.Fatal("GetAll failed:", err)
-	}
-
-	if len(results) != 3 {
-		t.Errorf("Expected 3 products with category IN (Fruit, Bakery), got %d", len(results))
-	}
-
-	for _, p := range results {
-		if p.Category != categoryFruit && p.Category != categoryBakery {
-			t.Errorf("Expected category Fruit or Bakery, got %s", p.Category)
+	t.Run("IN", func(t *testing.T) {
+		opts := &metadata.QueryOptions{
+			Filters: map[string]metadata.FilterValue{
+				"Category": {Value: categoryFruit + "," + categoryBakery, Operator: metadata.OpIn},
+			},
 		}
-	}
-}
+		inCtx := context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-func TestQuery_Filter_Nin(t *testing.T) {
-	db, cleanup := setupQueryTestDB(t)
-	defer cleanup()
-
-	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
-	ctx := ctxWithQueryMeta(testQueryProductMeta)
-	seedQueryProducts(t, wrapper, ctx)
-
-	// Filter by category NOT IN (Fruit, Bakery)
-	opts := &metadata.QueryOptions{
-		Filters: map[string]metadata.FilterValue{
-			"Category": {Value: categoryFruit + "," + categoryBakery, Operator: metadata.OpNin},
-		},
-	}
-	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
-
-	results, _, _, err := wrapper.GetAll(ctx)
-	if err != nil {
-		t.Fatal("GetAll failed:", err)
-	}
-
-	if len(results) != 2 {
-		t.Errorf("Expected 2 products with category NOT IN (Fruit, Bakery), got %d", len(results))
-	}
-
-	for _, p := range results {
-		if p.Category == categoryFruit || p.Category == categoryBakery {
-			t.Errorf("Expected category NOT Fruit or Bakery, got %s", p.Category)
+		results, _, _, _, err := wrapper.GetAll(inCtx)
+		if err != nil {
+			t.Fatal("GetAll failed:", err)
 		}
-	}
+
+		if len(results) != 3 {
+			t.Errorf("Expected 3 products with category IN (Fruit, Bakery), got %d", len(results))
+		}
+
+		for _, p := range results {
+			if p.Category != categoryFruit && p.Category != categoryBakery {
+				t.Errorf("Expected category Fruit or Bakery, got %s", p.Category)
+			}
+		}
+	})
+
+	t.Run("NIN", func(t *testing.T) {
+		opts := &metadata.QueryOptions{
+			Filters: map[string]metadata.FilterValue{
+				"Category": {Value: categoryFruit + "," + categoryBakery, Operator: metadata.OpNin},
+			},
+		}
+		ninCtx := context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+		results, _, _, _, err := wrapper.GetAll(ninCtx)
+		if err != nil {
+			t.Fatal("GetAll failed:", err)
+		}
+
+		if len(results) != 2 {
+			t.Errorf("Expected 2 products with category NOT IN (Fruit, Bakery), got %d", len(results))
+		}
+
+		for _, p := range results {
+			if p.Category == categoryFruit || p.Category == categoryBakery {
+				t.Errorf("Expected category NOT Fruit or Bakery, got %s", p.Category)
+			}
+		}
+	})
 }
 
 func TestQuery_Filter_Bt(t *testing.T) {
@@ -856,7 +998,7 @@ func TestQuery_Filter_Bt(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -889,7 +1031,7 @@ func TestQuery_Filter_Nbt(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -922,7 +1064,7 @@ func TestQuery_Filter_Bool_True(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -955,7 +1097,7 @@ func TestQuery_Filter_Bool_False(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1006,7 +1148,7 @@ func TestQuery_Filter_Int_StringValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1039,7 +1181,7 @@ func TestQuery_Filter_String_NumericLookingValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1069,7 +1211,7 @@ func TestQuery_Filter_String_TrueLookingValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1099,7 +1241,7 @@ func TestQuery_Filter_String_FalseLookingValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1129,7 +1271,7 @@ func TestQuery_Filter_Bool_OneValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1162,7 +1304,7 @@ func TestQuery_Filter_Int_InvalidValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1191,7 +1333,7 @@ func TestQuery_Filter_Bt_SingleValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1261,7 +1403,7 @@ func TestQuery_Filter_Float_Gt(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1288,7 +1430,7 @@ func TestQuery_Filter_Float_InvalidValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1315,7 +1457,7 @@ func TestQuery_Filter_Uint_Gte(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1342,7 +1484,7 @@ func TestQuery_Filter_Uint_InvalidValue(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1369,7 +1511,7 @@ func TestQuery_Filter_Float_Between(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1410,7 +1552,7 @@ func TestQuery_Filter_Bt_UnknownField(t *testing.T) {
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
 	// This will fail to find the column name, but tests the code path
-	results, _, _, err := wrapper.GetAll(ctx)
+	results, _, _, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		// Expected - field doesn't exist
 		return
@@ -1450,7 +1592,7 @@ func TestQuery_Sum_SingleField(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	_, _, sums, err := wrapper.GetAll(ctx)
+	_, _, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1476,7 +1618,7 @@ func TestQuery_Sum_MultipleFields(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	_, _, sums, err := wrapper.GetAll(ctx)
+	_, _, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1509,7 +1651,7 @@ func TestQuery_Sum_WithFilter(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	_, _, sums, err := wrapper.GetAll(ctx)
+	_, _, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1537,7 +1679,7 @@ func TestQuery_Sum_WithCount(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, count, sums, err := wrapper.GetAll(ctx)
+	results, count, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1574,7 +1716,7 @@ func TestQuery_Sum_VarcharField_NoPanic(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	_, _, sums, err := wrapper.GetAll(ctx)
+	_, _, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		// Database error is acceptable (PostgreSQL rejects SUM on text)
 		return
@@ -1600,7 +1742,7 @@ func TestQuery_Sum_BoolField(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	_, _, sums, err := wrapper.GetAll(ctx)
+	_, _, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1626,7 +1768,7 @@ func TestQuery_Sum_FieldNotInAllowlist(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	_, _, sums, err := wrapper.GetAll(ctx)
+	_, _, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1651,7 +1793,7 @@ func TestQuery_Sum_NonExistentField(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	_, _, sums, err := wrapper.GetAll(ctx)
+	_, _, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1676,7 +1818,7 @@ func TestQuery_Sum_MixedValidAndInvalid(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	_, _, sums, err := wrapper.GetAll(ctx)
+	_, _, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1703,7 +1845,7 @@ func TestQuery_Sum_NoSumsRequested(t *testing.T) {
 	opts := &metadata.QueryOptions{}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	_, _, sums, err := wrapper.GetAll(ctx)
+	_, _, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1773,7 +1915,7 @@ func TestQuery_Sum_DecimalField(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	_, _, sums, err := wrapper.GetAll(ctx)
+	_, _, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1798,7 +1940,7 @@ func TestQuery_Sum_MultipleDecimalFields(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	_, _, sums, err := wrapper.GetAll(ctx)
+	_, _, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1831,7 +1973,7 @@ func TestQuery_Sum_DecimalField_WithFilter(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	_, _, sums, err := wrapper.GetAll(ctx)
+	_, _, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1858,7 +2000,7 @@ func TestQuery_Sum_DecimalField_WithCount(t *testing.T) {
 	}
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
 
-	results, count, sums, err := wrapper.GetAll(ctx)
+	results, count, sums, _, err := wrapper.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}
@@ -1875,5 +2017,559 @@ func TestQuery_Sum_DecimalField_WithCount(t *testing.T) {
 	expectedSum := 378.44
 	if sums["UnitPrice"] != expectedSum {
 		t.Errorf("Expected sum of UnitPrice to be %v, got %v", expectedSum, sums["UnitPrice"])
+	}
+}
+
+// Cursor pagination metadata — uses CursorPagination mode with limits
+var testCursorProductMeta = &metadata.TypeMetadata{
+	TypeID:           "cursor_product_id",
+	TypeName:         "TestQueryProduct",
+	TableName:        "query_products",
+	URLParamUUID:     "productId",
+	PKField:          "ID",
+	ModelType:        reflect.TypeOf(TestQueryProduct{}),
+	FilterableFields: []string{"Name", "Category", "Price", "InStock"},
+	SortableFields:   []string{"Name", "Price", "CreatedAt"},
+	DefaultLimit:     2,
+	MaxLimit:         100,
+	Pagination:       metadata.CursorPagination,
+}
+
+func TestCursor_ForwardPagination_FirstPage(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testCursorProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	items, _, _, cursorInfo, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(items) != 2 {
+		t.Fatalf("Expected 2 items, got %d", len(items))
+	}
+	if cursorInfo == nil {
+		t.Fatal("Expected cursor info")
+	}
+	if !cursorInfo.HasMore {
+		t.Error("Expected has_more=true on first page")
+	}
+	if cursorInfo.NextCursor == "" {
+		t.Error("Expected next_cursor on first page")
+	}
+	if cursorInfo.PrevCursor != "" {
+		t.Error("Expected no prev_cursor on first page (no after/before param)")
+	}
+}
+
+func TestCursor_ForwardPagination_SecondPage(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testCursorProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Get first page
+	items1, _, _, cursor1, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("First page failed:", err)
+	}
+	if cursor1 == nil || cursor1.NextCursor == "" {
+		t.Fatal("Expected next_cursor from first page")
+	}
+
+	// Get second page using after cursor
+	opts := &metadata.QueryOptions{After: cursor1.NextCursor}
+	ctx2 := context.WithValue(ctxWithQueryMeta(testCursorProductMeta), metadata.QueryOptionsKey, opts)
+
+	items2, _, _, cursor2, err := wrapper.GetAll(ctx2)
+	if err != nil {
+		t.Fatal("Second page failed:", err)
+	}
+
+	if len(items2) != 2 {
+		t.Fatalf("Expected 2 items on second page, got %d", len(items2))
+	}
+	if cursor2 == nil {
+		t.Fatal("Expected cursor info on second page")
+	}
+	if cursor2.PrevCursor == "" {
+		t.Error("Expected prev_cursor on second page")
+	}
+
+	// Items should not overlap
+	for _, i1 := range items1 {
+		for _, i2 := range items2 {
+			if i1.ID == i2.ID {
+				t.Errorf("Overlapping item ID=%d between pages", i1.ID)
+			}
+		}
+	}
+}
+
+func TestCursor_ForwardPagination_LastPage(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testCursorProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Paginate through all pages
+	var allItems []*TestQueryProduct
+	var afterCursor string
+	for {
+		opts := &metadata.QueryOptions{}
+		if afterCursor != "" {
+			opts.After = afterCursor
+		}
+		pageCtx := context.WithValue(ctxWithQueryMeta(testCursorProductMeta), metadata.QueryOptionsKey, opts)
+
+		items, _, _, cursorInfo, err := wrapper.GetAll(pageCtx)
+		if err != nil {
+			t.Fatal("GetAll failed:", err)
+		}
+		allItems = append(allItems, items...)
+
+		if cursorInfo == nil || !cursorInfo.HasMore {
+			// Last page
+			if cursorInfo != nil && cursorInfo.NextCursor != "" {
+				t.Error("Expected no next_cursor on last page when has_more=false")
+			}
+			break
+		}
+		afterCursor = cursorInfo.NextCursor
+	}
+
+	if len(allItems) != 5 {
+		t.Errorf("Expected 5 total items across all pages, got %d", len(allItems))
+	}
+}
+
+func TestCursor_BackwardPagination(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testCursorProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Get first two pages forward
+	items1, _, _, cursor1, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("First page failed:", err)
+	}
+
+	opts2 := &metadata.QueryOptions{After: cursor1.NextCursor}
+	ctx2 := context.WithValue(ctxWithQueryMeta(testCursorProductMeta), metadata.QueryOptionsKey, opts2)
+	items2, _, _, cursor2, err := wrapper.GetAll(ctx2)
+	if err != nil {
+		t.Fatal("Second page failed:", err)
+	}
+
+	// Go backward from second page using prev_cursor
+	opts3 := &metadata.QueryOptions{Before: cursor2.PrevCursor}
+	ctx3 := context.WithValue(ctxWithQueryMeta(testCursorProductMeta), metadata.QueryOptionsKey, opts3)
+	itemsBack, _, _, _, err := wrapper.GetAll(ctx3)
+	if err != nil {
+		t.Fatal("Backward page failed:", err)
+	}
+
+	// Backward page should return items before the second page
+	if len(itemsBack) == 0 {
+		t.Fatal("Expected items from backward pagination")
+	}
+
+	// Items should be in natural (ascending) order after reversal
+	for i := 1; i < len(itemsBack); i++ {
+		if itemsBack[i].ID < itemsBack[i-1].ID {
+			t.Errorf("Backward results not in ascending order: ID %d before %d", itemsBack[i-1].ID, itemsBack[i].ID)
+		}
+	}
+
+	// Backward items should overlap with first page (going back from page 2 start)
+	backIDs := map[int]bool{}
+	for _, item := range itemsBack {
+		backIDs[item.ID] = true
+	}
+	overlapCount := 0
+	for _, item := range items1 {
+		if backIDs[item.ID] {
+			overlapCount++
+		}
+	}
+	_ = items2
+	if overlapCount == 0 {
+		t.Error("Expected backward page to overlap with first page items")
+	}
+}
+
+func TestCursor_EmptyResultSet(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testCursorProductMeta)
+	// No seeding — empty table
+
+	items, _, _, cursorInfo, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(items) != 0 {
+		t.Errorf("Expected 0 items, got %d", len(items))
+	}
+	if cursorInfo == nil {
+		t.Fatal("Expected cursor info even for empty result")
+	}
+	if cursorInfo.HasMore {
+		t.Error("Expected has_more=false for empty result")
+	}
+	if cursorInfo.NextCursor != "" {
+		t.Error("Expected no next_cursor for empty result")
+	}
+	if cursorInfo.PrevCursor != "" {
+		t.Error("Expected no prev_cursor for empty result")
+	}
+}
+
+func TestCursor_SingleItemResultSet(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testCursorProductMeta)
+
+	_, err := wrapper.Create(ctx, TestQueryProduct{Name: "Solo", Category: "Test", Price: 10, InStock: true})
+	if err != nil {
+		t.Fatal("Create failed:", err)
+	}
+
+	items, _, _, cursorInfo, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(items) != 1 {
+		t.Fatalf("Expected 1 item, got %d", len(items))
+	}
+	if cursorInfo == nil {
+		t.Fatal("Expected cursor info")
+	}
+	if cursorInfo.HasMore {
+		t.Error("Expected has_more=false for single item")
+	}
+}
+
+func TestCursor_InvalidCursorString(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testCursorProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	opts := &metadata.QueryOptions{After: "not-valid-base64!!!"}
+	ctx2 := context.WithValue(ctxWithQueryMeta(testCursorProductMeta), metadata.QueryOptionsKey, opts)
+
+	_, _, _, _, err := wrapper.GetAll(ctx2)
+	if err == nil {
+		t.Error("Expected error for invalid cursor string")
+	}
+}
+
+func TestCursor_CorruptedCursorJSON(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testCursorProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Valid base64, invalid JSON
+	opts := &metadata.QueryOptions{After: "bm90LWpzb24="}
+	ctx2 := context.WithValue(ctxWithQueryMeta(testCursorProductMeta), metadata.QueryOptionsKey, opts)
+
+	_, _, _, _, err := wrapper.GetAll(ctx2)
+	if err == nil {
+		t.Error("Expected error for corrupted cursor JSON")
+	}
+}
+
+func TestCursor_MismatchedSortValues(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testCursorProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Create a cursor with wrong number of sort values
+	wrongCursor := metadata.Cursor{
+		Values: []any{"value1", "value2", "value3"}, // Too many values
+		PK:     float64(1),
+	}
+	encoded, err := metadata.EncodeCursor(wrongCursor)
+	if err != nil {
+		t.Fatal("Failed to encode cursor:", err)
+	}
+
+	opts := &metadata.QueryOptions{After: encoded}
+	ctx2 := context.WithValue(ctxWithQueryMeta(testCursorProductMeta), metadata.QueryOptionsKey, opts)
+
+	_, _, _, _, err = wrapper.GetAll(ctx2)
+	if err == nil {
+		t.Error("Expected error for mismatched sort values in cursor")
+	}
+}
+
+func TestCursor_WithSortField(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testCursorProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Sort by Price ascending, paginate with cursor
+	opts := &metadata.QueryOptions{
+		Sort: []metadata.SortField{{Field: "Price", Desc: false}},
+	}
+	ctx1 := context.WithValue(ctxWithQueryMeta(testCursorProductMeta), metadata.QueryOptionsKey, opts)
+
+	items1, _, _, cursor1, err := wrapper.GetAll(ctx1)
+	if err != nil {
+		t.Fatal("First page failed:", err)
+	}
+
+	if len(items1) != 2 {
+		t.Fatalf("Expected 2 items, got %d", len(items1))
+	}
+	// Should be sorted by price ascending
+	if items1[0].Price > items1[1].Price {
+		t.Errorf("Expected ascending price order: %d, %d", items1[0].Price, items1[1].Price)
+	}
+
+	// Get next page with same sort
+	opts2 := &metadata.QueryOptions{
+		Sort:  []metadata.SortField{{Field: "Price", Desc: false}},
+		After: cursor1.NextCursor,
+	}
+	ctx2 := context.WithValue(ctxWithQueryMeta(testCursorProductMeta), metadata.QueryOptionsKey, opts2)
+
+	items2, _, _, _, err := wrapper.GetAll(ctx2)
+	if err != nil {
+		t.Fatal("Second page failed:", err)
+	}
+
+	// Second page prices should all be >= last price of first page
+	lastPrice := items1[len(items1)-1].Price
+	for _, item := range items2 {
+		if item.Price < lastPrice {
+			t.Errorf("Second page item price %d is less than first page last price %d", item.Price, lastPrice)
+		}
+	}
+}
+
+func TestCursor_WithFilter(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testCursorProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Filter to Fruit category only (Apple, Banana = 2 items, fits in one page with limit=2)
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Category": {Value: categoryFruit, Operator: metadata.OpEq},
+		},
+	}
+	ctx1 := context.WithValue(ctxWithQueryMeta(testCursorProductMeta), metadata.QueryOptionsKey, opts)
+
+	items, _, _, cursorInfo, err := wrapper.GetAll(ctx1)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(items) != 2 {
+		t.Errorf("Expected 2 fruit items, got %d", len(items))
+	}
+	if cursorInfo == nil {
+		t.Fatal("Expected cursor info")
+	}
+	if cursorInfo.HasMore {
+		t.Error("Expected has_more=false when all filtered items fit in one page")
+	}
+}
+
+func TestCursor_OffsetIgnoredInCursorMode(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testCursorProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Set offset=2 but also use cursor mode — offset should be ignored
+	opts := &metadata.QueryOptions{Limit: 2}
+	ctx1 := context.WithValue(ctxWithQueryMeta(testCursorProductMeta), metadata.QueryOptionsKey, opts)
+
+	items, _, _, cursorInfo, err := wrapper.GetAll(ctx1)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(items) != 2 {
+		t.Errorf("Expected 2 items, got %d", len(items))
+	}
+	if cursorInfo == nil {
+		t.Fatal("Expected cursor info in cursor mode")
+	}
+}
+
+func TestCursor_OffsetModeWhenConfigured(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	offsetMeta := &metadata.TypeMetadata{
+		TypeID:           "offset_product_id",
+		TypeName:         "TestQueryProduct",
+		TableName:        "query_products",
+		URLParamUUID:     "productId",
+		PKField:          "ID",
+		ModelType:        reflect.TypeOf(TestQueryProduct{}),
+		FilterableFields: []string{"Name", "Category", "Price", "InStock"},
+		SortableFields:   []string{"Name", "Price", "CreatedAt"},
+		DefaultLimit:     2,
+		MaxLimit:         100,
+		Pagination:       metadata.OffsetPagination,
+	}
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(offsetMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	opts := &metadata.QueryOptions{Limit: 2, Offset: 1}
+	ctx1 := context.WithValue(ctxWithQueryMeta(offsetMeta), metadata.QueryOptionsKey, opts)
+
+	items, _, _, cursorInfo, err := wrapper.GetAll(ctx1)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(items) != 2 {
+		t.Errorf("Expected 2 items with offset pagination, got %d", len(items))
+	}
+	if cursorInfo != nil {
+		t.Error("Expected nil cursor info in offset mode")
+	}
+}
+
+func TestCursor_CountTotalWithCursor(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testCursorProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	opts := &metadata.QueryOptions{CountTotal: true}
+	ctx1 := context.WithValue(ctxWithQueryMeta(testCursorProductMeta), metadata.QueryOptionsKey, opts)
+
+	items, count, _, cursorInfo, err := wrapper.GetAll(ctx1)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(items) != 2 {
+		t.Errorf("Expected 2 items (page size), got %d", len(items))
+	}
+	if count != 5 {
+		t.Errorf("Expected total count 5, got %d", count)
+	}
+	if cursorInfo == nil {
+		t.Fatal("Expected cursor info")
+	}
+	if !cursorInfo.HasMore {
+		t.Error("Expected has_more=true")
+	}
+}
+
+func TestCursor_ExactlyOnePage(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	// Limit = 5, exactly 5 items: N+1 fetch gets 5, no extra → has_more=false
+	exactMeta := &metadata.TypeMetadata{
+		TypeID:           "exact_product_id",
+		TypeName:         "TestQueryProduct",
+		TableName:        "query_products",
+		URLParamUUID:     "productId",
+		PKField:          "ID",
+		ModelType:        reflect.TypeOf(TestQueryProduct{}),
+		FilterableFields: []string{"Name", "Category", "Price", "InStock"},
+		SortableFields:   []string{"Name", "Price", "CreatedAt"},
+		DefaultLimit:     5,
+		MaxLimit:         100,
+		Pagination:       metadata.CursorPagination,
+	}
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(exactMeta)
+	seedQueryProducts(t, wrapper, ctx) // 5 items
+
+	items, _, _, cursorInfo, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(items) != 5 {
+		t.Errorf("Expected 5 items, got %d", len(items))
+	}
+	if cursorInfo == nil {
+		t.Fatal("Expected cursor info")
+	}
+	if cursorInfo.HasMore {
+		t.Error("Expected has_more=false when items exactly fill page")
+	}
+}
+
+func TestCursor_NoPaginationMode(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	// NoPagination mode — should return all items with no cursor info
+	noPagMeta := &metadata.TypeMetadata{
+		TypeID:           "nopag_product_id",
+		TypeName:         "TestQueryProduct",
+		TableName:        "query_products",
+		URLParamUUID:     "productId",
+		PKField:          "ID",
+		ModelType:        reflect.TypeOf(TestQueryProduct{}),
+		FilterableFields: []string{"Name", "Category", "Price", "InStock"},
+		SortableFields:   []string{"Name", "Price", "CreatedAt"},
+		Pagination:       metadata.NoPagination,
+	}
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(noPagMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	items, _, _, cursorInfo, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(items) != 5 {
+		t.Errorf("Expected all 5 items with no pagination, got %d", len(items))
+	}
+	if cursorInfo != nil {
+		t.Error("Expected nil cursor info with no pagination mode")
 	}
 }

@@ -12,17 +12,17 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 script:post-response {
-  if (res.body.length !== 5) {
-    throw new Error(`Expected 5 usage records for NMI001, got ${res.body.length}`);
+  if (res.body.data.length !== 5) {
+    throw new Error(`Expected 5 usage records for NMI001, got ${res.body.data.length}`);
   }
-  for (const record of res.body) {
+  for (const record of res.body.data) {
     if (record.nmi !== "NMI001") {
       throw new Error(`Expected NMI001, got ${record.nmi}`);
     }
   }
-  bru.setVar("usageId", res.body[0].id);
+  bru.setVar("usageId", res.body.data[0].id);
 }

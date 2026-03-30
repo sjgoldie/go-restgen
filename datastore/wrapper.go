@@ -49,8 +49,8 @@ type preFetchResult[T any] struct {
 // GetAll retrieves all items of type T from the datastore
 // Filters from context are applied automatically
 // Relations can be loaded via ?include= query parameter (parsed into QueryOptions.Include)
-// Returns items, total count (0 if not requested), sums (nil if not requested), and error
-func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64, error) {
+// Returns items, total count (0 if not requested), sums (nil if not requested), cursor info (nil if not cursor mode), and error
+func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64, *metadata.CursorInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -60,25 +60,25 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64,
 	// Get metadata from context
 	meta, err := metadata.FromContext(ctx)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 
 	// Apply parent filters and JOINs from metadata
 	query, err = w.applyParentFiltersWithMeta(ctx, query, meta)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 
 	// Apply ownership filter for type T
 	query, err = w.applyOwnershipFilterWithMeta(ctx, query, meta)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 
 	// Apply tenant filter
 	query, err = w.applyTenantFilter(ctx, query, meta)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 
 	// Get query options from context (optional)
@@ -93,15 +93,27 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64,
 	if opts != nil && (opts.CountTotal || len(opts.Sums) > 0) {
 		totalCount, sums, err = w.computeAggregates(ctx, query, opts, meta)
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, 0, nil, nil, err
 		}
 	}
 
 	// Apply sorting from query options (or default sort)
 	query = w.applyQuerySorting(query, opts, meta)
 
-	// Apply pagination AFTER aggregates
-	query = w.applyQueryPagination(query, opts, meta)
+	// Determine if cursor pagination is active
+	cursorMode := meta.Pagination == metadata.CursorPagination &&
+		(opts == nil || (opts.After != "" || opts.Before != "" || opts.Offset == 0))
+
+	// Apply cursor WHERE clause for keyset pagination
+	if cursorMode && opts != nil {
+		query, err = w.applyCursorWhere(query, opts, meta)
+		if err != nil {
+			return nil, 0, nil, nil, err
+		}
+	}
+
+	// Apply pagination AFTER aggregates (uses N+1 for cursor mode)
+	requestedLimit := w.applyQueryPagination(query, opts, meta)
 
 	// Apply relation includes from query options
 	query = w.applyRelationIncludes(ctx, query, opts, meta)
@@ -109,16 +121,31 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64,
 	if err := query.Scan(ctx); err != nil {
 		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, 0, nil, err
+			return nil, 0, nil, nil, err
 		}
 		// Check for connection issues
 		if errors.Is(err, sql.ErrConnDone) {
-			return nil, 0, nil, apperrors.ErrUnavailable
+			return nil, 0, nil, nil, apperrors.ErrUnavailable
 		}
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 
-	return items, totalCount, sums, nil
+	// Build cursor info for cursor pagination
+	var cursorInfo *metadata.CursorInfo
+	if cursorMode && requestedLimit > 0 {
+		cursorInfo = w.buildCursorInfo(items, opts, meta, requestedLimit)
+		// Trim N+1 extra item
+		if len(items) > requestedLimit {
+			items = items[:requestedLimit]
+		}
+	}
+
+	// For backward pagination, reverse the results to restore natural order
+	if cursorMode && opts != nil && opts.Before != "" {
+		slices.Reverse(items)
+	}
+
+	return items, totalCount, sums, cursorInfo, nil
 }
 
 // Get retrieves a single item of type T by ID from the datastore
@@ -1178,10 +1205,15 @@ func applyFilter(query *bun.SelectQuery, tableName, colName, operator string, va
 	}
 }
 
-// applyQuerySorting applies sorting from QueryOptions to the query
-// Falls back to metadata.DefaultSort if no sort specified
-// Only fields in metadata.SortableFields are allowed (others silently ignored)
+// applyQuerySorting applies sorting from QueryOptions to the query.
+// Falls back to metadata.DefaultSort if no sort specified.
+// Only fields in metadata.SortableFields are allowed (others silently ignored).
+// Always appends the PK as a final tie-breaker to guarantee deterministic ordering.
+// For backward cursor pagination (?before=), all sort directions are reversed.
 func (w *Wrapper[T]) applyQuerySorting(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
+	hasPKSort := false
+	reverseDir := opts != nil && opts.Before != "" && meta.Pagination == metadata.CursorPagination
+
 	// Use sort from options if provided
 	if opts != nil && len(opts.Sort) > 0 {
 		for _, sort := range opts.Sort {
@@ -1189,27 +1221,41 @@ func (w *Wrapper[T]) applyQuerySorting(query *bun.SelectQuery, opts *metadata.Qu
 				continue // skip invalid sort fields
 			}
 
+			if sort.Field == meta.PKField {
+				hasPKSort = true
+			}
+
 			colName, err := ColumnName(meta.ModelType, sort.Field)
 			if err != nil {
 				continue
 			}
 
-			if sort.Desc {
+			desc := sort.Desc
+			if reverseDir {
+				desc = !desc
+			}
+
+			if desc {
 				query = query.OrderExpr("?TableAlias.? DESC", bun.Ident(colName))
 			} else {
 				query = query.OrderExpr("?TableAlias.? ASC", bun.Ident(colName))
 			}
 		}
-		return query
-	}
-
-	// Fall back to default sort from metadata
-	if meta.DefaultSort != "" {
+	} else if meta.DefaultSort != "" {
+		// Fall back to default sort from metadata
 		field := meta.DefaultSort
 		desc := false
 		if strings.HasPrefix(field, "-") {
 			desc = true
 			field = field[1:]
+		}
+
+		if field == meta.PKField {
+			hasPKSort = true
+		}
+
+		if reverseDir {
+			desc = !desc
 		}
 
 		colName, err := ColumnName(meta.ModelType, field)
@@ -1222,12 +1268,27 @@ func (w *Wrapper[T]) applyQuerySorting(query *bun.SelectQuery, opts *metadata.Qu
 		}
 	}
 
+	// Always append PK as final tie-breaker for deterministic ordering
+	if !hasPKSort && meta.PKField != "" {
+		pkCol, err := ColumnName(meta.ModelType, meta.PKField)
+		if err == nil {
+			desc := reverseDir // normally ASC, reversed for backward
+			if desc {
+				query = query.OrderExpr("?TableAlias.? DESC", bun.Ident(pkCol))
+			} else {
+				query = query.OrderExpr("?TableAlias.? ASC", bun.Ident(pkCol))
+			}
+		}
+	}
+
 	return query
 }
 
-// applyQueryPagination applies limit/offset from QueryOptions to the query
-// Uses metadata defaults if not specified in options
-func (w *Wrapper[T]) applyQueryPagination(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
+// applyQueryPagination applies limit/offset from QueryOptions to the query.
+// Uses metadata defaults if not specified in options.
+// For cursor mode, fetches limit+1 items (N+1 trick) to detect has_more.
+// Returns the requested limit (before N+1 adjustment) so the caller can trim.
+func (w *Wrapper[T]) applyQueryPagination(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) int {
 	limit := meta.DefaultLimit
 	offset := 0
 
@@ -1245,15 +1306,241 @@ func (w *Wrapper[T]) applyQueryPagination(query *bun.SelectQuery, opts *metadata
 		limit = meta.MaxLimit
 	}
 
-	if limit > 0 {
-		query = query.Limit(limit)
+	requestedLimit := limit
+
+	// N+1 trick for cursor mode: fetch one extra to detect has_more
+	cursorMode := meta.Pagination == metadata.CursorPagination &&
+		(opts == nil || (opts.After != "" || opts.Before != "" || opts.Offset == 0))
+	if cursorMode && limit > 0 {
+		_ = query.Limit(limit + 1)
+	} else if limit > 0 {
+		_ = query.Limit(limit)
 	}
 
 	if offset > 0 {
-		query = query.Offset(offset)
+		_ = query.Offset(offset)
 	}
 
-	return query
+	return requestedLimit
+}
+
+// applyCursorWhere adds a keyset WHERE clause for cursor-based pagination.
+// It builds a disjunctive condition that respects per-column sort direction,
+// which is necessary because SQL row-value comparison applies a single
+// comparison direction uniformly and cannot handle mixed ASC/DESC sorts.
+//
+// For columns (A DESC, B ASC, PK ASC) with cursor values (a, b, pk),
+// the forward ("after") condition expands to:
+//
+//	(A < a) OR (A = a AND B > b) OR (A = a AND B = b AND PK > pk)
+func (w *Wrapper[T]) applyCursorWhere(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) (*bun.SelectQuery, error) {
+	cursorStr := opts.After
+	backward := opts.Before != ""
+	if backward {
+		cursorStr = opts.Before
+	}
+
+	if cursorStr == "" {
+		return query, nil
+	}
+
+	cursor, err := metadata.DecodeCursor(cursorStr)
+	if err != nil {
+		return nil, err
+	}
+
+	sortCols, err := w.effectiveSortColumns(opts, meta)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(cursor.Values) != len(sortCols) {
+		return nil, fmt.Errorf("invalid cursor: expected %d sort values, got %d", len(sortCols), len(cursor.Values))
+	}
+
+	pkCol, err := ColumnName(meta.ModelType, meta.PKField)
+	if err != nil {
+		return nil, fmt.Errorf("invalid cursor: cannot resolve PK column: %w", err)
+	}
+
+	// Build per-column operators based on effective sort direction.
+	// applyQuerySorting already reverses directions for "before", so the
+	// effective directions here account for backward navigation.
+	type colInfo struct {
+		expr string // e.g. ?TableAlias."price"
+		val  any
+		op   string // ">" for ASC, "<" for DESC
+	}
+
+	cols := make([]colInfo, 0, len(sortCols)+1)
+	for i, sc := range sortCols {
+		op := ">"
+		if sc.desc {
+			op = "<"
+		}
+		if backward {
+			// Sort is reversed by applyQuerySorting, so flip the operator
+			if op == ">" {
+				op = "<"
+			} else {
+				op = ">"
+			}
+		}
+		cols = append(cols, colInfo{
+			expr: fmt.Sprintf("?TableAlias.%q", sc.col),
+			val:  cursor.Values[i],
+			op:   op,
+		})
+	}
+
+	// PK tie-breaker: normally ASC (>), reversed for backward (<)
+	pkOp := ">"
+	if backward {
+		pkOp = "<"
+	}
+	cols = append(cols, colInfo{
+		expr: fmt.Sprintf("?TableAlias.%q", pkCol),
+		val:  cursor.PK,
+		op:   pkOp,
+	})
+
+	// Build disjunctive normal form:
+	// (c0 op v0) OR (c0 = v0 AND c1 op v1) OR ... OR (c0 = v0 AND ... AND cN op vN)
+	var orClauses []string
+	var allVals []any
+
+	for i := range cols {
+		var andParts []string
+		// Equality prefix for all columns before i
+		for j := 0; j < i; j++ {
+			andParts = append(andParts, cols[j].expr+" = ?")
+			allVals = append(allVals, cols[j].val)
+		}
+		// Comparison for column i
+		andParts = append(andParts, cols[i].expr+" "+cols[i].op+" ?")
+		allVals = append(allVals, cols[i].val)
+
+		orClauses = append(orClauses, "("+strings.Join(andParts, " AND ")+")")
+	}
+
+	whereExpr := "(" + strings.Join(orClauses, " OR ") + ")"
+	query = query.Where(whereExpr, allVals...)
+
+	return query, nil
+}
+
+// sortColumn holds a resolved sort column name and direction
+type sortColumn struct {
+	col  string
+	desc bool
+}
+
+// effectiveSortColumns returns the resolved column names and directions for the current sort,
+// excluding the PK tie-breaker (which is handled separately).
+func (w *Wrapper[T]) effectiveSortColumns(opts *metadata.QueryOptions, meta *metadata.TypeMetadata) ([]sortColumn, error) {
+	var cols []sortColumn
+
+	if opts != nil && len(opts.Sort) > 0 {
+		for _, sort := range opts.Sort {
+			if !slices.Contains(meta.SortableFields, sort.Field) {
+				continue
+			}
+			if sort.Field == meta.PKField {
+				continue // PK is handled as tie-breaker
+			}
+			colName, err := ColumnName(meta.ModelType, sort.Field)
+			if err != nil {
+				continue
+			}
+			cols = append(cols, sortColumn{col: colName, desc: sort.Desc})
+		}
+	} else if meta.DefaultSort != "" {
+		field := meta.DefaultSort
+		desc := false
+		if strings.HasPrefix(field, "-") {
+			desc = true
+			field = field[1:]
+		}
+		if field != meta.PKField {
+			colName, err := ColumnName(meta.ModelType, field)
+			if err == nil {
+				cols = append(cols, sortColumn{col: colName, desc: desc})
+			}
+		}
+	}
+
+	return cols, nil
+}
+
+// buildCursorInfo generates CursorInfo from the fetched items.
+// Uses N+1 detection: if len(items) > requestedLimit, there are more items.
+func (w *Wrapper[T]) buildCursorInfo(items []*T, opts *metadata.QueryOptions, meta *metadata.TypeMetadata, requestedLimit int) *metadata.CursorInfo {
+	info := &metadata.CursorInfo{}
+
+	hasMore := len(items) > requestedLimit
+	info.HasMore = hasMore
+
+	// Trim to view for cursor generation (don't modify the slice yet, caller does that)
+	viewItems := items
+	if len(viewItems) > requestedLimit {
+		viewItems = viewItems[:requestedLimit]
+	}
+
+	if len(viewItems) == 0 {
+		return info
+	}
+
+	sortCols, _ := w.effectiveSortColumns(opts, meta)
+
+	// Build next cursor from the last item
+	if hasMore || (opts != nil && opts.Before != "") {
+		last := viewItems[len(viewItems)-1]
+		if cursor, err := w.buildCursorFromItem(last, sortCols, meta); err == nil {
+			info.NextCursor = cursor
+		}
+	}
+
+	// Build prev cursor from the first item (only if we came from a cursor)
+	if opts != nil && (opts.After != "" || opts.Before != "") {
+		first := viewItems[0]
+		if cursor, err := w.buildCursorFromItem(first, sortCols, meta); err == nil {
+			info.PrevCursor = cursor
+		}
+	}
+
+	return info
+}
+
+// buildCursorFromItem extracts sort field values and PK from an item to create a cursor.
+func (w *Wrapper[T]) buildCursorFromItem(item *T, sortCols []sortColumn, meta *metadata.TypeMetadata) (string, error) {
+	v := reflect.ValueOf(item).Elem()
+
+	// Collect sort field values using the Go field name (not column name)
+	var values []any
+	for _, sc := range sortCols {
+		// Reverse-lookup: column name → Go field name
+		goField, err := FieldName(meta.ModelType, sc.col)
+		if err != nil {
+			continue
+		}
+		field := v.FieldByName(goField)
+		if !field.IsValid() {
+			continue
+		}
+		values = append(values, field.Interface())
+	}
+
+	// Get PK value
+	pkField := v.FieldByName(meta.PKField)
+	if !pkField.IsValid() {
+		return "", fmt.Errorf("PK field %s not found", meta.PKField)
+	}
+
+	cursor := metadata.Cursor{
+		Values: values,
+		PK:     pkField.Interface(),
+	}
+	return metadata.EncodeCursor(cursor)
 }
 
 // runValidation executes the validator function if one is configured in metadata

@@ -1,13 +1,26 @@
 package router
 
+import "github.com/sjgoldie/go-restgen/metadata"
+
+// PaginationMode is an alias for metadata.PaginationMode for use in router options.
+type PaginationMode = metadata.PaginationMode
+
+const (
+	// CursorMode uses cursor-based (keyset) pagination. This is the default.
+	CursorMode = metadata.CursorPagination
+	// OffsetMode uses traditional offset-based pagination.
+	OffsetMode = metadata.OffsetPagination
+)
+
 // QueryConfig defines query parameter configuration for GetAll endpoints
 type QueryConfig struct {
-	FilterableFields []string // Field names allowed for filtering
-	SortableFields   []string // Field names allowed for sorting
-	SummableFields   []string // Field names allowed for sum aggregation
-	DefaultSort      string   // Default sort field (prefix with - for descending)
-	DefaultLimit     int      // Default page size (0 = no limit)
-	MaxLimit         int      // Maximum allowed limit (0 = no max)
+	FilterableFields []string       // Field names allowed for filtering
+	SortableFields   []string       // Field names allowed for sorting
+	SummableFields   []string       // Field names allowed for sum aggregation
+	DefaultSort      string         // Default sort field (prefix with - for descending)
+	DefaultLimit     int            // Default page size (0 = no limit)
+	MaxLimit         int            // Maximum allowed limit (0 = no max)
+	Pagination       PaginationMode // Pagination mode (CursorMode or OffsetMode)
 }
 
 // WithQuery returns a QueryConfig with all query options configured
@@ -29,11 +42,17 @@ func WithSorts(fields ...string) QueryConfig {
 	}
 }
 
-// WithPagination returns a QueryConfig with pagination settings
-func WithPagination(defaultLimit, maxLimit int) QueryConfig {
+// WithPagination returns a QueryConfig with pagination settings.
+// Defaults to cursor-based pagination. Pass OffsetMode for offset-based pagination.
+func WithPagination(defaultLimit, maxLimit int, mode ...PaginationMode) QueryConfig {
+	m := CursorMode
+	if len(mode) > 0 {
+		m = mode[0]
+	}
 	return QueryConfig{
 		DefaultLimit: defaultLimit,
 		MaxLimit:     maxLimit,
+		Pagination:   m,
 	}
 }
 

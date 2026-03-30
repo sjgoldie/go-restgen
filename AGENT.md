@@ -119,11 +119,12 @@ router.RegisterRoutes[Model](builder, "/path",
     // Query options
     router.WithFilters("Status", "Name"),
     router.WithSorts("Name", "CreatedAt"),
-    router.WithPagination(20, 100),
+    router.WithPagination(20, 100),                // cursor-based pagination (default)
+    router.WithPagination(20, 100, router.OffsetMode), // offset-based pagination (opt-in)
     router.WithDefaultSort("-CreatedAt"),
     router.WithRelationName("Posts"),  // enables ?include=Posts on parent
     router.WithJoinOn("NMI", "NMI"),  // custom join: child.NMI = parent.NMI (no belongs-to tag needed)
-    router.WithSums("Price", "Stock"),  // enables ?sum=Price,Stock with X-Sum-* headers (works with any DB-numeric type including decimal.Decimal)
+    router.WithSums("Price", "Stock"),  // enables ?sum=Price,Stock in response body (works with any DB-numeric type including decimal.Decimal)
     router.WithAlternatePK("MyPK"),     // when PK field isn't named "ID"
 
     // Custom handlers
@@ -167,6 +168,7 @@ router.RegisterRoutes[Model](builder, "/path",
         DefaultSort:      "-CreatedAt",
         DefaultLimit:     20,
         MaxLimit:         100,
+        Pagination:       router.CursorMode, // default; use router.OffsetMode for offset-based
     }),
 )
 
@@ -306,7 +308,7 @@ func customGetAll(
     svc *service.Common[User],
     meta *metadata.TypeMetadata,
     auth *metadata.AuthInfo,
-) ([]*User, int, map[string]float64, error) {
+) ([]*User, int, map[string]float64, *metadata.CursorInfo, error) {
     // Custom logic here
     return svc.GetAll(ctx)
 }
@@ -530,11 +532,26 @@ Built-in support on GetAll endpoints:
 | Filter | `?filter[status]=active` | Exact match |
 | Filter ops | `?filter[age][gt]=18` | Operators: eq, neq, gt, gte, lt, lte, like, in, nin, bt, nbt |
 | Sort | `?sort=name,-created_at` | `-` prefix for descending |
-| Limit | `?limit=10` | Max results |
-| Offset | `?offset=20` | Skip results |
-| Count | `?count=true` | Include X-Total-Count header |
+| Limit | `?limit=10` | Max results per page |
+| After | `?after=<cursor>` | Next page (cursor from `pagination.next_cursor`) |
+| Before | `?before=<cursor>` | Previous page (cursor from `pagination.prev_cursor`) |
+| Offset | `?offset=20` | Skip results (switches to offset pagination) |
+| Count | `?count=true` | Include `total_count` in `pagination` |
 | Include | `?include=Posts` or `?include=Posts.Comments` | Load relations (requires WithRelationName on child route). Dot notation for nested. |
-| Sum | `?sum=Price,Stock` | Sum fields, returns X-Sum-Price, X-Sum-Stock headers (requires WithSums). Works with any DB-numeric type including `decimal.Decimal`. Bool fields return count of `true` values. DB validates types — non-numeric columns return a database error. |
+| Sum | `?sum=Price,Stock` | Sum fields, returns in `sums` object in response body (requires WithSums). Works with any DB-numeric type including `decimal.Decimal`. Bool fields return count of `true` values. DB validates types — non-numeric columns return a database error. |
+
+**Response envelope (GetAll):**
+```json
+{
+  "data": [...],
+  "pagination": {"has_more": true, "next_cursor": "...", "prev_cursor": "...", "total_count": 42},
+  "sums": {"Price": 1500.0, "Stock": 200.0}
+}
+```
+Cursor mode fields: `has_more`, `next_cursor`, `prev_cursor`, `total_count` (if `count=true`).
+Offset mode fields: `limit`, `offset`, `total_count` (if `count=true`).
+Batch responses use `{"data": [...]}` envelope.
+Single-item responses (Get, Create, Update, Patch, Delete) return the raw object (no envelope).
 
 **Filter operator details:**
 - `in` - In list: `?filter[Status][in]=active,pending`

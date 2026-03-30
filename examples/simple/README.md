@@ -48,8 +48,14 @@ curl 'http://localhost:8080/users?filter[Name][like]=John%'
 # Sort by name descending
 curl 'http://localhost:8080/users?sort=-Name'
 
-# Pagination with total count
-curl 'http://localhost:8080/users?limit=10&offset=0&count=true'
+# Cursor pagination (default) with total count
+curl 'http://localhost:8080/users?limit=10&count=true'
+
+# Next page using cursor from previous response
+curl 'http://localhost:8080/users?limit=10&after=<next_cursor>'
+
+# Offset pagination (opt-in)
+curl 'http://localhost:8080/users?limit=10&offset=20&count=true'
 
 # Combined
 curl 'http://localhost:8080/users?filter[Name][like]=J%&sort=-Name&limit=10&count=true'

@@ -215,13 +215,17 @@ func TestHandler_GetAll(t *testing.T) {
 				t.Errorf("Expected status %d, got %d", tt.expectedCode, w.Code)
 			}
 
-			var result []TestUser
-			if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+			var envelope handler.ListResponse
+			if err := json.NewDecoder(w.Body).Decode(&envelope); err != nil {
 				t.Fatal("Failed to decode response:", err)
 			}
 
-			if len(result) != tt.expectedCount {
-				t.Errorf("Expected %d users, got %d", tt.expectedCount, len(result))
+			items, ok := envelope.Data.([]interface{})
+			if !ok {
+				t.Fatalf("Expected data to be an array, got %T", envelope.Data)
+			}
+			if len(items) != tt.expectedCount {
+				t.Errorf("Expected %d users, got %d", tt.expectedCount, len(items))
 			}
 		})
 	}
@@ -728,13 +732,17 @@ func TestHandler_GetAllWithRelations(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 	}
 
-	var result []TestUser
-	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+	var envelope handler.ListResponse
+	if err := json.NewDecoder(w.Body).Decode(&envelope); err != nil {
 		t.Fatal("Failed to decode response:", err)
 	}
 
-	if len(result) != 1 {
-		t.Errorf("Expected 1 user, got %d", len(result))
+	items, ok := envelope.Data.([]interface{})
+	if !ok {
+		t.Fatalf("Expected data to be an array, got %T", envelope.Data)
+	}
+	if len(items) != 1 {
+		t.Errorf("Expected 1 user, got %d", len(items))
 	}
 }
 
@@ -893,10 +901,12 @@ func TestHandler_GetAll_QueryParams(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		queryString   string
-		expectedCount int
-		checkHeaders  map[string]string
+		name           string
+		queryString    string
+		expectedCount  int
+		expectedLimit  *int
+		expectedOffset *int
+		expectedTotal  *int
 	}{
 		{
 			name:          "no query params",
@@ -912,19 +922,20 @@ func TestHandler_GetAll_QueryParams(t *testing.T) {
 			name:          "limit",
 			queryString:   "limit=2",
 			expectedCount: 2,
-			checkHeaders:  map[string]string{"X-Limit": "2"},
+			expectedLimit: intPtr(2),
 		},
 		{
-			name:          "offset",
-			queryString:   "offset=1&sort=Name",
-			expectedCount: 2,
-			checkHeaders:  map[string]string{"X-Offset": "1"},
+			name:           "offset",
+			queryString:    "offset=1&sort=Name",
+			expectedCount:  2,
+			expectedOffset: intPtr(1),
 		},
 		{
 			name:          "count",
 			queryString:   "count=true&limit=1",
 			expectedCount: 1,
-			checkHeaders:  map[string]string{"X-Total-Count": "3"},
+			expectedLimit: intPtr(1),
+			expectedTotal: intPtr(3),
 		},
 	}
 
@@ -948,25 +959,51 @@ func TestHandler_GetAll_QueryParams(t *testing.T) {
 				return
 			}
 
-			var results []TestUser
-			if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+			var envelope handler.ListResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 				t.Fatal("Failed to unmarshal response:", err)
 			}
 
-			if len(results) != tt.expectedCount {
-				t.Errorf("Expected %d results, got %d", tt.expectedCount, len(results))
+			items, ok := envelope.Data.([]interface{})
+			if !ok {
+				t.Fatalf("Expected data to be an array, got %T", envelope.Data)
+			}
+			if len(items) != tt.expectedCount {
+				t.Errorf("Expected %d results, got %d", tt.expectedCount, len(items))
 			}
 
-			// Check headers if specified
-			for header, expected := range tt.checkHeaders {
-				actual := w.Header().Get(header)
-				if actual != expected {
-					t.Errorf("Expected header %s=%s, got %s", header, expected, actual)
+			if tt.expectedLimit != nil || tt.expectedOffset != nil || tt.expectedTotal != nil {
+				if envelope.Pagination == nil {
+					t.Fatal("Expected pagination to be present")
+				}
+				if tt.expectedLimit != nil {
+					if envelope.Pagination.Limit == nil || *envelope.Pagination.Limit != *tt.expectedLimit {
+						t.Errorf("Expected limit=%d, got %v", *tt.expectedLimit, envelope.Pagination.Limit)
+					}
+				}
+				if tt.expectedOffset != nil {
+					if envelope.Pagination.Offset == nil || *envelope.Pagination.Offset != *tt.expectedOffset {
+						t.Errorf("Expected offset=%d, got %v", *tt.expectedOffset, envelope.Pagination.Offset)
+					}
+				}
+				if tt.expectedTotal != nil {
+					if envelope.Pagination.TotalCount == nil || *envelope.Pagination.TotalCount != *tt.expectedTotal {
+						t.Errorf("Expected total_count=%d, got %v", *tt.expectedTotal, envelope.Pagination.TotalCount)
+					}
+				}
+			}
+
+			// Pagination headers should NOT be set
+			for _, h := range []string{"X-Total-Count", "X-Limit", "X-Offset"} {
+				if v := w.Header().Get(h); v != "" {
+					t.Errorf("Header %s should not be set, got %s", h, v)
 				}
 			}
 		})
 	}
 }
+
+func intPtr(i int) *int { return &i }
 
 // TestHandler_GetAll_FilterOperators tests filter operator parsing (filter[field][op]=value)
 func TestHandler_GetAll_FilterOperators(t *testing.T) {
@@ -1063,20 +1100,28 @@ func TestHandler_GetAll_FilterOperators(t *testing.T) {
 				return
 			}
 
-			var results []TestUser
-			if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+			var envelope handler.ListResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 				t.Fatal("Failed to unmarshal response:", err)
 			}
 
-			if len(results) != tt.expectedCount {
-				t.Errorf("Expected %d results, got %d", tt.expectedCount, len(results))
+			items, ok := envelope.Data.([]interface{})
+			if !ok {
+				t.Fatalf("Expected data to be an array, got %T", envelope.Data)
+			}
+
+			if len(items) != tt.expectedCount {
+				t.Errorf("Expected %d results, got %d", tt.expectedCount, len(items))
 			}
 
 			// Check specific names if provided
 			if len(tt.checkNames) > 0 {
 				names := make(map[string]bool)
-				for _, r := range results {
-					names[r.Name] = true
+				for _, item := range items {
+					m, _ := item.(map[string]interface{})
+					if name, ok := m["name"].(string); ok {
+						names[name] = true
+					}
 				}
 				for _, expected := range tt.checkNames {
 					if !names[expected] {
@@ -1972,11 +2017,11 @@ func TestCustomGetAll(t *testing.T) {
 	}()
 
 	// Custom function that filters to only return users with ID > 201
-	customGetAll := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
+	customGetAll := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, *metadata.CursorInfo, error) {
 		// Get all, then filter
-		all, _, _, err := svc.GetAll(ctx)
+		all, _, _, _, err := svc.GetAll(ctx)
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, 0, nil, nil, err
 		}
 		var filtered []*TestUser
 		for _, u := range all {
@@ -1984,7 +2029,7 @@ func TestCustomGetAll(t *testing.T) {
 				filtered = append(filtered, u)
 			}
 		}
-		return filtered, len(filtered), nil, nil
+		return filtered, len(filtered), nil, nil, nil
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
@@ -1999,14 +2044,19 @@ func TestCustomGetAll(t *testing.T) {
 		return
 	}
 
-	var result []*TestUser
-	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+	var envelope handler.ListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
+	items, ok := envelope.Data.([]interface{})
+	if !ok {
+		t.Fatalf("Expected data to be an array, got %T", envelope.Data)
+	}
+
 	// Should only have users 202 and 203
-	if len(result) != 2 {
-		t.Errorf("Expected 2 users, got %d", len(result))
+	if len(items) != 2 {
+		t.Errorf("Expected 2 users, got %d", len(items))
 	}
 }
 
@@ -2788,7 +2838,7 @@ type TestSumProduct struct {
 	InStock       bool    `bun:"in_stock,notnull" json:"in_stock"`
 }
 
-func TestHandler_GetAll_SumHeaders(t *testing.T) {
+func TestHandler_GetAll_Sums(t *testing.T) {
 	// Setup: create sum_products table
 	db, _ := datastore.Get()
 	_, err := db.GetDB().NewCreateTable().Model((*TestSumProduct)(nil)).IfNotExists().Exec(context.Background())
@@ -2829,68 +2879,51 @@ func TestHandler_GetAll_SumHeaders(t *testing.T) {
 	}
 
 	tests := []struct {
-		name            string
-		queryString     string
-		expectedHeaders map[string]string
+		name          string
+		queryString   string
+		expectedSums  map[string]float64
+		expectedTotal *int
 	}{
 		{
-			name:        "single integer sum",
-			queryString: "sum=Price",
-			expectedHeaders: map[string]string{
-				"X-Sum-Price": "180", // 100 + 50 + 30
-			},
+			name:         "single integer sum",
+			queryString:  "sum=Price",
+			expectedSums: map[string]float64{"Price": 180},
 		},
 		{
-			name:        "single float sum",
-			queryString: "sum=Rating",
-			expectedHeaders: map[string]string{
-				"X-Sum-Rating": "12.5", // 4.5 + 3.8 + 4.2
-			},
+			name:         "single float sum",
+			queryString:  "sum=Rating",
+			expectedSums: map[string]float64{"Rating": 12.5},
 		},
 		{
-			name:        "multiple sums",
-			queryString: "sum=Price,Rating",
-			expectedHeaders: map[string]string{
-				"X-Sum-Price":  "180",
-				"X-Sum-Rating": "12.5",
-			},
+			name:         "multiple sums",
+			queryString:  "sum=Price,Rating",
+			expectedSums: map[string]float64{"Price": 180, "Rating": 12.5},
 		},
 		{
-			name:        "non-numeric field returns 0",
-			queryString: "sum=Name",
-			expectedHeaders: map[string]string{
-				"X-Sum-Name": "0",
-			},
+			name:         "non-numeric field returns 0",
+			queryString:  "sum=Name",
+			expectedSums: map[string]float64{"Name": 0},
 		},
 		{
-			name:        "bool field sums true values",
-			queryString: "sum=InStock",
-			expectedHeaders: map[string]string{
-				"X-Sum-InStock": "2", // Apple=true(1) + Banana=true(1) + Carrot=false(0) = 2
-			},
+			name:         "bool field sums true values",
+			queryString:  "sum=InStock",
+			expectedSums: map[string]float64{"InStock": 2},
 		},
 		{
-			name:        "mixed valid and invalid",
-			queryString: "sum=Price,Name",
-			expectedHeaders: map[string]string{
-				"X-Sum-Price": "180",
-				"X-Sum-Name":  "0",
-			},
+			name:         "mixed valid and invalid",
+			queryString:  "sum=Price,Name",
+			expectedSums: map[string]float64{"Price": 180, "Name": 0},
 		},
 		{
-			name:        "sum with count combined",
-			queryString: "sum=Price&count=true",
-			expectedHeaders: map[string]string{
-				"X-Sum-Price":   "180",
-				"X-Total-Count": "3",
-			},
+			name:          "sum with count combined",
+			queryString:   "sum=Price&count=true",
+			expectedSums:  map[string]float64{"Price": 180},
+			expectedTotal: intPtr(3),
 		},
 		{
-			name:        "sum with filter",
-			queryString: "sum=Price&filter[InStock]=true",
-			expectedHeaders: map[string]string{
-				"X-Sum-Price": "150", // Only Apple(100) + Banana(50)
-			},
+			name:         "sum with filter",
+			queryString:  "sum=Price&filter[InStock]=true",
+			expectedSums: map[string]float64{"Price": 150},
 		},
 	}
 
@@ -2914,11 +2947,34 @@ func TestHandler_GetAll_SumHeaders(t *testing.T) {
 				return
 			}
 
-			// Check expected headers
-			for header, expected := range tt.expectedHeaders {
-				actual := w.Header().Get(header)
+			var envelope handler.ListResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+				t.Fatal("Failed to unmarshal response:", err)
+			}
+
+			for field, expected := range tt.expectedSums {
+				actual, ok := envelope.Sums[field]
+				if !ok {
+					t.Errorf("Expected sum for %s, not found in envelope", field)
+					continue
+				}
 				if actual != expected {
-					t.Errorf("Expected header %s=%s, got %s", header, expected, actual)
+					t.Errorf("Expected sum %s=%v, got %v", field, expected, actual)
+				}
+			}
+
+			if tt.expectedTotal != nil {
+				if envelope.Pagination == nil || envelope.Pagination.TotalCount == nil {
+					t.Errorf("Expected total_count=%d, but pagination is nil", *tt.expectedTotal)
+				} else if *envelope.Pagination.TotalCount != *tt.expectedTotal {
+					t.Errorf("Expected total_count=%d, got %d", *tt.expectedTotal, *envelope.Pagination.TotalCount)
+				}
+			}
+
+			// Sum headers should NOT be set
+			for field := range tt.expectedSums {
+				if h := w.Header().Get("X-Sum-" + field); h != "" {
+					t.Errorf("X-Sum-%s header should not be set, got %s", field, h)
 				}
 			}
 		})
@@ -2934,31 +2990,31 @@ func TestHandler_GetAll_ErrorPaths(t *testing.T) {
 	}{
 		{
 			name: "context canceled",
-			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
-				return nil, 0, nil, context.Canceled
+			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, *metadata.CursorInfo, error) {
+				return nil, 0, nil, nil, context.Canceled
 			},
 			expectedCode: http.StatusOK, // No response written when context is canceled
 		},
 		{
 			name: "context deadline exceeded",
-			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
-				return nil, 0, nil, context.DeadlineExceeded
+			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, *metadata.CursorInfo, error) {
+				return nil, 0, nil, nil, context.DeadlineExceeded
 			},
 			expectedCode: http.StatusGatewayTimeout,
 			expectedBody: "Gateway Timeout",
 		},
 		{
 			name: "service unavailable",
-			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
-				return nil, 0, nil, apperrors.ErrUnavailable
+			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, *metadata.CursorInfo, error) {
+				return nil, 0, nil, nil, apperrors.ErrUnavailable
 			},
 			expectedCode: http.StatusServiceUnavailable,
 			expectedBody: "Service Unavailable",
 		},
 		{
 			name: "generic error",
-			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
-				return nil, 0, nil, fmt.Errorf("some internal error")
+			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, *metadata.CursorInfo, error) {
+				return nil, 0, nil, nil, fmt.Errorf("some internal error")
 			},
 			expectedCode: http.StatusInternalServerError,
 			expectedBody: "Internal Server Error",

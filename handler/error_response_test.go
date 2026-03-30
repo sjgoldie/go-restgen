@@ -166,8 +166,8 @@ func TestErrorResponse_ValidationError(t *testing.T) {
 }
 
 func TestErrorResponse_DeadlineExceeded(t *testing.T) {
-	getAllFunc := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
-		return nil, 0, nil, context.DeadlineExceeded
+	getAllFunc := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, *metadata.CursorInfo, error) {
+		return nil, 0, nil, nil, context.DeadlineExceeded
 	}
 
 	r := chi.NewRouter()
@@ -182,8 +182,8 @@ func TestErrorResponse_DeadlineExceeded(t *testing.T) {
 }
 
 func TestErrorResponse_ServiceUnavailable(t *testing.T) {
-	getAllFunc := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
-		return nil, 0, nil, apperrors.ErrUnavailable
+	getAllFunc := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, *metadata.CursorInfo, error) {
+		return nil, 0, nil, nil, apperrors.ErrUnavailable
 	}
 
 	r := chi.NewRouter()
@@ -198,8 +198,8 @@ func TestErrorResponse_ServiceUnavailable(t *testing.T) {
 }
 
 func TestErrorResponse_InternalServerError(t *testing.T) {
-	getAllFunc := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
-		return nil, 0, nil, fmt.Errorf("unexpected database error")
+	getAllFunc := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, *metadata.CursorInfo, error) {
+		return nil, 0, nil, nil, fmt.Errorf("unexpected database error")
 	}
 
 	r := chi.NewRouter()

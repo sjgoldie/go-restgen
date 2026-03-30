@@ -12,18 +12,18 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
-  res.body: length 2
+  res.body.data: isArray
+  res.body.data: length 2
 }
 
 tests {
   test("Returns 2 active products starting from offset 1", function() {
-    expect(res.body.every(p => p.active === true)).to.be.true;
-    expect(res.body[0].name).to.equal("Apple");
-    expect(res.body[1].name).to.equal("Banana");
+    expect(res.body.data.every(p => p.active === true)).to.be.true;
+    expect(res.body.data[0].name).to.equal("Apple");
+    expect(res.body.data[1].name).to.equal("Banana");
   });
 
-  test("X-Total-Count header shows total active products", function() {
-    expect(res.headers['x-total-count']).to.equal('5');
+  test("Total count shows total active products", function() {
+    expect(res.body.pagination.total_count).to.equal(5);
   });
 }

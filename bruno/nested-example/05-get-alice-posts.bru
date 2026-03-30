@@ -12,14 +12,14 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 script:post-response {
-  if (res.body.length !== 1) {
-    throw new Error(`Expected Alice to have 1 post, got ${res.body.length}`);
+  if (res.body.data.length !== 1) {
+    throw new Error(`Expected Alice to have 1 post, got ${res.body.data.length}`);
   }
-  if (res.body[0].user_id !== parseInt(bru.getVar("aliceId"))) {
+  if (res.body.data[0].user_id !== parseInt(bru.getVar("aliceId"))) {
     throw new Error(`Expected user_id to be ${bru.getVar("aliceId")}`);
   }
 }

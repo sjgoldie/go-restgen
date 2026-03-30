@@ -19,8 +19,8 @@ body:json {
 
 assert {
   res.status: eq 200
-  res.body[0].name: eq Patch Target A Patched
-  res.body[0].sku: eq PTA01
-  res.body[1].price: eq 19.99
-  res.body[1].name: eq Patch Target B
+  res.body.data[0].name: eq Patch Target A Patched
+  res.body.data[0].sku: eq PTA01
+  res.body.data[1].price: eq 19.99
+  res.body.data[1].name: eq Patch Target B
 }

@@ -1,11 +1,12 @@
 package handler
 
 // ListResponse is the envelope returned by GetAll endpoints.
-// Data contains the result items. Pagination and Sums are omitted when empty.
+// Data contains the result items. Pagination, Sums, and Counts are omitted when empty.
 type ListResponse struct {
-	Data       any                `json:"data"`
-	Pagination *PaginationInfo    `json:"pagination,omitempty"`
-	Sums       map[string]float64 `json:"sums,omitempty"`
+	Data       any                       `json:"data"`
+	Pagination *PaginationInfo           `json:"pagination,omitempty"`
+	Sums       map[string]float64        `json:"sums,omitempty"`
+	Counts     map[string]map[string]int `json:"counts,omitempty"`
 }
 
 // PaginationInfo contains pagination metadata in the response envelope.

@@ -1,0 +1,32 @@
+meta {
+  name: Create Extra Comment on Alice's Post (as Admin)
+  type: http
+  seq: 25
+}
+
+post {
+  url: {{baseUrl}}/posts/{{alicePostId}}/comments
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:admin:user,admin
+}
+
+body:json {
+  {
+    "text": "Admin's comment on Alice's post"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.owner_id: eq admin
+}
+
+docs {
+  Adds a second comment to Alice's post so we have varying comment counts:
+  Alice's post = 2 comments, Bob's post = 1 comment
+}

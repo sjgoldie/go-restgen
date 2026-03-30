@@ -1,0 +1,38 @@
+meta {
+  name: Create Post With No Comments (as Admin)
+  type: http
+  seq: 26
+}
+
+post {
+  url: {{baseUrl}}/posts
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:admin:user,admin
+}
+
+body:json {
+  {
+    "author_id": {{aliceUserId}},
+    "title": "Empty Post",
+    "content": "This post has no comments",
+    "published": true
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+  res.body.title: eq Empty Post
+}
+
+script:post-response {
+  bru.setVar("emptyPostId", res.body.id);
+}
+
+docs {
+  Creates a post with no comments for exists=false and count_eq=0 testing.
+}

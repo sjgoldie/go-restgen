@@ -33,6 +33,17 @@ var (
 		metadata.OpLike: "LIKE", metadata.OpIn: "IN", metadata.OpNin: "NOT IN",
 		metadata.OpBt: "BETWEEN", metadata.OpNbt: "NOT BETWEEN",
 	}
+	relationOps = map[string]bool{
+		metadata.OpExists:  true,
+		metadata.OpCountEq: true, metadata.OpCountNeq: true,
+		metadata.OpCountGt: true, metadata.OpCountGte: true,
+		metadata.OpCountLt: true, metadata.OpCountLte: true,
+	}
+	countFilterOps = map[string]string{
+		metadata.OpCountEq: "=", metadata.OpCountNeq: "!=",
+		metadata.OpCountGt: ">", metadata.OpCountGte: ">=",
+		metadata.OpCountLt: "<", metadata.OpCountLte: "<=",
+	}
 )
 
 // Wrapper is a generic struct that wraps a Store interface to provide CRUD operations
@@ -44,6 +55,32 @@ type Wrapper[T any] struct {
 type preFetchResult[T any] struct {
 	ids           []string
 	existingItems []*T
+}
+
+// defaultParentJoinCol returns the parent join column, defaulting to "id" if empty.
+func defaultParentJoinCol(col string) string {
+	if col == "" {
+		return "id"
+	}
+	return col
+}
+
+// derefType unwraps a pointer type to its element type.
+func derefType(t reflect.Type) reflect.Type {
+	if t.Kind() == reflect.Ptr {
+		return t.Elem()
+	}
+	return t
+}
+
+// isRelationAuthorized checks if a relation path is authorized in AllowedIncludes.
+// Returns true if allowedIncludes is nil (no auth configured) or the path is explicitly authorized.
+func isRelationAuthorized(allowedIncludes metadata.AllowedIncludes, relPath string) bool {
+	if allowedIncludes == nil {
+		return true
+	}
+	_, authorized := allowedIncludes[relPath]
+	return authorized
 }
 
 // GetAll retrieves all items of type T from the datastore
@@ -243,32 +280,10 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 	}
 
 	if err != nil {
-		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
-		// Check for connection issues
-		if errors.Is(err, sql.ErrConnDone) {
-			return nil, apperrors.ErrUnavailable
-		}
-		// Check for constraint violations
-		var pgErr pgdriver.Error
-		if errors.As(err, &pgErr) {
-			switch pgErr.Field('C') {
-			case "23505": // unique_violation
-				return nil, apperrors.ErrDuplicate
-			case "23503": // foreign_key_violation
-				return nil, apperrors.ErrInvalidReference
-			}
-		}
-		// SQLite constraint violations
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return nil, apperrors.ErrDuplicate
-		}
-		if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
-			return nil, apperrors.ErrInvalidReference
-		}
-		return nil, err
+		return nil, w.translateError(err)
 	}
 
 	return &item, nil
@@ -332,27 +347,10 @@ func (w *Wrapper[T]) updateWithOp(ctx context.Context, id string, item T, op met
 	}
 
 	if err != nil {
-		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
-		// Check for connection issues
-		if errors.Is(err, sql.ErrConnDone) {
-			return nil, apperrors.ErrUnavailable
-		}
-		// Check for not found
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, apperrors.ErrNotFound
-		}
-		// Check for foreign key violations
-		var pgErr pgdriver.Error
-		if errors.As(err, &pgErr) && pgErr.Field('C') == "23503" {
-			return nil, apperrors.ErrInvalidReference
-		}
-		if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
-			return nil, apperrors.ErrInvalidReference
-		}
-		return nil, err
+		return nil, w.translateError(err)
 	}
 
 	return &item, nil
@@ -403,15 +401,10 @@ func (w *Wrapper[T]) Delete(ctx context.Context, id string) error {
 	}
 
 	if err != nil {
-		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
-		// Check for connection issues
-		if errors.Is(err, sql.ErrConnDone) {
-			return apperrors.ErrUnavailable
-		}
-		return err
+		return w.translateError(err)
 	}
 
 	// Check if any rows were affected
@@ -583,15 +576,11 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 
 	// Walk up the chain using ParentMeta pointers
 	for parentMeta != nil {
-		parentJoinCol := childMeta.ParentJoinCol
-		if parentJoinCol == "" {
-			parentJoinCol = "id"
-		}
 		joins = append(joins, joinInfo{
 			childType:     childMeta.ModelType,
 			childTable:    childMeta.TableName,
 			childFKCol:    childMeta.ForeignKeyCol,
-			parentJoinCol: parentJoinCol,
+			parentJoinCol: defaultParentJoinCol(childMeta.ParentJoinCol),
 			parentTable:   parentMeta.TableName,
 			parentURLUUID: parentMeta.URLParamUUID,
 			parentMeta:    parentMeta,
@@ -685,11 +674,7 @@ func (w *Wrapper[T]) applyParentOwnershipFilter(query *bun.SelectQuery, parentMe
 		return query
 	}
 
-	// Get the parent type for column name lookup
-	parentType := parentMeta.ModelType
-	if parentType.Kind() == reflect.Ptr {
-		parentType = parentType.Elem()
-	}
+	parentType := derefType(parentMeta.ModelType)
 
 	// Build WHERE clause for ownership: parent_table.ownership_field = userID
 	// For multiple fields, use OR logic (same as applyOwnershipFilterWithMeta)
@@ -743,11 +728,7 @@ func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bu
 		}
 	}
 
-	// Get the model type for column name lookup
-	itemType := meta.ModelType
-	if itemType.Kind() == reflect.Ptr {
-		itemType = itemType.Elem()
-	}
+	itemType := derefType(meta.ModelType)
 
 	// Build OR conditions: WHERE (field1 = ? OR field2 = ? OR ...)
 	// Use ?TableAlias to properly qualify columns when JOINs are present
@@ -844,11 +825,7 @@ func (w *Wrapper[T]) applyTenantFilter(ctx context.Context, query *bun.SelectQue
 		query = query.Where("?TableAlias.? = ?", bun.Ident("id"), tenantID)
 	} else {
 		// WithTenantScope: filter by the named tenant field
-		itemType := meta.ModelType
-		if itemType.Kind() == reflect.Ptr {
-			itemType = itemType.Elem()
-		}
-		colName, err := ColumnName(itemType, meta.TenantField)
+		colName, err := ColumnName(derefType(meta.ModelType), meta.TenantField)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get column name for tenant field: %w", err)
 		}
@@ -864,12 +841,7 @@ func (w *Wrapper[T]) applyParentTenantFilter(query *bun.SelectQuery, parentMeta 
 		return query
 	}
 
-	parentType := parentMeta.ModelType
-	if parentType.Kind() == reflect.Ptr {
-		parentType = parentType.Elem()
-	}
-
-	colName, err := ColumnName(parentType, parentMeta.TenantField)
+	colName, err := ColumnName(derefType(parentMeta.ModelType), parentMeta.TenantField)
 	if err != nil {
 		return query
 	}
@@ -1041,22 +1013,16 @@ func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQue
 
 	switch {
 	case hasCount && hasSums:
-		// Both count and sums - combine into one query
-		selectParts := []string{"COUNT(*) AS count"}
+		aggQuery = aggQuery.ColumnExpr("COUNT(*) AS count")
 		for field, colName := range validSumFields {
-			selectParts = append(selectParts, fmt.Sprintf("COALESCE(SUM(%s), 0) AS sum_%s", colName, field))
+			aggQuery = aggQuery.ColumnExpr("COALESCE(SUM(?), 0) AS ?", bun.Ident(colName), bun.Ident("sum_"+field))
 		}
-		aggQuery = aggQuery.ColumnExpr(strings.Join(selectParts, ", "))
 	case hasCount:
-		// Count only
 		aggQuery = aggQuery.ColumnExpr("COUNT(*) AS count")
 	case hasSums:
-		// Sums only
-		selectParts := []string{}
 		for field, colName := range validSumFields {
-			selectParts = append(selectParts, fmt.Sprintf("COALESCE(SUM(%s), 0) AS sum_%s", colName, field))
+			aggQuery = aggQuery.ColumnExpr("COALESCE(SUM(?), 0) AS ?", bun.Ident(colName), bun.Ident("sum_"+field))
 		}
-		aggQuery = aggQuery.ColumnExpr(strings.Join(selectParts, ", "))
 	default:
 		// No valid aggregates - return early
 		return 0, sums, nil
@@ -1107,6 +1073,7 @@ func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQue
 // applyQueryFilters applies filters from QueryOptions to the query
 // Only fields in metadata.FilterableFields are allowed (others silently ignored)
 // Supports relation paths like "Account.Status" or "Account.User.Email"
+// Supports relation-level operators: exists, count_eq, count_neq, count_gt, count_gte, count_lt, count_lte
 //
 // Single-value operators (eq, neq, gt, gte, lt, lte, like): use first value if multiple provided
 // Multi-value operators (in, nin): use all values
@@ -1116,14 +1083,25 @@ func (w *Wrapper[T]) applyQueryFilters(ctx context.Context, query *bun.SelectQue
 		return query
 	}
 
+	allowedIncludes := metadata.AllowedIncludesFromContext(ctx)
+
 	for field, filter := range opts.Filters {
+		// Relation-level operators (exists, count_*) — the entire field key is a relation path
+		if relationOps[filter.Operator] {
+			query = w.applyRelationFilter(ctx, query, meta, field, filter, allowedIncludes)
+			continue
+		}
+
 		path := parseRelationPath(field)
 
-		// Relation path filter
+		// Relation path filter (child or parent field)
 		if len(path.relations) > 0 {
 			firstRel := path.relations[0]
 			if meta.ChildMeta != nil {
 				if _, isChild := meta.ChildMeta[firstRel]; isChild {
+					if !isRelationAuthorized(allowedIncludes, strings.Join(path.relations, ".")) {
+						continue
+					}
 					query = w.applyChildFieldFilter(ctx, query, meta, path, filter)
 					continue
 				}
@@ -1193,15 +1171,21 @@ func applyFilter(query *bun.SelectQuery, tableName, colName, operator string, va
 	case metadata.OpNin:
 		return query.Where(tblCol+" NOT IN (?)", append(args, bun.In(vals))...)
 	case metadata.OpBt:
+		if len(vals) < 2 {
+			return query
+		}
 		return query.Where(tblCol+" BETWEEN ? AND ?", append(args, vals[0], vals[1])...)
 	case metadata.OpNbt:
+		if len(vals) < 2 {
+			return query
+		}
 		return query.Where(tblCol+" NOT BETWEEN ? AND ?", append(args, vals[0], vals[1])...)
 	default:
 		op := filterOps[operator]
 		if op == "" {
 			op = "="
 		}
-		return query.Where(fmt.Sprintf("%s %s ?", tblCol, op), append(args, vals[0])...)
+		return query.Where(tblCol+" "+op+" ?", append(args, vals[0])...)
 	}
 }
 
@@ -1367,9 +1351,9 @@ func (w *Wrapper[T]) applyCursorWhere(query *bun.SelectQuery, opts *metadata.Que
 	// applyQuerySorting already reverses directions for "before", so the
 	// effective directions here account for backward navigation.
 	type colInfo struct {
-		expr string // e.g. ?TableAlias."price"
-		val  any
-		op   string // ">" for ASC, "<" for DESC
+		col string // column name, will be wrapped in bun.Ident
+		val any
+		op  string // ">" for ASC, "<" for DESC
 	}
 
 	cols := make([]colInfo, 0, len(sortCols)+1)
@@ -1379,7 +1363,6 @@ func (w *Wrapper[T]) applyCursorWhere(query *bun.SelectQuery, opts *metadata.Que
 			op = "<"
 		}
 		if backward {
-			// Sort is reversed by applyQuerySorting, so flip the operator
 			if op == ">" {
 				op = "<"
 			} else {
@@ -1387,9 +1370,9 @@ func (w *Wrapper[T]) applyCursorWhere(query *bun.SelectQuery, opts *metadata.Que
 			}
 		}
 		cols = append(cols, colInfo{
-			expr: fmt.Sprintf("?TableAlias.%q", sc.col),
-			val:  cursor.Values[i],
-			op:   op,
+			col: sc.col,
+			val: cursor.Values[i],
+			op:  op,
 		})
 	}
 
@@ -1399,9 +1382,9 @@ func (w *Wrapper[T]) applyCursorWhere(query *bun.SelectQuery, opts *metadata.Que
 		pkOp = "<"
 	}
 	cols = append(cols, colInfo{
-		expr: fmt.Sprintf("?TableAlias.%q", pkCol),
-		val:  cursor.PK,
-		op:   pkOp,
+		col: pkCol,
+		val: cursor.PK,
+		op:  pkOp,
 	})
 
 	// Build disjunctive normal form:
@@ -1411,14 +1394,12 @@ func (w *Wrapper[T]) applyCursorWhere(query *bun.SelectQuery, opts *metadata.Que
 
 	for i := range cols {
 		var andParts []string
-		// Equality prefix for all columns before i
 		for j := 0; j < i; j++ {
-			andParts = append(andParts, cols[j].expr+" = ?")
-			allVals = append(allVals, cols[j].val)
+			andParts = append(andParts, "?TableAlias.? = ?")
+			allVals = append(allVals, bun.Ident(cols[j].col), cols[j].val)
 		}
-		// Comparison for column i
-		andParts = append(andParts, cols[i].expr+" "+cols[i].op+" ?")
-		allVals = append(allVals, cols[i].val)
+		andParts = append(andParts, "?TableAlias.? "+cols[i].op+" ?")
+		allVals = append(allVals, bun.Ident(cols[i].col), cols[i].val)
 
 		orClauses = append(orClauses, "("+strings.Join(andParts, " AND ")+")")
 	}
@@ -1778,19 +1759,9 @@ func (w *Wrapper[T]) applyNestedInclude(ctx context.Context, query *bun.SelectQu
 // applyNestedChildInclude handles nested child includes like "Accounts.Sites.Bills"
 // Applies ownership filtering at each level that has it configured
 func (w *Wrapper[T]) applyNestedChildInclude(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, parts []string, applyOwnership bool) *bun.SelectQuery {
-	// Build chain of metadata for each level
-	chain := make([]*metadata.TypeMetadata, 0, len(parts))
-	currentMeta := meta
-	for _, part := range parts {
-		if currentMeta.ChildMeta == nil {
-			return query
-		}
-		childMeta, exists := currentMeta.ChildMeta[part]
-		if !exists {
-			return query
-		}
-		chain = append(chain, childMeta)
-		currentMeta = childMeta
+	chain := w.resolveChildChain(meta, parts)
+	if len(chain) == 0 {
+		return query
 	}
 
 	// Add .Relation() for each level, applying ownership where configured
@@ -1835,12 +1806,8 @@ func (w *Wrapper[T]) applyNestedParentInclude(ctx context.Context, query *bun.Se
 // getRelationNameForParent finds the belongs-to relation field name on the child
 // that references the parent type, using Bun's schema
 func (w *Wrapper[T]) getRelationNameForParent(childMeta, parentMeta *metadata.TypeMetadata) string {
-	parentType := parentMeta.ModelType
-	if parentType.Kind() == reflect.Ptr {
-		parentType = parentType.Elem()
-	}
+	parentType := derefType(parentMeta.ModelType)
 
-	// Use Bun's schema to find belongs-to relation pointing to parent type
 	table := w.Store.GetDB().Table(childMeta.ModelType)
 	for name, rel := range table.Relations {
 		if rel.Type == schema.BelongsToRelation && rel.JoinTable.Type == parentType {
@@ -2189,10 +2156,7 @@ func (w *Wrapper[T]) buildParentJoins(query *bun.SelectQuery, baseMeta *metadata
 }
 
 func (w *Wrapper[T]) joinParentFromBase(query *bun.SelectQuery, child, parent *metadata.TypeMetadata, fkOnChild bool) *bun.SelectQuery {
-	parentJoinCol := child.ParentJoinCol
-	if parentJoinCol == "" {
-		parentJoinCol = "id"
-	}
+	parentJoinCol := defaultParentJoinCol(child.ParentJoinCol)
 	if fkOnChild {
 		return query.Join("JOIN ? ON ?TableAlias.? = ?.?",
 			bun.Ident(parent.TableName), bun.Ident(child.ForeignKeyCol),
@@ -2204,10 +2168,7 @@ func (w *Wrapper[T]) joinParentFromBase(query *bun.SelectQuery, child, parent *m
 }
 
 func (w *Wrapper[T]) joinParentFromTable(query *bun.SelectQuery, child, parent *metadata.TypeMetadata, fkOnChild bool) *bun.SelectQuery {
-	parentJoinCol := child.ParentJoinCol
-	if parentJoinCol == "" {
-		parentJoinCol = "id"
-	}
+	parentJoinCol := defaultParentJoinCol(child.ParentJoinCol)
 	if fkOnChild {
 		return query.Join("JOIN ? ON ?.? = ?.?",
 			bun.Ident(parent.TableName), bun.Ident(child.TableName),
@@ -2240,9 +2201,11 @@ func (w *Wrapper[T]) applyChildFieldFilter(ctx context.Context, query *bun.Selec
 		return query
 	}
 
-	condition, args := buildFilterCondition(targetMeta.TableName, colName, filter.Operator, vals)
-	existsSQL := w.wrapInExists(meta, childChain, condition)
-	return query.Where(existsSQL, args...)
+	existsSubq := w.buildExistsChain(meta, childChain, func(q *bun.SelectQuery) *bun.SelectQuery {
+		return applyFilter(q, targetMeta.TableName, colName, filter.Operator, vals)
+	})
+
+	return query.Where("EXISTS (?)", existsSubq)
 }
 
 // resolveChildChain walks down ChildMeta to resolve a relation path
@@ -2264,53 +2227,252 @@ func (w *Wrapper[T]) resolveChildChain(meta *metadata.TypeMetadata, relations []
 	return chain
 }
 
-// buildFilterCondition creates a SQL condition string and args for a filter
-func buildFilterCondition(table, col, operator string, vals []interface{}) (string, []interface{}) {
-	switch operator {
-	case metadata.OpIn:
-		placeholders := strings.Repeat("?, ", len(vals))
-		return fmt.Sprintf("%s.%s IN (%s)", table, col, placeholders[:len(placeholders)-2]), vals
-	case metadata.OpNin:
-		placeholders := strings.Repeat("?, ", len(vals))
-		return fmt.Sprintf("%s.%s NOT IN (%s)", table, col, placeholders[:len(placeholders)-2]), vals
-	case metadata.OpBt:
-		return fmt.Sprintf("%s.%s BETWEEN ? AND ?", table, col), vals[:2]
-	case metadata.OpNbt:
-		return fmt.Sprintf("%s.%s NOT BETWEEN ? AND ?", table, col), vals[:2]
-	default:
-		op := filterOps[operator]
-		if op == "" {
-			op = "="
+// applyRelationFilter applies existence or count-based filters on child relations.
+// The field key is the full relation path (e.g., "Orders" or "Orders.Items").
+func (w *Wrapper[T]) applyRelationFilter(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, field string, filter metadata.FilterValue, allowedIncludes metadata.AllowedIncludes) *bun.SelectQuery {
+	if !isRelationAuthorized(allowedIncludes, field) {
+		return query
+	}
+
+	// Resolve the child chain
+	relations := strings.Split(field, ".")
+	childChain := w.resolveChildChain(meta, relations)
+	if len(childChain) == 0 {
+		return query
+	}
+
+	switch filter.Operator {
+	case metadata.OpExists:
+		existsSubq := w.buildExistsChain(meta, childChain, nil)
+		if existsSubq == nil {
+			return query
 		}
-		return fmt.Sprintf("%s.%s %s ?", table, col, op), vals[:1]
+		val := strings.ToLower(strings.TrimSpace(filter.Value))
+		if val == "false" || val == "0" {
+			return query.Where("NOT EXISTS (?)", existsSubq)
+		}
+		return query.Where("EXISTS (?)", existsSubq)
+
+	default:
+		op, ok := countFilterOps[filter.Operator]
+		if !ok {
+			return query
+		}
+		countVal, err := strconv.Atoi(filter.Value)
+		if err != nil {
+			slog.DebugContext(ctx, "count filter value is not an integer", "field", field, "value", filter.Value)
+			return query
+		}
+		countSubq := w.buildCountChain(meta, childChain)
+		if countSubq == nil {
+			return query
+		}
+		return query.Where("(?) "+op+" ?", countSubq, countVal)
 	}
 }
 
-// wrapInExists wraps a condition in nested EXISTS subqueries
-func (w *Wrapper[T]) wrapInExists(baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, innerCondition string) string {
+// buildCountChain builds a correlated COUNT(*) subquery for a child relation chain.
+// For single-level chains, returns a direct COUNT. For multi-level chains, uses nested
+// subqueries to resolve intermediate IDs before counting at the leaf level.
+func (w *Wrapper[T]) buildCountChain(baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata) *bun.SelectQuery {
 	if len(chain) == 0 {
-		return innerCondition
+		return nil
 	}
 
-	// Pre-compute parent table for each child: base alias for first, chain element for rest
+	db := w.Store.GetDB()
+	baseAlias := db.Table(baseMeta.ModelType).Alias
+
+	leaf := chain[len(chain)-1]
+
+	if len(chain) == 1 {
+		return db.NewSelect().
+			Table(leaf.TableName).
+			ColumnExpr("COUNT(*)").
+			Where("?.? = ?.?",
+				bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol),
+				bun.Ident(baseAlias), bun.Ident(defaultParentJoinCol(leaf.ParentJoinCol)))
+	}
+
+	// Multi-level: build nested subqueries from base outward, count at leaf
+	var subq *bun.SelectQuery
+	for i := 0; i < len(chain)-1; i++ {
+		child := chain[i]
+		childParentJoinCol := defaultParentJoinCol(child.ParentJoinCol)
+
+		nextChild := chain[i+1]
+		selectCol := defaultParentJoinCol(nextChild.ParentJoinCol)
+
+		if i == 0 {
+			subq = db.NewSelect().
+				Table(child.TableName).
+				ColumnExpr("?.?", bun.Ident(child.TableName), bun.Ident(selectCol)).
+				Where("?.? = ?.?",
+					bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol),
+					bun.Ident(baseAlias), bun.Ident(childParentJoinCol))
+		} else {
+			subq = db.NewSelect().
+				Table(child.TableName).
+				ColumnExpr("?.?", bun.Ident(child.TableName), bun.Ident(selectCol)).
+				Where("?.? IN (?)",
+					bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol),
+					subq)
+		}
+	}
+
+	return db.NewSelect().
+		Table(leaf.TableName).
+		ColumnExpr("COUNT(*)").
+		Where("?.? IN (?)",
+			bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol),
+			subq)
+}
+
+// ComputeIncludeCounts computes per-item child relation counts for the given items.
+// Returns a map of relation name → {pk_string → count}. Items with zero counts are omitted.
+// Auth is checked via AllowedIncludes from context.
+func (w *Wrapper[T]) ComputeIncludeCounts(ctx context.Context, items []*T, includeCounts []string) (map[string]map[string]int, error) {
+	if len(items) == 0 || len(includeCounts) == 0 {
+		return nil, nil
+	}
+
+	meta, err := metadata.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	allowedIncludes := metadata.AllowedIncludesFromContext(ctx)
+
+	pks := make([]interface{}, len(items))
+	for i, item := range items {
+		pk := common.GetFieldAsString(item, meta.PKField)
+		if pk == "" {
+			return nil, fmt.Errorf("PK field %s not found", meta.PKField)
+		}
+		pks[i] = pk
+	}
+
+	result := make(map[string]map[string]int)
+
+	for _, relPath := range includeCounts {
+		relations := strings.Split(relPath, ".")
+
+		if !isRelationAuthorized(allowedIncludes, relPath) {
+			continue
+		}
+		childChain := w.resolveChildChain(meta, relations)
+		if len(childChain) == 0 {
+			continue
+		}
+
+		counts, err := w.queryRelationCounts(ctx, meta, childChain, pks)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to compute include count", "relation", relPath, "error", err)
+			continue
+		}
+
+		if len(counts) > 0 {
+			result[relPath] = counts
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// queryRelationCounts runs a grouped count query for a child relation chain.
+// Returns a map of parent PK (as string) → count of matching child records.
+func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, pks []interface{}) (map[string]int, error) {
+	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
+	defer cancel()
+
+	db := w.Store.GetDB()
+
+	firstChild := chain[0]
+	leaf := chain[len(chain)-1]
+	query := db.NewSelect().
+		Table(leaf.TableName).
+		ColumnExpr("?.? AS parent_ref", bun.Ident(firstChild.TableName), bun.Ident(firstChild.ForeignKeyCol)).
+		ColumnExpr("COUNT(*) AS cnt")
+
+	// Add JOINs for intermediate levels (from leaf back to first child)
+	for i := len(chain) - 1; i > 0; i-- {
+		child := chain[i]
+		parent := chain[i-1]
+		query = query.Join("JOIN ? ON ?.? = ?.?",
+			bun.Ident(parent.TableName),
+			bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol),
+			bun.Ident(parent.TableName), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
+	}
+
+	// WHERE first_child.fk IN (pks)
+	query = query.Where("?.? IN (?)",
+		bun.Ident(firstChild.TableName), bun.Ident(firstChild.ForeignKeyCol),
+		bun.In(pks))
+
+	// GROUP BY first_child.fk
+	query = query.GroupExpr("?.?",
+		bun.Ident(firstChild.TableName), bun.Ident(firstChild.ForeignKeyCol))
+
+	rows, err := query.Rows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var parentRef interface{}
+		var cnt int
+		if err := rows.Scan(&parentRef, &cnt); err != nil {
+			return nil, err
+		}
+		counts[fmt.Sprintf("%v", parentRef)] = cnt
+	}
+
+	return counts, nil
+}
+
+// buildExistsChain builds nested EXISTS subqueries using Bun's query builder.
+// Each level correlates to its parent via FK = parent PK.
+// The optional innerFilter applies additional conditions to the deepest level's subquery.
+func (w *Wrapper[T]) buildExistsChain(baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, innerFilter func(q *bun.SelectQuery) *bun.SelectQuery) *bun.SelectQuery {
+	if len(chain) == 0 {
+		return nil
+	}
+
+	db := w.Store.GetDB()
+
 	parents := make([]string, len(chain))
-	parents[0] = w.Store.GetDB().Table(baseMeta.ModelType).Alias
+	parents[0] = db.Table(baseMeta.ModelType).Alias
 	for i := 1; i < len(chain); i++ {
 		parents[i] = chain[i-1].TableName
 	}
 
-	// Wrap from deepest child up
-	sql := innerCondition
+	var innerSubq *bun.SelectQuery
 	for i := len(chain) - 1; i >= 0; i-- {
 		child := chain[i]
-		parentJoinCol := child.ParentJoinCol
-		if parentJoinCol == "" {
-			parentJoinCol = "id"
+
+		subq := db.NewSelect().
+			Table(child.TableName).
+			ColumnExpr("1").
+			Where("?.? = ?.?",
+				bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol),
+				bun.Ident(parents[i]), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
+
+		if i == len(chain)-1 && innerFilter != nil {
+			subq = innerFilter(subq)
 		}
-		sql = fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = %s.%s AND %s)",
-			child.TableName, child.TableName, child.ForeignKeyCol, parents[i], parentJoinCol, sql)
+
+		if innerSubq != nil {
+			subq = subq.Where("EXISTS (?)", innerSubq)
+		}
+
+		innerSubq = subq
 	}
-	return sql
+
+	return innerSubq
 }
 
 // translateError converts database errors to application errors

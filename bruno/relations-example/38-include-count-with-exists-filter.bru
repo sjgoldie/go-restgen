@@ -1,0 +1,44 @@
+meta {
+  name: Combined - Include Count with Exists Filter
+  type: http
+  seq: 38
+}
+
+get {
+  url: {{baseUrl}}/posts?filter[Comments][exists]=true&include_count=Comments
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:admin:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 2
+  res.body.counts: isDefined
+  res.body.counts.Comments: isDefined
+}
+
+tests {
+  test("Exists filter applied - only posts with comments", function() {
+    const titles = res.body.data.map(p => p.title).sort();
+    expect(titles).to.include("Alice's First Post");
+    expect(titles).to.include("Bob's First Post");
+  });
+
+  test("Counts reflect the filtered results", function() {
+    const counts = res.body.counts.Comments;
+    const alicePostId = String(bru.getVar("alicePostId"));
+    const bobPostId = String(bru.getVar("bobPostId"));
+    expect(counts[alicePostId]).to.equal(2);
+    expect(counts[bobPostId]).to.equal(1);
+  });
+}
+
+docs {
+  Combines exists filter with include_count on the same relation.
+  Filter narrows results, then counts are computed for the filtered set.
+}

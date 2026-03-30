@@ -1,0 +1,32 @@
+meta {
+  name: Filter Count EQ Zero - Posts with no comments
+  type: http
+  seq: 31
+}
+
+get {
+  url: {{baseUrl}}/posts?filter[Comments][count_eq]=0
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:admin:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 1
+}
+
+tests {
+  test("Only Empty Post has 0 comments", function() {
+    expect(res.body.data[0].title).to.equal("Empty Post");
+  });
+}
+
+docs {
+  Admin filters posts where comment count = 0.
+  Equivalent to exists=false but using count operator.
+}

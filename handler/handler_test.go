@@ -3350,3 +3350,198 @@ func TestBatchDelete_FileResource_Returns501(t *testing.T) {
 			http.StatusNotImplemented, w.Code, w.Body.String())
 	}
 }
+
+// ============================================================================
+// Issue #99: Include Counts Handler Integration Test
+// Tests the full handler → service → datastore flow for include_count
+// ============================================================================
+
+// TestHandlerPost is a child model with FK to users for include_count testing
+type TestHandlerPost struct {
+	bun.BaseModel `bun:"table:handler_posts"`
+	ID            int       `bun:"id,pk,autoincrement" json:"id"`
+	UserID        int       `bun:"user_id,notnull" json:"user_id"`
+	Title         string    `bun:"title,notnull" json:"title"`
+	CreatedAt     time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at,omitempty"`
+}
+
+func TestHandler_GetAll_IncludeCounts(t *testing.T) {
+	db, _ := datastore.Get()
+
+	_, err := db.GetDB().NewCreateTable().Model((*TestHandlerPost)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create handler_posts table:", err)
+	}
+	defer db.GetDB().NewDropTable().Model((*TestHandlerPost)(nil)).IfExists().Exec(context.Background())
+
+	cleanTable(t)
+	_, _ = db.GetDB().NewDelete().Model((*TestHandlerPost)(nil)).Where("1=1").Exec(context.Background())
+
+	// Create users
+	users := []TestUser{
+		{Name: "Alice", Email: "alice@example.com"},
+		{Name: "Bob", Email: "bob@example.com"},
+	}
+	for i := range users {
+		_, err := db.GetDB().NewInsert().Model(&users[i]).Returning("*").Exec(context.Background())
+		if err != nil {
+			t.Fatal("Failed to insert user:", err)
+		}
+	}
+
+	// Create posts: Alice=3, Bob=1
+	posts := []TestHandlerPost{
+		{UserID: users[0].ID, Title: "Alice Post 1"},
+		{UserID: users[0].ID, Title: "Alice Post 2"},
+		{UserID: users[0].ID, Title: "Alice Post 3"},
+		{UserID: users[1].ID, Title: "Bob Post 1"},
+	}
+	for _, p := range posts {
+		_, err := db.GetDB().NewInsert().Model(&p).Exec(context.Background())
+		if err != nil {
+			t.Fatal("Failed to insert post:", err)
+		}
+	}
+
+	postMeta := &metadata.TypeMetadata{
+		TypeID:        "test_handler_post",
+		TypeName:      "TestHandlerPost",
+		TableName:     "handler_posts",
+		URLParamUUID:  "postId",
+		PKField:       "ID",
+		ModelType:     reflect.TypeOf(TestHandlerPost{}),
+		ParentType:    reflect.TypeOf(TestUser{}),
+		ParentMeta:    userMeta,
+		ForeignKeyCol: "user_id",
+	}
+
+	countMeta := &metadata.TypeMetadata{
+		TypeID:           "test_user_id",
+		TypeName:         "TestUser",
+		TableName:        "users",
+		URLParamUUID:     "id",
+		PKField:          "ID",
+		ModelType:        reflect.TypeOf(TestUser{}),
+		FilterableFields: []string{"Name", "Email"},
+		SortableFields:   []string{"Name", "Email"},
+		ChildMeta: map[string]*metadata.TypeMetadata{
+			"Posts": postMeta,
+		},
+	}
+
+	r := chi.NewRouter()
+	r.Use(withMeta(countMeta))
+	r.Get("/users", handler.GetAll[TestUser](handler.StandardGetAll[TestUser]))
+
+	req := httptest.NewRequest(http.MethodGet, "/users?include_count=Posts", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var envelope handler.ListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatal("Failed to unmarshal response:", err)
+	}
+
+	if envelope.Counts == nil {
+		t.Fatal("Expected counts in response envelope")
+	}
+
+	postCounts, ok := envelope.Counts["Posts"]
+	if !ok {
+		t.Fatal("Expected Posts in counts")
+	}
+
+	aliceID := strconv.Itoa(users[0].ID)
+	bobID := strconv.Itoa(users[1].ID)
+
+	if postCounts[aliceID] != 3 {
+		t.Errorf("Expected Alice to have 3 posts, got %d", postCounts[aliceID])
+	}
+	if postCounts[bobID] != 1 {
+		t.Errorf("Expected Bob to have 1 post, got %d", postCounts[bobID])
+	}
+}
+
+func TestHandler_GetAll_IncludeCounts_NoAuth(t *testing.T) {
+	db, _ := datastore.Get()
+
+	_, err := db.GetDB().NewCreateTable().Model((*TestHandlerPost)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create handler_posts table:", err)
+	}
+	defer db.GetDB().NewDropTable().Model((*TestHandlerPost)(nil)).IfExists().Exec(context.Background())
+
+	cleanTable(t)
+	_, _ = db.GetDB().NewDelete().Model((*TestHandlerPost)(nil)).Where("1=1").Exec(context.Background())
+
+	user := TestUser{Name: "Alice", Email: "alice@example.com"}
+	_, err = db.GetDB().NewInsert().Model(&user).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to insert user:", err)
+	}
+
+	post := TestHandlerPost{UserID: user.ID, Title: "Post 1"}
+	_, err = db.GetDB().NewInsert().Model(&post).Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to insert post:", err)
+	}
+
+	postMeta := &metadata.TypeMetadata{
+		TypeID:        "test_handler_post",
+		TypeName:      "TestHandlerPost",
+		TableName:     "handler_posts",
+		URLParamUUID:  "postId",
+		PKField:       "ID",
+		ModelType:     reflect.TypeOf(TestHandlerPost{}),
+		ParentType:    reflect.TypeOf(TestUser{}),
+		ForeignKeyCol: "user_id",
+	}
+
+	countMeta := &metadata.TypeMetadata{
+		TypeID:       "test_user_id",
+		TypeName:     "TestUser",
+		TableName:    "users",
+		URLParamUUID: "id",
+		PKField:      "ID",
+		ModelType:    reflect.TypeOf(TestUser{}),
+		ChildMeta: map[string]*metadata.TypeMetadata{
+			"Posts": postMeta,
+		},
+	}
+
+	// Auth configured but Posts NOT authorized — counts should be empty
+	withMetaAndAuth := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), metadata.MetadataKey, countMeta)
+			opts := metadata.ParseQueryOptions(r.URL.Query())
+			ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+			ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Other": false})
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+
+	r := chi.NewRouter()
+	r.Use(withMetaAndAuth)
+	r.Get("/users", handler.GetAll[TestUser](handler.StandardGetAll[TestUser]))
+
+	req := httptest.NewRequest(http.MethodGet, "/users?include_count=Posts", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var envelope handler.ListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatal("Failed to unmarshal response:", err)
+	}
+
+	if envelope.Counts != nil {
+		t.Errorf("Expected no counts (Posts not authorized), got %v", envelope.Counts)
+	}
+}

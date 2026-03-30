@@ -1,0 +1,39 @@
+meta {
+  name: Security - Count Filter with Ownership
+  type: http
+  seq: 34
+}
+
+get {
+  url: {{baseUrl}}/posts?filter[Comments][count_gt]=0
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 1
+}
+
+tests {
+  test("Ownership still enforced - Bob only sees his own posts", function() {
+    expect(res.body.data[0].title).to.equal("Bob's First Post");
+    expect(res.body.data[0].owner_id).to.equal("bob");
+  });
+
+  test("Alice's posts not visible despite matching filter", function() {
+    const ownerIds = res.body.data.map(p => p.owner_id);
+    expect(ownerIds).to.not.include("alice");
+  });
+}
+
+docs {
+  Bob filters posts by count_gt=0 on Comments.
+  Ownership on Posts is enforced: Bob only sees his own posts.
+  Alice's post (which also has comments) is not returned.
+}

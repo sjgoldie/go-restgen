@@ -924,6 +924,36 @@ GET /users?filter[Status]=active&filter[Role]=admin
 | `bt` | Between (inclusive) | `filter[Age][bt]=18,65` |
 | `nbt` | Not between | `filter[Price][nbt]=100,500` |
 
+**Child Relation Filters:**
+
+Filter parent resources based on child relation existence or count. Requires `WithRelationName` on the child route and the relation must be in `AllowedIncludes`.
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `exists` | Has/doesn't have children | `filter[Comments][exists]=true` |
+| `count_eq` | Exact child count | `filter[Comments][count_eq]=3` |
+| `count_neq` | Child count not equal | `filter[Comments][count_neq]=0` |
+| `count_gt` | Child count greater than | `filter[Comments][count_gt]=5` |
+| `count_gte` | Child count greater than or equal | `filter[Comments][count_gte]=1` |
+| `count_lt` | Child count less than | `filter[Comments][count_lt]=10` |
+| `count_lte` | Child count less than or equal | `filter[Comments][count_lte]=2` |
+
+```bash
+# Posts that have at least one comment
+GET /posts?filter[Comments][exists]=true
+
+# Posts with no comments
+GET /posts?filter[Comments][exists]=false
+
+# Posts with more than 5 comments
+GET /posts?filter[Comments][count_gt]=5
+
+# Combine with field filters
+GET /posts?filter[Status]=published&filter[Comments][count_gte]=1
+```
+
+Relation filters use correlated subqueries, so they respect tenant scoping and parent filtering automatically. Unauthorized relations are silently ignored (the filter is skipped and the broader result set is returned).
+
 ### Sorting
 
 Sort results using the `sort` query parameter:
@@ -1042,6 +1072,37 @@ GET /products?filter[Category]=Electronics&sum=Price,Stock&count=true
 ```
 
 Fields not listed in `WithSums` are silently ignored (returns 0). Bool fields return the count of `true` values. The database validates types — summing a non-numeric column (e.g. a string) returns a database error.
+
+### Relation Counts
+
+Request child relation counts per item using the `include_count` query parameter. The relation must be registered with `WithRelationName` and authorized via `AllowedIncludes`.
+
+```bash
+# Count comments per post
+GET /posts?include_count=Comments
+
+# Multiple relations
+GET /posts?include_count=Comments,Tags
+
+# Combine with filters and pagination
+GET /posts?filter[Status]=published&include_count=Comments&limit=10
+```
+
+**Response body** includes counts alongside data:
+```json
+{
+  "data": [
+    {"id": 1, "title": "First Post"},
+    {"id": 2, "title": "Second Post"}
+  ],
+  "counts": {
+    "Comments": {"1": 5, "2": 0},
+    "Tags": {"1": 3, "2": 1}
+  }
+}
+```
+
+The `counts` object maps relation name to a map of item primary key (as string) to count. Unauthorized relations are silently excluded from the response.
 
 See the [query example](./examples/query) for a complete working example with all filter operators, sorting, pagination, and sum aggregation.
 
@@ -2563,6 +2624,7 @@ go-restgen builds on these excellent projects:
 - [x] PATCH endpoint for partial updates (field-level, no deep patch)
 - [x] Custom join columns via `WithJoinOn` for non-FK relationships
 - [x] Multi-tenant data isolation with `WithTenantScope` and `IsTenantTable`
+- [x] Child relation filters (`exists`, `count_*`) and `include_count` for relation counts
 - [ ] MySQL support
 - [ ] OpenAPI/Swagger generation
 - [ ] Standalone examples (separate go.mod per example to avoid polluting main module)

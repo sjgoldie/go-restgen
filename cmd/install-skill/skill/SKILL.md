@@ -97,6 +97,39 @@ BlogID int `bun:"blog_id,notnull,skipupdate" json:"blog_id"`
 Blog  *Blog `bun:"rel:belongs-to,join:blog_id=id" json:"-"`
 ```
 
+## Child Relation Filters and Counts
+
+Filter parent resources by child relation existence or count, and request per-item child counts. Relations must be registered with `WithRelationName` and authorized via `AllowedIncludes`.
+
+```bash
+# Posts that have comments
+GET /posts?filter[Comments][exists]=true
+
+# Posts with no comments
+GET /posts?filter[Comments][exists]=false
+
+# Posts with more than 5 comments
+GET /posts?filter[Comments][count_gt]=5
+
+# Count operators: count_eq, count_neq, count_gt, count_gte, count_lt, count_lte
+
+# Get per-item comment counts in the response
+GET /posts?include_count=Comments
+
+# Combine filter and count
+GET /posts?filter[Comments][exists]=true&include_count=Comments
+```
+
+Response with `include_count`:
+```json
+{
+  "data": [...],
+  "counts": {"Comments": {"1": 5, "2": 3}}
+}
+```
+
+Unauthorized relations are silently skipped (filter ignored, count excluded).
+
 ## Custom Endpoints (Anything Funcs)
 
 ```go

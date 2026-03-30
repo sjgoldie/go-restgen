@@ -163,6 +163,12 @@ func (s *Common[T]) Download(ctx context.Context, id string) (*DownloadResult, e
 	}, nil
 }
 
+// ComputeIncludeCounts computes per-item child relation counts for the given items.
+// Returns a map of relation name → {pk_string → count}.
+func (s *Common[T]) ComputeIncludeCounts(ctx context.Context, items []*T, includeCounts []string) (map[string]map[string]int, error) {
+	return s.store.ComputeIncludeCounts(ctx, items, includeCounts)
+}
+
 // BatchCreate creates multiple items in a single transaction.
 // All items succeed or none do (all-or-nothing).
 func (s *Common[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {

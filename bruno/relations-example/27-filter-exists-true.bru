@@ -1,0 +1,36 @@
+meta {
+  name: Filter Exists True - Posts with Comments
+  type: http
+  seq: 27
+}
+
+get {
+  url: {{baseUrl}}/posts?filter[Comments][exists]=true
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:admin:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 2
+}
+
+tests {
+  test("Only posts with comments returned", function() {
+    const titles = res.body.data.map(p => p.title).sort();
+    expect(titles).to.include("Alice's First Post");
+    expect(titles).to.include("Bob's First Post");
+    expect(titles).to.not.include("Empty Post");
+  });
+}
+
+docs {
+  Admin filters posts by existence of Comments relation.
+  Alice's post (2 comments) and Bob's post (1 comment) match.
+  Empty post (0 comments) is excluded.
+}

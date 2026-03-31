@@ -622,37 +622,24 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 			// Child is the base model, use ?TableAlias
 			if fkOnChild {
 				// Normal case: child.FK = parent.joinCol
-				query = query.Join("JOIN ? ON ?TableAlias.? = ?.?",
-					bun.Ident(join.parentTable),
-					bun.Ident(join.childFKCol),
-					bun.Ident(join.parentTable), bun.Ident(join.parentJoinCol))
+				query = query.Join("JOIN ? ON ?TableAlias.? = ?.?", bun.Ident(join.parentTable), bun.Ident(join.childFKCol), bun.Ident(join.parentTable), bun.Ident(join.parentJoinCol))
 			} else {
 				// Inverted case: parent.FK = child.joinCol
-				query = query.Join("JOIN ? ON ?.? = ?TableAlias.?",
-					bun.Ident(join.parentTable),
-					bun.Ident(join.parentTable), bun.Ident(join.childFKCol),
-					bun.Ident(join.parentJoinCol))
+				query = query.Join("JOIN ? ON ?.? = ?TableAlias.?", bun.Ident(join.parentTable), bun.Ident(join.parentTable), bun.Ident(join.childFKCol), bun.Ident(join.parentJoinCol))
 			}
 		} else {
 			// Child is a previously joined table, use table name
 			if fkOnChild {
 				// Normal case: child.FK = parent.joinCol
-				query = query.Join("JOIN ? ON ?.? = ?.?",
-					bun.Ident(join.parentTable),
-					bun.Ident(join.childTable), bun.Ident(join.childFKCol),
-					bun.Ident(join.parentTable), bun.Ident(join.parentJoinCol))
+				query = query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(join.parentTable), bun.Ident(join.childTable), bun.Ident(join.childFKCol), bun.Ident(join.parentTable), bun.Ident(join.parentJoinCol))
 			} else {
 				// Inverted case: parent.FK = child.joinCol
-				query = query.Join("JOIN ? ON ?.? = ?.?",
-					bun.Ident(join.parentTable),
-					bun.Ident(join.parentTable), bun.Ident(join.childFKCol),
-					bun.Ident(join.childTable), bun.Ident(join.parentJoinCol))
+				query = query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(join.parentTable), bun.Ident(join.parentTable), bun.Ident(join.childFKCol), bun.Ident(join.childTable), bun.Ident(join.parentJoinCol))
 			}
 		}
 
 		// WHERE parent_table.id = ?
-		query = query.Where("?.? = ?",
-			bun.Ident(join.parentTable), bun.Ident("id"), parentID)
+		query = query.Where("?.? = ?", bun.Ident(join.parentTable), bun.Ident("id"), parentID)
 
 		// Issue #28 fix: Apply ownership filter for this parent if needed
 		if slices.Contains(parentsNeedingOwnership, join.parentMeta) && ownershipUserID != "" {
@@ -1167,9 +1154,9 @@ func applyFilter(query *bun.SelectQuery, tableName, colName, operator string, va
 
 	switch operator {
 	case metadata.OpIn:
-		return query.Where(tblCol+" IN (?)", append(args, bun.In(vals))...)
+		return query.Where(tblCol+" IN (?)", append(args, bun.List(vals))...)
 	case metadata.OpNin:
-		return query.Where(tblCol+" NOT IN (?)", append(args, bun.In(vals))...)
+		return query.Where(tblCol+" NOT IN (?)", append(args, bun.List(vals))...)
 	case metadata.OpBt:
 		if len(vals) < 2 {
 			return query
@@ -2158,25 +2145,17 @@ func (w *Wrapper[T]) buildParentJoins(query *bun.SelectQuery, baseMeta *metadata
 func (w *Wrapper[T]) joinParentFromBase(query *bun.SelectQuery, child, parent *metadata.TypeMetadata, fkOnChild bool) *bun.SelectQuery {
 	parentJoinCol := defaultParentJoinCol(child.ParentJoinCol)
 	if fkOnChild {
-		return query.Join("JOIN ? ON ?TableAlias.? = ?.?",
-			bun.Ident(parent.TableName), bun.Ident(child.ForeignKeyCol),
-			bun.Ident(parent.TableName), bun.Ident(parentJoinCol))
+		return query.Join("JOIN ? ON ?TableAlias.? = ?.?", bun.Ident(parent.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident(parentJoinCol))
 	}
-	return query.Join("JOIN ? ON ?.? = ?TableAlias.?",
-		bun.Ident(parent.TableName), bun.Ident(parent.TableName),
-		bun.Ident(child.ForeignKeyCol), bun.Ident(parentJoinCol))
+	return query.Join("JOIN ? ON ?.? = ?TableAlias.?", bun.Ident(parent.TableName), bun.Ident(parent.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parentJoinCol))
 }
 
 func (w *Wrapper[T]) joinParentFromTable(query *bun.SelectQuery, child, parent *metadata.TypeMetadata, fkOnChild bool) *bun.SelectQuery {
 	parentJoinCol := defaultParentJoinCol(child.ParentJoinCol)
 	if fkOnChild {
-		return query.Join("JOIN ? ON ?.? = ?.?",
-			bun.Ident(parent.TableName), bun.Ident(child.TableName),
-			bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident(parentJoinCol))
+		return query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(parent.TableName), bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident(parentJoinCol))
 	}
-	return query.Join("JOIN ? ON ?.? = ?.?",
-		bun.Ident(parent.TableName), bun.Ident(parent.TableName),
-		bun.Ident(child.ForeignKeyCol), bun.Ident(child.TableName), bun.Ident(parentJoinCol))
+	return query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(parent.TableName), bun.Ident(parent.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(child.TableName), bun.Ident(parentJoinCol))
 }
 
 // applyChildFieldFilter applies a filter on a child relation field using EXISTS subqueries
@@ -2288,9 +2267,7 @@ func (w *Wrapper[T]) buildCountChain(baseMeta *metadata.TypeMetadata, chain []*m
 		return db.NewSelect().
 			Table(leaf.TableName).
 			ColumnExpr("COUNT(*)").
-			Where("?.? = ?.?",
-				bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol),
-				bun.Ident(baseAlias), bun.Ident(defaultParentJoinCol(leaf.ParentJoinCol)))
+			Where("?.? = ?.?", bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol), bun.Ident(baseAlias), bun.Ident(defaultParentJoinCol(leaf.ParentJoinCol)))
 	}
 
 	// Multi-level: build nested subqueries from base outward, count at leaf
@@ -2306,25 +2283,19 @@ func (w *Wrapper[T]) buildCountChain(baseMeta *metadata.TypeMetadata, chain []*m
 			subq = db.NewSelect().
 				Table(child.TableName).
 				ColumnExpr("?.?", bun.Ident(child.TableName), bun.Ident(selectCol)).
-				Where("?.? = ?.?",
-					bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol),
-					bun.Ident(baseAlias), bun.Ident(childParentJoinCol))
+				Where("?.? = ?.?", bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(baseAlias), bun.Ident(childParentJoinCol))
 		} else {
 			subq = db.NewSelect().
 				Table(child.TableName).
 				ColumnExpr("?.?", bun.Ident(child.TableName), bun.Ident(selectCol)).
-				Where("?.? IN (?)",
-					bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol),
-					subq)
+				Where("?.? IN (?)", bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), subq)
 		}
 	}
 
 	return db.NewSelect().
 		Table(leaf.TableName).
 		ColumnExpr("COUNT(*)").
-		Where("?.? IN (?)",
-			bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol),
-			subq)
+		Where("?.? IN (?)", bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol), subq)
 }
 
 // ComputeIncludeCounts computes per-item child relation counts for the given items.
@@ -2400,20 +2371,14 @@ func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, baseMeta *metadata
 	for i := len(chain) - 1; i > 0; i-- {
 		child := chain[i]
 		parent := chain[i-1]
-		query = query.Join("JOIN ? ON ?.? = ?.?",
-			bun.Ident(parent.TableName),
-			bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol),
-			bun.Ident(parent.TableName), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
+		query = query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(parent.TableName), bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
 	}
 
 	// WHERE first_child.fk IN (pks)
-	query = query.Where("?.? IN (?)",
-		bun.Ident(firstChild.TableName), bun.Ident(firstChild.ForeignKeyCol),
-		bun.In(pks))
+	query = query.Where("?.? IN (?)", bun.Ident(firstChild.TableName), bun.Ident(firstChild.ForeignKeyCol), bun.List(pks))
 
 	// GROUP BY first_child.fk
-	query = query.GroupExpr("?.?",
-		bun.Ident(firstChild.TableName), bun.Ident(firstChild.ForeignKeyCol))
+	query = query.GroupExpr("?.?", bun.Ident(firstChild.TableName), bun.Ident(firstChild.ForeignKeyCol))
 
 	rows, err := query.Rows(ctx)
 	if err != nil {
@@ -2457,9 +2422,7 @@ func (w *Wrapper[T]) buildExistsChain(baseMeta *metadata.TypeMetadata, chain []*
 		subq := db.NewSelect().
 			Table(child.TableName).
 			ColumnExpr("1").
-			Where("?.? = ?.?",
-				bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol),
-				bun.Ident(parents[i]), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
+			Where("?.? = ?.?", bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parents[i]), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
 
 		if i == len(chain)-1 && innerFilter != nil {
 			subq = innerFilter(subq)

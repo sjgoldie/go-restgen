@@ -63,7 +63,7 @@ func main() {
         w.Write([]byte("OK"))
     })
 
-    b := router.NewBuilder(r, db.GetDB())
+    b := router.NewBuilder(r)
     router.RegisterRoutes[User](b, "/users", router.AllPublic())
 
     log.Fatal(http.ListenAndServe(":8080", r))
@@ -111,7 +111,7 @@ router.RegisterRoutes[Model](builder, "/path",
     },
 
     // Single resource (for belongs-to relations or /me endpoints)
-    router.AsSingleRouteWithPut(""),       // GET and PUT only, ID from parent FK or custom handler
+    router.AsSingleRouteWithUpdate(""),        // GET, PUT, and PATCH — ID from parent FK or custom handler
 
     // Ownership (users only see their data, admins bypass)
     router.AllWithOwnershipUnless([]string{"UserID"}, "admin"),
@@ -119,11 +119,12 @@ router.RegisterRoutes[Model](builder, "/path",
     // Query options
     router.WithFilters("Status", "Name"),
     router.WithSorts("Name", "CreatedAt"),
-    router.WithPagination(20, 100),
+    router.WithPagination(20, 100),                // cursor-based pagination (default)
+    router.WithPagination(20, 100, router.OffsetMode), // offset-based pagination (opt-in)
     router.WithDefaultSort("-CreatedAt"),
     router.WithRelationName("Posts"),  // enables ?include=Posts on parent
     router.WithJoinOn("NMI", "NMI"),  // custom join: child.NMI = parent.NMI (no belongs-to tag needed)
-    router.WithSums("Price", "Stock"),  // enables ?sum=Price,Stock with X-Sum-* headers (works with any DB-numeric type including decimal.Decimal)
+    router.WithSums("Price", "Stock"),  // enables ?sum=Price,Stock in response body (works with any DB-numeric type including decimal.Decimal)
     router.WithAlternatePK("MyPK"),     // when PK field isn't named "ID"
 
     // Custom handlers
@@ -131,10 +132,15 @@ router.RegisterRoutes[Model](builder, "/path",
     router.WithCustomGetAll(customGetAllFn),
     router.WithCustomCreate(customCreateFn),
     router.WithCustomUpdate(customUpdateFn),
+    router.WithCustomPatch(customPatchFn),
     router.WithCustomDelete(customDeleteFn),
 
     // File uploads (model must embed filestore.FileFields)
     router.AsFileResource(),
+    router.WithMaxUploadSize(10 << 20),  // optional: max upload size in bytes (default: 32 MB)
+
+    // Request body limits
+    router.WithMaxBodySize(1024),        // optional: max JSON body size in bytes (default: 1 MB)
 
     // Batch operations (enabled via auth methods)
     router.AllScopedWithBatch("admin"),  // all methods + batch for admin scope
@@ -146,7 +152,32 @@ router.RegisterRoutes[Model](builder, "/path",
 
     // Custom actions
     router.WithAction("publish", publishFn, router.AuthConfig{Scopes: []string{"user"}}),
+
+    // Custom endpoints (any HTTP method, any return type)
+    router.WithEndpoint("GET", "wf-status", getWorkflowStatusFn, router.AuthConfig{Scopes: []string{router.ScopePublic}}),
+    router.WithEndpoint("POST", "pay", processPaymentFn, router.AuthConfig{Scopes: []string{"user"}}),
+
+    // SSE endpoints (item-level, always GET)
+    router.WithSSE("events", streamEventsFn, router.AuthConfig{Scopes: []string{router.ScopePublic}}),
+
+    // Query shorthand (alternative to individual WithFilters/WithSorts/etc)
+    router.WithQuery(router.QueryConfig{
+        FilterableFields: []string{"Status", "Name"},
+        SortableFields:   []string{"Name", "CreatedAt"},
+        SummableFields:   []string{"Price"},
+        DefaultSort:      "-CreatedAt",
+        DefaultLimit:     20,
+        MaxLimit:         100,
+        Pagination:       router.CursorMode, // default; use router.OffsetMode for offset-based
+    }),
 )
+
+// Root-level endpoints (no parent model, registered outside RegisterRoutes)
+router.RegisterRootEndpoint(b, "GET", "/system/info", getSystemInfoFn, router.AllPublic())
+router.RegisterRootEndpoint(b, "POST", "/webhooks/notify", handleWebhookFn, router.AllScoped("admin"))
+
+// Root-level SSE (no parent model, always GET)
+router.RegisterRootSSE(b, "/events/system", streamSystemEventsFn, router.AllPublic())
 ```
 
 ## Pattern: Nested Resources
@@ -165,7 +196,7 @@ type Post struct {
     Title         string `bun:"title,notnull" json:"title"`
 }
 
-b := router.NewBuilder(r, db.GetDB())
+b := router.NewBuilder(r)
 router.RegisterRoutes[Blog](b, "/blogs", router.AllPublic(), func(b *router.Builder) {
     router.RegisterRoutes[Post](b, "/posts", router.AllPublic())
 })
@@ -173,9 +204,9 @@ router.RegisterRoutes[Blog](b, "/blogs", router.AllPublic(), func(b *router.Buil
 
 Creates routes:
 - `GET/POST /blogs`
-- `GET/PUT/DELETE /blogs/{blogId}`
+- `GET/PUT/PATCH/DELETE /blogs/{blogId}`
 - `GET/POST /blogs/{blogId}/posts`
-- `GET/PUT/DELETE /blogs/{blogId}/posts/{postId}`
+- `GET/PUT/PATCH/DELETE /blogs/{blogId}/posts/{postId}`
 
 The framework automatically validates parent exists and sets `BlogID` on create.
 
@@ -277,7 +308,7 @@ func customGetAll(
     svc *service.Common[User],
     meta *metadata.TypeMetadata,
     auth *metadata.AuthInfo,
-) ([]*User, int, map[string]float64, error) {
+) ([]*User, int, map[string]float64, *metadata.CursorInfo, error) {
     // Custom logic here
     return svc.GetAll(ctx)
 }
@@ -306,6 +337,20 @@ func customUpdate(
     item User,
 ) (*User, error) {
     return svc.Update(ctx, id, item)
+}
+
+// Patch item (partial update)
+// Receives existing (before patch) and patched (after JSON overlay)
+func customPatch(
+    ctx context.Context,
+    svc *service.Common[User],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    existing *User,
+    patched User,
+) (*User, error) {
+    return svc.Patch(ctx, id, patched)
 }
 
 // Delete item
@@ -397,6 +442,87 @@ router.RegisterRoutes[Post](b, "/posts",
 
 URL: `POST /posts/{id}/publish`
 
+## Pattern: Custom Endpoints (Anything Funcs)
+
+Custom endpoints support any HTTP method and any return type. SSE variants stream events.
+
+```go
+// Item-level endpoint: METHOD /resource/{id}/{name}
+// Handler signature: EndpointHandler[T]
+func getWorkflowStatus(
+    ctx context.Context,
+    svc *service.Common[Order],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    item *Order,       // pre-fetched by framework
+    payload []byte,    // raw request body
+) (any, int, error) { // any return type + status code
+    return &WorkflowStatus{OrderID: id, State: item.Status}, http.StatusOK, nil
+}
+
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllPublic(),
+    router.WithEndpoint("GET", "wf-status", getWorkflowStatus, router.AuthConfig{
+        Scopes: []string{router.ScopePublic},
+    }),
+)
+// URL: GET /orders/{id}/wf-status
+
+// Root-level endpoint: METHOD /any/path (no parent model)
+// Handler signature: RootEndpointHandler
+func getSystemInfo(
+    ctx context.Context,
+    auth *metadata.AuthInfo,
+    r *http.Request,   // full request access
+) (any, int, error) {
+    return &SystemInfo{Version: "1.0.0"}, http.StatusOK, nil
+}
+
+router.RegisterRootEndpoint(b, "GET", "/system/info", getSystemInfo, router.AllPublic())
+
+// Item-level SSE: GET /resource/{id}/{name}
+// Handler signature: SSEFunc[T]
+func streamOrderEvents(
+    ctx context.Context,
+    svc *service.Common[Order],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    item *Order,
+    events chan<- handler.SSEEvent,
+) error {
+    events <- handler.SSEEvent{Event: "status", Data: map[string]string{"state": item.Status}, ID: "1"}
+    return nil
+}
+
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllPublic(),
+    router.WithSSE("events", streamOrderEvents, router.AuthConfig{
+        Scopes: []string{router.ScopePublic},
+    }),
+)
+// URL: GET /orders/{id}/events
+
+// Root-level SSE: GET /any/path (no parent model)
+// Handler signature: RootSSEFunc
+func streamSystemEvents(
+    ctx context.Context,
+    auth *metadata.AuthInfo,
+    r *http.Request,
+    events chan<- handler.SSEEvent,
+) error {
+    events <- handler.SSEEvent{Event: "heartbeat", Data: map[string]string{"status": "ok"}}
+    return nil
+}
+
+router.RegisterRootSSE(b, "/events/system", streamSystemEvents, router.AllPublic())
+```
+
+**SSEEvent fields:** `Event` (string, optional), `Data` (any, JSON-encoded), `ID` (string, optional).
+
+**Response:** `(result, statusCode, nil)` → JSON + status code. `(nil, _, nil)` → 204. Status `0` defaults to `200`.
+
 ## Query Parameters
 
 Built-in support on GetAll endpoints:
@@ -405,12 +531,33 @@ Built-in support on GetAll endpoints:
 |-----------|---------|-------------|
 | Filter | `?filter[status]=active` | Exact match |
 | Filter ops | `?filter[age][gt]=18` | Operators: eq, neq, gt, gte, lt, lte, like, in, nin, bt, nbt |
+| Child field filter | `?filter[Orders.Status][eq]=active` | Filter by child/grandchild field value (uses EXISTS subquery). Dot notation for nested chains. |
+| Exists filter | `?filter[Orders][exists]=true` | Filter by existence of child relations. `true` = has children, `false` = has none. |
+| Count filter | `?filter[Orders][count_gt]=5` | Filter by child relation count. Operators: count_eq, count_neq, count_gt, count_gte, count_lt, count_lte |
 | Sort | `?sort=name,-created_at` | `-` prefix for descending |
-| Limit | `?limit=10` | Max results |
-| Offset | `?offset=20` | Skip results |
-| Count | `?count=true` | Include X-Total-Count header |
+| Limit | `?limit=10` | Max results per page |
+| After | `?after=<cursor>` | Next page (cursor from `pagination.next_cursor`) |
+| Before | `?before=<cursor>` | Previous page (cursor from `pagination.prev_cursor`) |
+| Offset | `?offset=20` | Skip results (switches to offset pagination) |
+| Count | `?count=true` | Include `total_count` in `pagination` |
 | Include | `?include=Posts` or `?include=Posts.Comments` | Load relations (requires WithRelationName on child route). Dot notation for nested. |
-| Sum | `?sum=Price,Stock` | Sum fields, returns X-Sum-Price, X-Sum-Stock headers (requires WithSums). Works with any DB-numeric type including `decimal.Decimal`. Bool fields return count of `true` values. DB validates types — non-numeric columns return a database error. |
+| Include count | `?include_count=Orders` or `?include_count=Orders,Items` | Include per-item child relation counts in response envelope. Comma-separated for multiple. |
+| Sum | `?sum=Price,Stock` | Sum fields, returns in `sums` object in response body (requires WithSums). Works with any DB-numeric type including `decimal.Decimal`. Bool fields return count of `true` values. DB validates types — non-numeric columns return a database error. |
+
+**Response envelope (GetAll):**
+```json
+{
+  "data": [...],
+  "pagination": {"has_more": true, "next_cursor": "...", "prev_cursor": "...", "total_count": 42},
+  "sums": {"Price": 1500.0, "Stock": 200.0},
+  "counts": {"Orders": {"1": 3, "2": 0}, "Items": {"1": 12, "2": 5}}
+}
+```
+Cursor mode fields: `has_more`, `next_cursor`, `prev_cursor`, `total_count` (if `count=true`).
+Offset mode fields: `limit`, `offset`, `total_count` (if `count=true`).
+`counts` maps relation name → item PK → count (only present when `?include_count=` is used).
+Batch responses use `{"data": [...]}` envelope.
+Single-item responses (Get, Create, Update, Patch, Delete) return the raw object (no envelope).
 
 **Filter operator details:**
 - `in` - In list: `?filter[Status][in]=active,pending`
@@ -418,20 +565,39 @@ Built-in support on GetAll endpoints:
 - `bt` - Between (inclusive): `?filter[Age][bt]=18,65`
 - `nbt` - Not between: `?filter[Price][nbt]=100,500`
 
+**Child relation filters:**
+- Child field: `?filter[Orders.Status][eq]=shipped` — parents WHERE EXISTS child with Status=shipped
+- Multi-level: `?filter[Orders.Items.SKU][eq]=ABC` — parents with grandchild matching
+- Exists: `?filter[Orders][exists]=true` — parents that have at least one Order
+- Count: `?filter[Orders][count_gt]=5` — parents with more than 5 Orders
+- Count operators: `count_eq`, `count_neq`, `count_gt`, `count_gte`, `count_lt`, `count_lte`
+- All relation filters require the child route to use `WithRelationName` (same as includes)
+- Auth: relation filters respect AllowedIncludes — unauthorized relations are silently skipped
+
+**Nested includes (dot notation):**
+- Child direction: `?include=Posts.Comments` — each level needs `WithRelationName` on its route
+- Parent direction: `?include=Author` — auto-derived from `rel:belongs-to` tags, no `WithRelationName` needed
+- Auth is cumulative AND (deeper levels blocked if parent fails), ownership is cumulative OR
+- Middle-level auth failure silently omits everything below
+
 ## Error Handling
+
+All errors are returned as structured JSON: `{"error": "not_found", "message": "Not Found"}`
 
 ```go
 import apperrors "github.com/sjgoldie/go-restgen/errors"
 
 // In custom handlers, return domain errors:
-return nil, apperrors.ErrNotFound           // 404
-return nil, apperrors.ErrDuplicate          // 400
-return nil, apperrors.ErrInvalidReference   // 400
-return nil, apperrors.ErrUnavailable        // 503
+return nil, apperrors.ErrNotFound           // 404 {"error":"not_found"}
+return nil, apperrors.ErrDuplicate          // 400 {"error":"duplicate"}
+return nil, apperrors.ErrInvalidReference   // 400 {"error":"invalid_reference"}
+return nil, apperrors.ErrUnavailable        // 503 {"error":"service_unavailable"}
 
 // Custom validation error (message sent to client):
-return nil, apperrors.NewValidationError("title cannot be empty")  // 400
+return nil, apperrors.NewValidationError("title cannot be empty")  // 400 {"error":"validation_error","message":"title cannot be empty"}
 ```
+
+For custom middleware, use `handler.WriteError(w, statusCode, errorCode, message)`.
 
 ## Logging
 
@@ -457,7 +623,8 @@ For each resource:
 - [ ] `GET /resources` returns list
 - [ ] `GET /resources/{id}` returns single item
 - [ ] `POST /resources` creates item
-- [ ] `PUT /resources/{id}` updates item
+- [ ] `PUT /resources/{id}` updates item (full replace)
+- [ ] `PATCH /resources/{id}` partially updates item (only sent fields)
 - [ ] `DELETE /resources/{id}` deletes item
 - [ ] Unauthorized requests are rejected
 - [ ] Ownership filters work correctly

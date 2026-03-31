@@ -87,7 +87,7 @@ func main() {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 	router.RegisterRoutes[User](b, "/users", router.AllPublic(), func(b *router.Builder) {
 		router.RegisterRoutes[Account](b, "/accounts", router.AllPublic(), func(b *router.Builder) {
 			router.RegisterRoutes[Site](b, "/sites", router.AllPublic(), func(b *router.Builder) {

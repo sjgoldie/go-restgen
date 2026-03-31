@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/sjgoldie/go-restgen/handler"
 	"github.com/sjgoldie/go-restgen/metadata"
 )
 
@@ -89,11 +90,11 @@ func wrapWithAuth(next http.Handler, config *AuthConfig) http.Handler {
 		switch result.Status {
 		case authUnauthorized:
 			slog.WarnContext(ctx, "auth rejected: unauthorized", "path", r.URL.Path, "method", r.Method)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			handler.WriteError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, http.StatusText(http.StatusUnauthorized))
 			return
 		case authForbidden:
 			slog.WarnContext(ctx, "auth rejected: forbidden", "path", r.URL.Path, "method", r.Method)
-			http.Error(w, "forbidden", http.StatusForbidden)
+			handler.WriteError(w, http.StatusForbidden, handler.ErrCodeForbidden, http.StatusText(http.StatusForbidden))
 			return
 			// authOK falls through to continue processing
 		}
@@ -111,11 +112,11 @@ func wrapWithAuth(next http.Handler, config *AuthConfig) http.Handler {
 			switch parentResult.status {
 			case authUnauthorized:
 				slog.WarnContext(ctx, "auth rejected: parent ownership requires auth", "path", r.URL.Path, "method", r.Method, "type", meta.TypeName)
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				handler.WriteError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, http.StatusText(http.StatusUnauthorized))
 				return
 			case authForbidden:
 				slog.WarnContext(ctx, "auth rejected: parent ownership forbidden", "path", r.URL.Path, "method", r.Method, "type", meta.TypeName)
-				http.Error(w, "forbidden", http.StatusForbidden)
+				handler.WriteError(w, http.StatusForbidden, handler.ErrCodeForbidden, http.StatusText(http.StatusForbidden))
 				return
 			}
 			// Store parent ownership info in context for datastore to apply filtering
@@ -128,7 +129,7 @@ func wrapWithAuth(next http.Handler, config *AuthConfig) http.Handler {
 		if meta != nil && (meta.TenantField != "" || meta.IsTenantTable) {
 			if authInfo == nil || authInfo.TenantID == "" {
 				slog.WarnContext(ctx, "auth rejected: tenant-scoped route requires TenantID", "path", r.URL.Path, "method", r.Method, "type", meta.TypeName)
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				handler.WriteError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, http.StatusText(http.StatusUnauthorized))
 				return
 			}
 			ctx = applyTenantContext(ctx, authInfo.TenantID)
@@ -242,7 +243,7 @@ func buildParentAllowedIncludes(authInfo *AuthInfo, config *AuthConfig, includes
 func blockUnauthorized(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		slog.WarnContext(r.Context(), "auth rejected: no auth config", "path", r.URL.Path, "method", r.Method)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		handler.WriteError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, http.StatusText(http.StatusUnauthorized))
 	})
 }
 

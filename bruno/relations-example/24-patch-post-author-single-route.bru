@@ -1,0 +1,36 @@
+meta {
+  name: PATCH /posts/{id}/author single route relation
+  type: http
+  seq: 24
+}
+
+patch {
+  url: {{baseUrl}}/posts/{{alicePostId}}/author
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "name": "Alice Patched"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{aliceUserId}}
+  res.body.name: eq Alice Patched
+  res.body.email: eq alice-renamed@example.com
+}
+
+docs {
+  # Partial Update Author via Single Route Relation
+
+  This test verifies PATCH on a single route with parent (belongs-to relation).
+  Only the name is sent; email should be preserved from the existing record.
+  The author ID is resolved from Post.AuthorID, then the User is patched.
+}

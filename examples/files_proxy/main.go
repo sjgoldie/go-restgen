@@ -48,7 +48,7 @@ type Image struct {
 	ID                   int       `bun:"id,pk,autoincrement" json:"id"`
 	PostID               int       `bun:"post_id,notnull" json:"post_id"`
 	Post                 *Post     `bun:"rel:belongs-to,join:post_id=id" json:"-"`
-	filestore.FileFields           // Embeds StorageKey, Filename, ContentType, Size, DownloadURL
+	filestore.FileFields           // Embeds StorageKey, Filename, ContentType, Size
 	AltText              string    `bun:"alt_text" json:"alt_text,omitempty"`
 	CreatedAt            time.Time `bun:"created_at,notnull,skipupdate" json:"created_at,omitempty"`
 }
@@ -115,7 +115,7 @@ func main() {
 	})
 
 	// Register routes
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 
 	// Posts with nested images
 	router.RegisterRoutes[Post](b, "/posts",
@@ -128,6 +128,7 @@ func main() {
 			router.RegisterRoutes[Image](b, "/images",
 				router.AsFileResource(),
 				router.AllPublic(),
+				router.WithMaxUploadSize(10<<20), // 10 MB limit
 				router.WithFilters("Filename", "ContentType"),
 				router.WithSorts("Filename", "CreatedAt"),
 			)

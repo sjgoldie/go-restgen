@@ -20,5 +20,6 @@ body:json {
 
 assert {
   res.status: eq 400
-  res.body: contains invalid status transition
+  res.body.error: eq validation_error
+  res.body.message: contains invalid status transition
 }

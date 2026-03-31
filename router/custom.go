@@ -57,6 +57,18 @@ func WithCustomUpdate[T any](fn handler.CustomUpdateFunc[T]) CustomUpdateConfig[
 	return CustomUpdateConfig[T]{Fn: fn}
 }
 
+// CustomPatchConfig holds custom Patch handler configuration for route registration.
+type CustomPatchConfig[T any] struct {
+	Fn handler.CustomPatchFunc[T]
+}
+
+// WithCustomPatch creates a CustomPatchConfig for use in RegisterRoutes.
+// The custom function replaces the standard patch call. It receives both the existing
+// item (before patch) and the patched item (after JSON overlay on clone of existing).
+func WithCustomPatch[T any](fn handler.CustomPatchFunc[T]) CustomPatchConfig[T] {
+	return CustomPatchConfig[T]{Fn: fn}
+}
+
 // CustomDeleteConfig holds custom Delete handler configuration for route registration.
 type CustomDeleteConfig[T any] struct {
 	Fn handler.CustomDeleteFunc[T]
@@ -111,6 +123,45 @@ func WithBatchLimit(limit int) BatchLimitConfig {
 	return BatchLimitConfig{Limit: limit}
 }
 
+// MaxBodySizeConfig holds the maximum request body size for JSON endpoints.
+type MaxBodySizeConfig struct {
+	Size int64
+}
+
+// WithMaxBodySize sets the maximum allowed size in bytes for JSON request bodies.
+// If not set, the default is 1 MB (metadata.DefaultMaxBodySize).
+// This does not affect multipart uploads — use WithMaxUploadSize for file resources.
+//
+// Example:
+//
+//	router.RegisterRoutes[User](b, "/users",
+//	    router.AllPublic(),
+//	    router.WithMaxBodySize(1024), // 1 KB limit
+//	)
+func WithMaxBodySize(size int64) MaxBodySizeConfig {
+	return MaxBodySizeConfig{Size: size}
+}
+
+// MaxUploadSizeConfig holds the maximum multipart file upload size for file resource routes.
+type MaxUploadSizeConfig struct {
+	Size int64
+}
+
+// WithMaxUploadSize sets the maximum allowed size in bytes for multipart file uploads.
+// If not set, the default is 32 MB (metadata.DefaultMaxUploadSize).
+// This only affects file resource routes (registered with AsFileResource).
+//
+// Example:
+//
+//	router.RegisterRoutes[Image](b, "/images",
+//	    router.AsFileResource(),
+//	    router.AllPublic(),
+//	    router.WithMaxUploadSize(10 << 20), // 10 MB limit
+//	)
+func WithMaxUploadSize(size int64) MaxUploadSizeConfig {
+	return MaxUploadSizeConfig{Size: size}
+}
+
 // CustomBatchCreateConfig holds custom batch create handler configuration.
 type CustomBatchCreateConfig[T any] struct {
 	Fn handler.CustomBatchCreateFunc[T]
@@ -129,6 +180,16 @@ type CustomBatchUpdateConfig[T any] struct {
 // WithCustomBatchUpdate creates a CustomBatchUpdateConfig for use in RegisterRoutes.
 func WithCustomBatchUpdate[T any](fn handler.CustomBatchUpdateFunc[T]) CustomBatchUpdateConfig[T] {
 	return CustomBatchUpdateConfig[T]{Fn: fn}
+}
+
+// CustomBatchPatchConfig holds custom batch patch handler configuration.
+type CustomBatchPatchConfig[T any] struct {
+	Fn handler.CustomBatchPatchFunc[T]
+}
+
+// WithCustomBatchPatch creates a CustomBatchPatchConfig for use in RegisterRoutes.
+func WithCustomBatchPatch[T any](fn handler.CustomBatchPatchFunc[T]) CustomBatchPatchConfig[T] {
+	return CustomBatchPatchConfig[T]{Fn: fn}
 }
 
 // CustomBatchDeleteConfig holds custom batch delete handler configuration.

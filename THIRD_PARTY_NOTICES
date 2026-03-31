@@ -5,11 +5,11 @@ Third party libraries used by go-restgen
 
 --------------------------------------------------------------------------------
 Module  : github.com/go-chi/chi/v5
-Version : v5.2.4
-Time    : 2026-01-14T16:02:00Z
+Version : v5.2.5
+Time    : 2026-02-05T11:05:34Z
 Licence : MIT
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/go-chi/chi/v5@v5.2.4/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/go-chi/chi/v5@v5.2.5/LICENSE:
 
 Copyright (c) 2015-present Peter Kieltyka (https://github.com/pkieltyka), Google Inc.
 
@@ -127,11 +127,11 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 --------------------------------------------------------------------------------
 Module  : github.com/uptrace/bun
-Version : v1.2.16
-Time    : 2025-11-20T08:55:22Z
+Version : v1.2.17
+Time    : 2026-02-21T12:04:33Z
 Licence : BSD-2-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/uptrace/bun@v1.2.16/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/uptrace/bun@v1.2.17/LICENSE:
 
 Copyright (c) 2021 Vladimir Mihailenco. All rights reserved.
 
@@ -161,11 +161,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : github.com/uptrace/bun/dialect/pgdialect
-Version : v1.2.16
-Time    : 2025-11-20T08:55:22Z
+Version : v1.2.17
+Time    : 2026-02-21T12:04:33Z
 Licence : BSD-2-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/uptrace/bun/dialect/pgdialect@v1.2.16/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/uptrace/bun/dialect/pgdialect@v1.2.17/LICENSE:
 
 Copyright (c) 2021 Vladimir Mihailenco. All rights reserved.
 
@@ -195,11 +195,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : github.com/uptrace/bun/dialect/sqlitedialect
-Version : v1.2.16
-Time    : 2025-11-20T08:55:22Z
+Version : v1.2.17
+Time    : 2026-02-21T12:04:33Z
 Licence : BSD-2-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/uptrace/bun/dialect/sqlitedialect@v1.2.16/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/uptrace/bun/dialect/sqlitedialect@v1.2.17/LICENSE:
 
 Copyright (c) 2021 Vladimir Mihailenco. All rights reserved.
 
@@ -229,11 +229,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : github.com/uptrace/bun/driver/pgdriver
-Version : v1.2.16
-Time    : 2025-11-20T08:55:22Z
+Version : v1.2.17
+Time    : 2026-02-21T12:04:33Z
 Licence : BSD-2-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/uptrace/bun/driver/pgdriver@v1.2.16/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/uptrace/bun/driver/pgdriver@v1.2.17/LICENSE:
 
 Copyright (c) 2021 Vladimir Mihailenco. All rights reserved.
 
@@ -263,11 +263,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : github.com/uptrace/bun/driver/sqliteshim
-Version : v1.2.16
-Time    : 2025-11-20T08:55:22Z
+Version : v1.2.17
+Time    : 2026-02-21T12:04:33Z
 Licence : BSD-2-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/uptrace/bun/driver/sqliteshim@v1.2.16/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/uptrace/bun/driver/sqliteshim@v1.2.17/LICENSE:
 
 Copyright (c) 2021 Vladimir Mihailenco. All rights reserved.
 
@@ -297,11 +297,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : go.opentelemetry.io/otel
-Version : v1.39.0
-Time    : 2025-12-08T16:30:47Z
+Version : v1.40.0
+Time    : 2026-02-02T17:46:33Z
 Licence : Apache-2.0
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/go.opentelemetry.io/otel@v1.39.0/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/go.opentelemetry.io/otel@v1.40.0/LICENSE:
 
                                  Apache License
                            Version 2.0, January 2004
@@ -537,11 +537,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : go.opentelemetry.io/otel/metric
-Version : v1.39.0
-Time    : 2025-12-08T16:30:47Z
+Version : v1.40.0
+Time    : 2026-02-02T17:46:33Z
 Licence : Apache-2.0
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/go.opentelemetry.io/otel/metric@v1.39.0/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/go.opentelemetry.io/otel/metric@v1.40.0/LICENSE:
 
                                  Apache License
                            Version 2.0, January 2004
@@ -1966,11 +1966,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 --------------------------------------------------------------------------------
 Module  : github.com/mattn/go-sqlite3
-Version : v1.14.32
-Time    : 2025-08-14T12:57:30Z
+Version : v1.14.34
+Time    : 2026-01-16T08:19:36Z
 Licence : MIT
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/mattn/go-sqlite3@v1.14.32/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/github.com/mattn/go-sqlite3@v1.14.34/LICENSE:
 
 The MIT License (MIT)
 
@@ -2717,11 +2717,11 @@ Contents of probable licence file /Volumes/Overflow/go/pkg/mod/go.opentelemetry.
 
 --------------------------------------------------------------------------------
 Module  : go.opentelemetry.io/otel/trace
-Version : v1.39.0
-Time    : 2025-12-08T16:30:47Z
+Version : v1.40.0
+Time    : 2026-02-02T17:46:33Z
 Licence : Apache-2.0
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/go.opentelemetry.io/otel/trace@v1.39.0/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/go.opentelemetry.io/otel/trace@v1.40.0/LICENSE:
 
                                  Apache License
                            Version 2.0, January 2004
@@ -2957,11 +2957,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : golang.org/x/crypto
-Version : v0.45.0
-Time    : 2025-11-19T19:55:48Z
+Version : v0.48.0
+Time    : 2026-02-09T16:37:10Z
 Licence : BSD-3-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/golang.org/x/crypto@v0.45.0/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/golang.org/x/crypto@v0.48.0/LICENSE:
 
 Copyright 2009 The Go Authors.
 
@@ -2994,11 +2994,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : golang.org/x/exp
-Version : v0.0.0-20251113190631-e25ba8c21ef6
-Time    : 2025-11-13T19:06:31Z
+Version : v0.0.0-20260218203240-3dfff04db8fa
+Time    : 2026-02-18T20:32:40Z
 Licence : BSD-3-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/golang.org/x/exp@v0.0.0-20251113190631-e25ba8c21ef6/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/golang.org/x/exp@v0.0.0-20260218203240-3dfff04db8fa/LICENSE:
 
 Copyright 2009 The Go Authors.
 
@@ -3031,11 +3031,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : golang.org/x/mod
-Version : v0.30.0
-Time    : 2025-11-11T15:05:13Z
+Version : v0.33.0
+Time    : 2026-02-09T16:11:19Z
 Licence : BSD-3-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/golang.org/x/mod@v0.30.0/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/golang.org/x/mod@v0.33.0/LICENSE:
 
 Copyright 2009 The Go Authors.
 
@@ -3068,11 +3068,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : golang.org/x/sync
-Version : v0.18.0
-Time    : 2025-10-21T17:44:11Z
+Version : v0.19.0
+Time    : 2025-12-04T00:24:39Z
 Licence : BSD-3-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/golang.org/x/sync@v0.18.0/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/golang.org/x/sync@v0.19.0/LICENSE:
 
 Copyright 2009 The Go Authors.
 
@@ -3105,11 +3105,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : golang.org/x/sys
-Version : v0.38.0
-Time    : 2025-11-04T21:29:36Z
+Version : v0.41.0
+Time    : 2026-02-08T05:32:41Z
 Licence : BSD-3-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/golang.org/x/sys@v0.38.0/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/golang.org/x/sys@v0.41.0/LICENSE:
 
 Copyright 2009 The Go Authors.
 
@@ -3142,11 +3142,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : golang.org/x/tools
-Version : v0.39.0
-Time    : 2025-11-12T22:16:42Z
+Version : v0.42.0
+Time    : 2026-02-09T18:28:22Z
 Licence : BSD-3-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/golang.org/x/tools@v0.39.0/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/golang.org/x/tools@v0.42.0/LICENSE:
 
 Copyright 2009 The Go Authors.
 
@@ -3309,11 +3309,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : modernc.org/ccgo/v4
-Version : v4.30.1
-Time    : 2025-10-16T13:14:32Z
+Version : v4.30.2
+Time    : 2026-01-21T12:44:08Z
 Licence : BSD-2-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/modernc.org/ccgo/v4@v4.30.1/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/modernc.org/ccgo/v4@v4.30.2/LICENSE:
 
 Copyright (c) 2017 The CCGO Authors. All rights reserved.
 
@@ -3462,11 +3462,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : modernc.org/gc/v3
-Version : v3.1.1
-Time    : 2025-08-14T10:41:31Z
+Version : v3.1.2
+Time    : 2026-01-21T10:42:08Z
 Licence : BSD-3-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/modernc.org/gc/v3@v3.1.1/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/modernc.org/gc/v3@v3.1.2/LICENSE:
 
 -------------------------------------------------------------------------------
 Copyright (c) 2016 The GC Authors. All rights reserved.
@@ -3577,11 +3577,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : modernc.org/libc
-Version : v1.67.0
-Time    : 2025-11-14T12:53:30Z
+Version : v1.68.0
+Time    : 2026-02-16T05:48:31Z
 Licence : BSD-2-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/modernc.org/libc@v1.67.0/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/modernc.org/libc@v1.68.0/LICENSE:
 
 Copyright (c) 2017 The Libc Authors. All rights reserved.
 
@@ -3762,11 +3762,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module  : modernc.org/sqlite
-Version : v1.40.1
-Time    : 2025-11-12T08:13:53Z
+Version : v1.46.1
+Time    : 2026-02-18T14:34:42Z
 Licence : BSD-3-Clause
 
-Contents of probable licence file /Volumes/Overflow/go/pkg/mod/modernc.org/sqlite@v1.40.1/LICENSE:
+Contents of probable licence file /Volumes/Overflow/go/pkg/mod/modernc.org/sqlite@v1.46.1/LICENSE:
 
 Copyright (c) 2017 The Sqlite Authors. All rights reserved.
 

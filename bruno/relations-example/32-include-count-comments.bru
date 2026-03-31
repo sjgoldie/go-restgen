@@ -1,0 +1,46 @@
+meta {
+  name: Include Count - Comments per Post
+  type: http
+  seq: 32
+}
+
+get {
+  url: {{baseUrl}}/posts?include_count=Comments
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:admin:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 3
+  res.body.counts: isDefined
+  res.body.counts.Comments: isDefined
+}
+
+tests {
+  test("Comment counts are correct per post", function() {
+    const counts = res.body.counts.Comments;
+    const alicePostId = String(bru.getVar("alicePostId"));
+    const bobPostId = String(bru.getVar("bobPostId"));
+
+    expect(counts[alicePostId]).to.equal(2);
+    expect(counts[bobPostId]).to.equal(1);
+  });
+
+  test("Post with zero comments is omitted from counts", function() {
+    const counts = res.body.counts.Comments;
+    const emptyPostId = String(bru.getVar("emptyPostId"));
+    expect(counts[emptyPostId]).to.be.undefined;
+  });
+}
+
+docs {
+  Admin requests comment counts per post via include_count.
+  Counts are returned in the response envelope under counts.Comments.
+  Posts with zero comments are omitted from the counts map.
+}

@@ -215,13 +215,17 @@ func TestHandler_GetAll(t *testing.T) {
 				t.Errorf("Expected status %d, got %d", tt.expectedCode, w.Code)
 			}
 
-			var result []TestUser
-			if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+			var envelope handler.ListResponse
+			if err := json.NewDecoder(w.Body).Decode(&envelope); err != nil {
 				t.Fatal("Failed to decode response:", err)
 			}
 
-			if len(result) != tt.expectedCount {
-				t.Errorf("Expected %d users, got %d", tt.expectedCount, len(result))
+			items, ok := envelope.Data.([]interface{})
+			if !ok {
+				t.Fatalf("Expected data to be an array, got %T", envelope.Data)
+			}
+			if len(items) != tt.expectedCount {
+				t.Errorf("Expected %d users, got %d", tt.expectedCount, len(items))
 			}
 		})
 	}
@@ -728,13 +732,17 @@ func TestHandler_GetAllWithRelations(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 	}
 
-	var result []TestUser
-	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+	var envelope handler.ListResponse
+	if err := json.NewDecoder(w.Body).Decode(&envelope); err != nil {
 		t.Fatal("Failed to decode response:", err)
 	}
 
-	if len(result) != 1 {
-		t.Errorf("Expected 1 user, got %d", len(result))
+	items, ok := envelope.Data.([]interface{})
+	if !ok {
+		t.Fatalf("Expected data to be an array, got %T", envelope.Data)
+	}
+	if len(items) != 1 {
+		t.Errorf("Expected 1 user, got %d", len(items))
 	}
 }
 
@@ -893,10 +901,12 @@ func TestHandler_GetAll_QueryParams(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		queryString   string
-		expectedCount int
-		checkHeaders  map[string]string
+		name           string
+		queryString    string
+		expectedCount  int
+		expectedLimit  *int
+		expectedOffset *int
+		expectedTotal  *int
 	}{
 		{
 			name:          "no query params",
@@ -912,19 +922,20 @@ func TestHandler_GetAll_QueryParams(t *testing.T) {
 			name:          "limit",
 			queryString:   "limit=2",
 			expectedCount: 2,
-			checkHeaders:  map[string]string{"X-Limit": "2"},
+			expectedLimit: intPtr(2),
 		},
 		{
-			name:          "offset",
-			queryString:   "offset=1&sort=Name",
-			expectedCount: 2,
-			checkHeaders:  map[string]string{"X-Offset": "1"},
+			name:           "offset",
+			queryString:    "offset=1&sort=Name",
+			expectedCount:  2,
+			expectedOffset: intPtr(1),
 		},
 		{
 			name:          "count",
 			queryString:   "count=true&limit=1",
 			expectedCount: 1,
-			checkHeaders:  map[string]string{"X-Total-Count": "3"},
+			expectedLimit: intPtr(1),
+			expectedTotal: intPtr(3),
 		},
 	}
 
@@ -948,25 +959,51 @@ func TestHandler_GetAll_QueryParams(t *testing.T) {
 				return
 			}
 
-			var results []TestUser
-			if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+			var envelope handler.ListResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 				t.Fatal("Failed to unmarshal response:", err)
 			}
 
-			if len(results) != tt.expectedCount {
-				t.Errorf("Expected %d results, got %d", tt.expectedCount, len(results))
+			items, ok := envelope.Data.([]interface{})
+			if !ok {
+				t.Fatalf("Expected data to be an array, got %T", envelope.Data)
+			}
+			if len(items) != tt.expectedCount {
+				t.Errorf("Expected %d results, got %d", tt.expectedCount, len(items))
 			}
 
-			// Check headers if specified
-			for header, expected := range tt.checkHeaders {
-				actual := w.Header().Get(header)
-				if actual != expected {
-					t.Errorf("Expected header %s=%s, got %s", header, expected, actual)
+			if tt.expectedLimit != nil || tt.expectedOffset != nil || tt.expectedTotal != nil {
+				if envelope.Pagination == nil {
+					t.Fatal("Expected pagination to be present")
+				}
+				if tt.expectedLimit != nil {
+					if envelope.Pagination.Limit == nil || *envelope.Pagination.Limit != *tt.expectedLimit {
+						t.Errorf("Expected limit=%d, got %v", *tt.expectedLimit, envelope.Pagination.Limit)
+					}
+				}
+				if tt.expectedOffset != nil {
+					if envelope.Pagination.Offset == nil || *envelope.Pagination.Offset != *tt.expectedOffset {
+						t.Errorf("Expected offset=%d, got %v", *tt.expectedOffset, envelope.Pagination.Offset)
+					}
+				}
+				if tt.expectedTotal != nil {
+					if envelope.Pagination.TotalCount == nil || *envelope.Pagination.TotalCount != *tt.expectedTotal {
+						t.Errorf("Expected total_count=%d, got %v", *tt.expectedTotal, envelope.Pagination.TotalCount)
+					}
+				}
+			}
+
+			// Pagination headers should NOT be set
+			for _, h := range []string{"X-Total-Count", "X-Limit", "X-Offset"} {
+				if v := w.Header().Get(h); v != "" {
+					t.Errorf("Header %s should not be set, got %s", h, v)
 				}
 			}
 		})
 	}
 }
+
+func intPtr(i int) *int { return &i }
 
 // TestHandler_GetAll_FilterOperators tests filter operator parsing (filter[field][op]=value)
 func TestHandler_GetAll_FilterOperators(t *testing.T) {
@@ -1063,20 +1100,28 @@ func TestHandler_GetAll_FilterOperators(t *testing.T) {
 				return
 			}
 
-			var results []TestUser
-			if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+			var envelope handler.ListResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 				t.Fatal("Failed to unmarshal response:", err)
 			}
 
-			if len(results) != tt.expectedCount {
-				t.Errorf("Expected %d results, got %d", tt.expectedCount, len(results))
+			items, ok := envelope.Data.([]interface{})
+			if !ok {
+				t.Fatalf("Expected data to be an array, got %T", envelope.Data)
+			}
+
+			if len(items) != tt.expectedCount {
+				t.Errorf("Expected %d results, got %d", tt.expectedCount, len(items))
 			}
 
 			// Check specific names if provided
 			if len(tt.checkNames) > 0 {
 				names := make(map[string]bool)
-				for _, r := range results {
-					names[r.Name] = true
+				for _, item := range items {
+					m, _ := item.(map[string]interface{})
+					if name, ok := m["name"].(string); ok {
+						names[name] = true
+					}
 				}
 				for _, expected := range tt.checkNames {
 					if !names[expected] {
@@ -1972,11 +2017,11 @@ func TestCustomGetAll(t *testing.T) {
 	}()
 
 	// Custom function that filters to only return users with ID > 201
-	customGetAll := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
+	customGetAll := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, *metadata.CursorInfo, error) {
 		// Get all, then filter
-		all, _, _, err := svc.GetAll(ctx)
+		all, _, _, _, err := svc.GetAll(ctx)
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, 0, nil, nil, err
 		}
 		var filtered []*TestUser
 		for _, u := range all {
@@ -1984,7 +2029,7 @@ func TestCustomGetAll(t *testing.T) {
 				filtered = append(filtered, u)
 			}
 		}
-		return filtered, len(filtered), nil, nil
+		return filtered, len(filtered), nil, nil, nil
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
@@ -1999,14 +2044,19 @@ func TestCustomGetAll(t *testing.T) {
 		return
 	}
 
-	var result []*TestUser
-	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+	var envelope handler.ListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
+	items, ok := envelope.Data.([]interface{})
+	if !ok {
+		t.Fatalf("Expected data to be an array, got %T", envelope.Data)
+	}
+
 	// Should only have users 202 and 203
-	if len(result) != 2 {
-		t.Errorf("Expected 2 users, got %d", len(result))
+	if len(items) != 2 {
+		t.Errorf("Expected 2 users, got %d", len(items))
 	}
 }
 
@@ -2026,6 +2076,7 @@ var testFileMeta = &metadata.TypeMetadata{
 	PKField:        "ID",
 	ModelType:      reflect.TypeOf(TestFileModel{}),
 	IsFileResource: true,
+	MaxUploadSize:  metadata.DefaultMaxUploadSize,
 }
 
 // mockFileStorage is a mock implementation of FileStorage for testing
@@ -2387,7 +2438,7 @@ func TestDownload_WithContentLength(t *testing.T) {
 
 	// Check Content-Disposition header
 	contentDisposition := w.Header().Get("Content-Disposition")
-	if contentDisposition != `attachment; filename="test.txt"` {
+	if contentDisposition != `attachment; filename=test.txt` {
 		t.Errorf("Expected Content-Disposition header, got '%s'", contentDisposition)
 	}
 }
@@ -2628,6 +2679,94 @@ func TestCreate_MultipartFormParseError(t *testing.T) {
 	}
 }
 
+func TestCreate_MultipartFormExceedsMaxUploadSize(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	fileWriter, err := writer.CreateFormFile("file", "big-file.txt")
+	if err != nil {
+		t.Fatal("Failed to create form file:", err)
+	}
+	fileWriter.Write(bytes.Repeat([]byte("x"), 200))
+
+	metadataField, _ := writer.CreateFormField("metadata")
+	metadataField.Write([]byte(`{"name":"Big File"}`))
+	writer.Close()
+
+	smallUploadMeta := &metadata.TypeMetadata{
+		TypeID:         "test_file_model_id",
+		TypeName:       "TestFileModel",
+		TableName:      "test_file_models",
+		URLParamUUID:   "test_file_uuid",
+		PKField:        "ID",
+		ModelType:      reflect.TypeOf(TestFileModel{}),
+		IsFileResource: true,
+		MaxUploadSize:  100,
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/files", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, smallUploadMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Create(handler.StandardCreate[TestFileModel])(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d for upload exceeding MaxUploadSize, got %d: %s", http.StatusBadRequest, w.Code, w.Body.String())
+	}
+}
+
+func TestCreate_MultipartFormWithinMaxUploadSize(t *testing.T) {
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create test_file_models table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	fileWriter, err := writer.CreateFormFile("file", "small-file.txt")
+	if err != nil {
+		t.Fatal("Failed to create form file:", err)
+	}
+	fileWriter.Write([]byte("small"))
+
+	metadataField, _ := writer.CreateFormField("metadata")
+	metadataField.Write([]byte(`{"name":"Small File"}`))
+	writer.Close()
+
+	uploadMeta := &metadata.TypeMetadata{
+		TypeID:         "test_file_model_id",
+		TypeName:       "TestFileModel",
+		TableName:      "test_file_models",
+		URLParamUUID:   "test_file_uuid",
+		PKField:        "ID",
+		ModelType:      reflect.TypeOf(TestFileModel{}),
+		IsFileResource: true,
+		MaxUploadSize:  1 << 20,
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/files", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, uploadMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Create(handler.StandardCreate[TestFileModel])(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("Expected status %d for upload within MaxUploadSize, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
+	}
+}
+
 func TestStandardCreate_CleansUpFileOnDBError(t *testing.T) {
 	// Create table
 	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
@@ -2699,7 +2838,7 @@ type TestSumProduct struct {
 	InStock       bool    `bun:"in_stock,notnull" json:"in_stock"`
 }
 
-func TestHandler_GetAll_SumHeaders(t *testing.T) {
+func TestHandler_GetAll_Sums(t *testing.T) {
 	// Setup: create sum_products table
 	db, _ := datastore.Get()
 	_, err := db.GetDB().NewCreateTable().Model((*TestSumProduct)(nil)).IfNotExists().Exec(context.Background())
@@ -2740,68 +2879,51 @@ func TestHandler_GetAll_SumHeaders(t *testing.T) {
 	}
 
 	tests := []struct {
-		name            string
-		queryString     string
-		expectedHeaders map[string]string
+		name          string
+		queryString   string
+		expectedSums  map[string]float64
+		expectedTotal *int
 	}{
 		{
-			name:        "single integer sum",
-			queryString: "sum=Price",
-			expectedHeaders: map[string]string{
-				"X-Sum-Price": "180", // 100 + 50 + 30
-			},
+			name:         "single integer sum",
+			queryString:  "sum=Price",
+			expectedSums: map[string]float64{"Price": 180},
 		},
 		{
-			name:        "single float sum",
-			queryString: "sum=Rating",
-			expectedHeaders: map[string]string{
-				"X-Sum-Rating": "12.5", // 4.5 + 3.8 + 4.2
-			},
+			name:         "single float sum",
+			queryString:  "sum=Rating",
+			expectedSums: map[string]float64{"Rating": 12.5},
 		},
 		{
-			name:        "multiple sums",
-			queryString: "sum=Price,Rating",
-			expectedHeaders: map[string]string{
-				"X-Sum-Price":  "180",
-				"X-Sum-Rating": "12.5",
-			},
+			name:         "multiple sums",
+			queryString:  "sum=Price,Rating",
+			expectedSums: map[string]float64{"Price": 180, "Rating": 12.5},
 		},
 		{
-			name:        "non-numeric field returns 0",
-			queryString: "sum=Name",
-			expectedHeaders: map[string]string{
-				"X-Sum-Name": "0",
-			},
+			name:         "non-numeric field returns 0",
+			queryString:  "sum=Name",
+			expectedSums: map[string]float64{"Name": 0},
 		},
 		{
-			name:        "bool field sums true values",
-			queryString: "sum=InStock",
-			expectedHeaders: map[string]string{
-				"X-Sum-InStock": "2", // Apple=true(1) + Banana=true(1) + Carrot=false(0) = 2
-			},
+			name:         "bool field sums true values",
+			queryString:  "sum=InStock",
+			expectedSums: map[string]float64{"InStock": 2},
 		},
 		{
-			name:        "mixed valid and invalid",
-			queryString: "sum=Price,Name",
-			expectedHeaders: map[string]string{
-				"X-Sum-Price": "180",
-				"X-Sum-Name":  "0",
-			},
+			name:         "mixed valid and invalid",
+			queryString:  "sum=Price,Name",
+			expectedSums: map[string]float64{"Price": 180, "Name": 0},
 		},
 		{
-			name:        "sum with count combined",
-			queryString: "sum=Price&count=true",
-			expectedHeaders: map[string]string{
-				"X-Sum-Price":   "180",
-				"X-Total-Count": "3",
-			},
+			name:          "sum with count combined",
+			queryString:   "sum=Price&count=true",
+			expectedSums:  map[string]float64{"Price": 180},
+			expectedTotal: intPtr(3),
 		},
 		{
-			name:        "sum with filter",
-			queryString: "sum=Price&filter[InStock]=true",
-			expectedHeaders: map[string]string{
-				"X-Sum-Price": "150", // Only Apple(100) + Banana(50)
-			},
+			name:         "sum with filter",
+			queryString:  "sum=Price&filter[InStock]=true",
+			expectedSums: map[string]float64{"Price": 150},
 		},
 	}
 
@@ -2825,11 +2947,34 @@ func TestHandler_GetAll_SumHeaders(t *testing.T) {
 				return
 			}
 
-			// Check expected headers
-			for header, expected := range tt.expectedHeaders {
-				actual := w.Header().Get(header)
+			var envelope handler.ListResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+				t.Fatal("Failed to unmarshal response:", err)
+			}
+
+			for field, expected := range tt.expectedSums {
+				actual, ok := envelope.Sums[field]
+				if !ok {
+					t.Errorf("Expected sum for %s, not found in envelope", field)
+					continue
+				}
 				if actual != expected {
-					t.Errorf("Expected header %s=%s, got %s", header, expected, actual)
+					t.Errorf("Expected sum %s=%v, got %v", field, expected, actual)
+				}
+			}
+
+			if tt.expectedTotal != nil {
+				if envelope.Pagination == nil || envelope.Pagination.TotalCount == nil {
+					t.Errorf("Expected total_count=%d, but pagination is nil", *tt.expectedTotal)
+				} else if *envelope.Pagination.TotalCount != *tt.expectedTotal {
+					t.Errorf("Expected total_count=%d, got %d", *tt.expectedTotal, *envelope.Pagination.TotalCount)
+				}
+			}
+
+			// Sum headers should NOT be set
+			for field := range tt.expectedSums {
+				if h := w.Header().Get("X-Sum-" + field); h != "" {
+					t.Errorf("X-Sum-%s header should not be set, got %s", field, h)
 				}
 			}
 		})
@@ -2845,34 +2990,34 @@ func TestHandler_GetAll_ErrorPaths(t *testing.T) {
 	}{
 		{
 			name: "context canceled",
-			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
-				return nil, 0, nil, context.Canceled
+			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, *metadata.CursorInfo, error) {
+				return nil, 0, nil, nil, context.Canceled
 			},
 			expectedCode: http.StatusOK, // No response written when context is canceled
 		},
 		{
 			name: "context deadline exceeded",
-			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
-				return nil, 0, nil, context.DeadlineExceeded
+			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, *metadata.CursorInfo, error) {
+				return nil, 0, nil, nil, context.DeadlineExceeded
 			},
 			expectedCode: http.StatusGatewayTimeout,
-			expectedBody: "request timeout",
+			expectedBody: "Gateway Timeout",
 		},
 		{
 			name: "service unavailable",
-			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
-				return nil, 0, nil, apperrors.ErrUnavailable
+			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, *metadata.CursorInfo, error) {
+				return nil, 0, nil, nil, apperrors.ErrUnavailable
 			},
 			expectedCode: http.StatusServiceUnavailable,
-			expectedBody: "service temporarily unavailable",
+			expectedBody: "Service Unavailable",
 		},
 		{
 			name: "generic error",
-			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, error) {
-				return nil, 0, nil, fmt.Errorf("some internal error")
+			getAllFunc: func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*TestUser, int, map[string]float64, *metadata.CursorInfo, error) {
+				return nil, 0, nil, nil, fmt.Errorf("some internal error")
 			},
 			expectedCode: http.StatusInternalServerError,
-			expectedBody: "internal server error",
+			expectedBody: "Internal Server Error",
 		},
 	}
 
@@ -2898,5 +3043,505 @@ func TestHandler_GetAll_ErrorPaths(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStandardDelete_FileResource_CleansUpFile(t *testing.T) {
+	_, err := testDB.GetDB().NewCreateTable().Model((*TestFileModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create table:", err)
+	}
+	defer testDB.GetDB().NewDropTable().Model((*TestFileModel)(nil)).IfExists().Exec(context.Background())
+
+	testFileStorage.files["delete-test-key"] = "file content"
+	defer delete(testFileStorage.files, "delete-test-key")
+
+	file := &TestFileModel{
+		Name: "deleteme.txt",
+	}
+	file.SetStorageKey("delete-test-key")
+	file.SetFilename("deleteme.txt")
+	file.SetContentType("text/plain")
+	file.SetSize(12)
+
+	_, err = testDB.GetDB().NewInsert().Model(file).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to insert file model:", err)
+	}
+
+	r := chi.NewRouter()
+	r.Use(withMeta(testFileMeta))
+	r.Delete("/files/{test_file_uuid}", handler.Delete[TestFileModel](handler.StandardDelete[TestFileModel]))
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/files/%d", file.ID), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("Expected %d, got %d: %s", http.StatusNoContent, w.Code, w.Body.String())
+	}
+
+	if _, exists := testFileStorage.files["delete-test-key"]; exists {
+		t.Error("Expected file to be deleted from storage")
+	}
+
+	count, err := testDB.GetDB().NewSelect().Model((*TestFileModel)(nil)).Where("id = ?", file.ID).Count(context.Background())
+	if err != nil {
+		t.Fatal("Failed to check existence:", err)
+	}
+	if count != 0 {
+		t.Error("Expected DB record to be deleted")
+	}
+}
+
+func TestStandardDelete_NonFileResource_Succeeds(t *testing.T) {
+	cleanTable(t)
+
+	user := &TestUser{Name: "Delete Me", Email: "deleteme@example.com"}
+	_, err := testDB.GetDB().NewInsert().Model(user).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to insert user:", err)
+	}
+
+	r := chi.NewRouter()
+	r.Use(withMeta(userMeta))
+	r.Delete("/users/{id}", handler.Delete[TestUser](handler.StandardDelete[TestUser]))
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/users/%d", user.ID), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("Expected %d, got %d: %s", http.StatusNoContent, w.Code, w.Body.String())
+	}
+
+	count, err := testDB.GetDB().NewSelect().Model((*TestUser)(nil)).Where("id = ?", user.ID).Count(context.Background())
+	if err != nil {
+		t.Fatal("Failed to check existence:", err)
+	}
+	if count != 0 {
+		t.Error("Expected user to be deleted")
+	}
+}
+
+func TestHandler_Patch(t *testing.T) {
+	tests := []struct {
+		name          string
+		setupUser     *TestUser
+		patchBody     string
+		requestID     string
+		expectedCode  int
+		expectedName  string
+		expectedEmail string
+	}{
+		{
+			name:          "patch name only preserves email",
+			setupUser:     &TestUser{Name: "Original", Email: "original@example.com"},
+			patchBody:     `{"name": "Patched"}`,
+			requestID:     "1",
+			expectedCode:  http.StatusOK,
+			expectedName:  "Patched",
+			expectedEmail: "original@example.com",
+		},
+		{
+			name:          "patch email only preserves name",
+			setupUser:     &TestUser{Name: "Original", Email: "original@example.com"},
+			patchBody:     `{"email": "patched@example.com"}`,
+			requestID:     "1",
+			expectedCode:  http.StatusOK,
+			expectedName:  "Original",
+			expectedEmail: "patched@example.com",
+		},
+		{
+			name:         "not found",
+			setupUser:    nil,
+			patchBody:    `{"name": "Patched"}`,
+			requestID:    "999",
+			expectedCode: http.StatusNotFound,
+		},
+		{
+			name:         "invalid json",
+			setupUser:    &TestUser{Name: "User", Email: "user@example.com"},
+			patchBody:    `invalid`,
+			requestID:    "1",
+			expectedCode: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cleanTable(t)
+
+			if tt.setupUser != nil {
+				db, _ := datastore.Get()
+				_, err := db.GetDB().NewInsert().Model(tt.setupUser).Returning("*").Exec(context.Background())
+				if err != nil {
+					t.Fatal("Failed to insert test user:", err)
+				}
+			}
+
+			r := chi.NewRouter()
+			r.Use(withMeta(userMeta))
+			r.Patch("/users/{id}", handler.Patch[TestUser](handler.StandardPatch[TestUser], handler.StandardGet[TestUser]))
+
+			req := httptest.NewRequest(http.MethodPatch, "/users/"+tt.requestID, bytes.NewReader([]byte(tt.patchBody)))
+			req.Header.Set("Content-Type", "application/json")
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != tt.expectedCode {
+				t.Errorf("Expected status %d, got %d: %s", tt.expectedCode, w.Code, w.Body.String())
+			}
+
+			if tt.expectedCode == http.StatusOK {
+				var result TestUser
+				if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+					t.Fatal("Failed to decode response:", err)
+				}
+
+				if result.Name != tt.expectedName {
+					t.Errorf("Expected name %q, got %q", tt.expectedName, result.Name)
+				}
+
+				if result.Email != tt.expectedEmail {
+					t.Errorf("Expected email %q, got %q", tt.expectedEmail, result.Email)
+				}
+			}
+		})
+	}
+}
+
+func TestCustomPatch(t *testing.T) {
+	cleanTable(t)
+
+	_, err := testDB.GetDB().NewInsert().Model(&TestUser{ID: 201, Name: "Original", Email: "original@test.com"}).Exec(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	defer testDB.GetDB().NewDelete().Model((*TestUser)(nil)).Where("id = 201").Exec(context.Background())
+
+	var capturedExisting *TestUser
+	var capturedPatched TestUser
+
+	customPatch := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, existing *TestUser, patched TestUser) (*TestUser, error) {
+		capturedExisting = existing
+		capturedPatched = patched
+		patched.Name += "-custom"
+		return svc.Update(ctx, id, patched)
+	}
+
+	body := []byte(`{"name": "Patched"}`)
+	req := httptest.NewRequest(http.MethodPatch, "/users/201", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(userMeta.URLParamUUID, "201")
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = ctxWithMeta(ctx, userMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.Patch[TestUser](customPatch, handler.StandardGet[TestUser])(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		return
+	}
+
+	if capturedExisting == nil {
+		t.Fatal("Expected existing to be non-nil")
+	}
+	if capturedExisting.Name != "Original" {
+		t.Errorf("Expected existing name 'Original', got %q", capturedExisting.Name)
+	}
+	if capturedExisting.Email != "original@test.com" {
+		t.Errorf("Expected existing email 'original@test.com', got %q", capturedExisting.Email)
+	}
+
+	if capturedPatched.Name != "Patched" {
+		t.Errorf("Expected patched name 'Patched', got %q", capturedPatched.Name)
+	}
+	if capturedPatched.Email != "original@test.com" {
+		t.Errorf("Expected patched email 'original@test.com', got %q", capturedPatched.Email)
+	}
+
+	var result TestUser
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if result.Name != "Patched-custom" {
+		t.Errorf("Expected name 'Patched-custom', got %q", result.Name)
+	}
+}
+
+func TestBatchPatch_FileResource_Returns501(t *testing.T) {
+	body := bytes.NewReader([]byte(`[{"id":1,"name":"test"}]`))
+	req := httptest.NewRequest(http.MethodPatch, "/files/batch", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.BatchPatch[TestFileModel](handler.StandardBatchPatch[TestFileModel])(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("Expected status %d for file resource batch patch, got %d: %s",
+			http.StatusNotImplemented, w.Code, w.Body.String())
+	}
+}
+
+func TestBatchCreate_FileResource_Returns501(t *testing.T) {
+	body := bytes.NewReader([]byte(`[{"name":"test"}]`))
+	req := httptest.NewRequest(http.MethodPost, "/files/batch", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.BatchCreate[TestFileModel](handler.StandardBatchCreate[TestFileModel])(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("Expected status %d for file resource batch create, got %d: %s",
+			http.StatusNotImplemented, w.Code, w.Body.String())
+	}
+}
+
+func TestBatchUpdate_FileResource_Returns501(t *testing.T) {
+	body := bytes.NewReader([]byte(`[{"id":1,"name":"test"}]`))
+	req := httptest.NewRequest(http.MethodPut, "/files/batch", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.BatchUpdate[TestFileModel](handler.StandardBatchUpdate[TestFileModel])(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("Expected status %d for file resource batch update, got %d: %s",
+			http.StatusNotImplemented, w.Code, w.Body.String())
+	}
+}
+
+func TestBatchDelete_FileResource_Returns501(t *testing.T) {
+	body := bytes.NewReader([]byte(`[{"id":1}]`))
+	req := httptest.NewRequest(http.MethodDelete, "/files/batch", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, metadata.MetadataKey, testFileMeta)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.BatchDelete[TestFileModel](handler.StandardBatchDelete[TestFileModel])(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("Expected status %d for file resource batch delete, got %d: %s",
+			http.StatusNotImplemented, w.Code, w.Body.String())
+	}
+}
+
+// ============================================================================
+// Issue #99: Include Counts Handler Integration Test
+// Tests the full handler → service → datastore flow for include_count
+// ============================================================================
+
+// TestHandlerPost is a child model with FK to users for include_count testing
+type TestHandlerPost struct {
+	bun.BaseModel `bun:"table:handler_posts"`
+	ID            int       `bun:"id,pk,autoincrement" json:"id"`
+	UserID        int       `bun:"user_id,notnull" json:"user_id"`
+	Title         string    `bun:"title,notnull" json:"title"`
+	CreatedAt     time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at,omitempty"`
+}
+
+func TestHandler_GetAll_IncludeCounts(t *testing.T) {
+	db, _ := datastore.Get()
+
+	_, err := db.GetDB().NewCreateTable().Model((*TestHandlerPost)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create handler_posts table:", err)
+	}
+	defer db.GetDB().NewDropTable().Model((*TestHandlerPost)(nil)).IfExists().Exec(context.Background())
+
+	cleanTable(t)
+	_, _ = db.GetDB().NewDelete().Model((*TestHandlerPost)(nil)).Where("1=1").Exec(context.Background())
+
+	// Create users
+	users := []TestUser{
+		{Name: "Alice", Email: "alice@example.com"},
+		{Name: "Bob", Email: "bob@example.com"},
+	}
+	for i := range users {
+		_, err := db.GetDB().NewInsert().Model(&users[i]).Returning("*").Exec(context.Background())
+		if err != nil {
+			t.Fatal("Failed to insert user:", err)
+		}
+	}
+
+	// Create posts: Alice=3, Bob=1
+	posts := []TestHandlerPost{
+		{UserID: users[0].ID, Title: "Alice Post 1"},
+		{UserID: users[0].ID, Title: "Alice Post 2"},
+		{UserID: users[0].ID, Title: "Alice Post 3"},
+		{UserID: users[1].ID, Title: "Bob Post 1"},
+	}
+	for _, p := range posts {
+		_, err := db.GetDB().NewInsert().Model(&p).Exec(context.Background())
+		if err != nil {
+			t.Fatal("Failed to insert post:", err)
+		}
+	}
+
+	postMeta := &metadata.TypeMetadata{
+		TypeID:        "test_handler_post",
+		TypeName:      "TestHandlerPost",
+		TableName:     "handler_posts",
+		URLParamUUID:  "postId",
+		PKField:       "ID",
+		ModelType:     reflect.TypeOf(TestHandlerPost{}),
+		ParentType:    reflect.TypeOf(TestUser{}),
+		ParentMeta:    userMeta,
+		ForeignKeyCol: "user_id",
+	}
+
+	countMeta := &metadata.TypeMetadata{
+		TypeID:           "test_user_id",
+		TypeName:         "TestUser",
+		TableName:        "users",
+		URLParamUUID:     "id",
+		PKField:          "ID",
+		ModelType:        reflect.TypeOf(TestUser{}),
+		FilterableFields: []string{"Name", "Email"},
+		SortableFields:   []string{"Name", "Email"},
+		ChildMeta: map[string]*metadata.TypeMetadata{
+			"Posts": postMeta,
+		},
+	}
+
+	r := chi.NewRouter()
+	r.Use(withMeta(countMeta))
+	r.Get("/users", handler.GetAll[TestUser](handler.StandardGetAll[TestUser]))
+
+	req := httptest.NewRequest(http.MethodGet, "/users?include_count=Posts", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var envelope handler.ListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatal("Failed to unmarshal response:", err)
+	}
+
+	if envelope.Counts == nil {
+		t.Fatal("Expected counts in response envelope")
+	}
+
+	postCounts, ok := envelope.Counts["Posts"]
+	if !ok {
+		t.Fatal("Expected Posts in counts")
+	}
+
+	aliceID := strconv.Itoa(users[0].ID)
+	bobID := strconv.Itoa(users[1].ID)
+
+	if postCounts[aliceID] != 3 {
+		t.Errorf("Expected Alice to have 3 posts, got %d", postCounts[aliceID])
+	}
+	if postCounts[bobID] != 1 {
+		t.Errorf("Expected Bob to have 1 post, got %d", postCounts[bobID])
+	}
+}
+
+func TestHandler_GetAll_IncludeCounts_NoAuth(t *testing.T) {
+	db, _ := datastore.Get()
+
+	_, err := db.GetDB().NewCreateTable().Model((*TestHandlerPost)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create handler_posts table:", err)
+	}
+	defer db.GetDB().NewDropTable().Model((*TestHandlerPost)(nil)).IfExists().Exec(context.Background())
+
+	cleanTable(t)
+	_, _ = db.GetDB().NewDelete().Model((*TestHandlerPost)(nil)).Where("1=1").Exec(context.Background())
+
+	user := TestUser{Name: "Alice", Email: "alice@example.com"}
+	_, err = db.GetDB().NewInsert().Model(&user).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to insert user:", err)
+	}
+
+	post := TestHandlerPost{UserID: user.ID, Title: "Post 1"}
+	_, err = db.GetDB().NewInsert().Model(&post).Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to insert post:", err)
+	}
+
+	postMeta := &metadata.TypeMetadata{
+		TypeID:        "test_handler_post",
+		TypeName:      "TestHandlerPost",
+		TableName:     "handler_posts",
+		URLParamUUID:  "postId",
+		PKField:       "ID",
+		ModelType:     reflect.TypeOf(TestHandlerPost{}),
+		ParentType:    reflect.TypeOf(TestUser{}),
+		ForeignKeyCol: "user_id",
+	}
+
+	countMeta := &metadata.TypeMetadata{
+		TypeID:       "test_user_id",
+		TypeName:     "TestUser",
+		TableName:    "users",
+		URLParamUUID: "id",
+		PKField:      "ID",
+		ModelType:    reflect.TypeOf(TestUser{}),
+		ChildMeta: map[string]*metadata.TypeMetadata{
+			"Posts": postMeta,
+		},
+	}
+
+	// Auth configured but Posts NOT authorized — counts should be empty
+	withMetaAndAuth := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), metadata.MetadataKey, countMeta)
+			opts := metadata.ParseQueryOptions(r.URL.Query())
+			ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+			ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Other": false})
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+
+	r := chi.NewRouter()
+	r.Use(withMetaAndAuth)
+	r.Get("/users", handler.GetAll[TestUser](handler.StandardGetAll[TestUser]))
+
+	req := httptest.NewRequest(http.MethodGet, "/users?include_count=Posts", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var envelope handler.ListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatal("Failed to unmarshal response:", err)
+	}
+
+	if envelope.Counts != nil {
+		t.Errorf("Expected no counts (Posts not authorized), got %v", envelope.Counts)
 	}
 }

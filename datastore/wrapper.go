@@ -16,6 +16,7 @@ import (
 	"github.com/uptrace/bun/schema"
 
 	apperrors "github.com/sjgoldie/go-restgen/errors"
+	"github.com/sjgoldie/go-restgen/internal/common"
 	"github.com/sjgoldie/go-restgen/metadata"
 )
 
@@ -32,6 +33,17 @@ var (
 		metadata.OpLike: "LIKE", metadata.OpIn: "IN", metadata.OpNin: "NOT IN",
 		metadata.OpBt: "BETWEEN", metadata.OpNbt: "NOT BETWEEN",
 	}
+	relationOps = map[string]bool{
+		metadata.OpExists:  true,
+		metadata.OpCountEq: true, metadata.OpCountNeq: true,
+		metadata.OpCountGt: true, metadata.OpCountGte: true,
+		metadata.OpCountLt: true, metadata.OpCountLte: true,
+	}
+	countFilterOps = map[string]string{
+		metadata.OpCountEq: "=", metadata.OpCountNeq: "!=",
+		metadata.OpCountGt: ">", metadata.OpCountGte: ">=",
+		metadata.OpCountLt: "<", metadata.OpCountLte: "<=",
+	}
 )
 
 // Wrapper is a generic struct that wraps a Store interface to provide CRUD operations
@@ -45,11 +57,37 @@ type preFetchResult[T any] struct {
 	existingItems []*T
 }
 
+// defaultParentJoinCol returns the parent join column, defaulting to "id" if empty.
+func defaultParentJoinCol(col string) string {
+	if col == "" {
+		return "id"
+	}
+	return col
+}
+
+// derefType unwraps a pointer type to its element type.
+func derefType(t reflect.Type) reflect.Type {
+	if t.Kind() == reflect.Ptr {
+		return t.Elem()
+	}
+	return t
+}
+
+// isRelationAuthorized checks if a relation path is authorized in AllowedIncludes.
+// Returns true if allowedIncludes is nil (no auth configured) or the path is explicitly authorized.
+func isRelationAuthorized(allowedIncludes metadata.AllowedIncludes, relPath string) bool {
+	if allowedIncludes == nil {
+		return true
+	}
+	_, authorized := allowedIncludes[relPath]
+	return authorized
+}
+
 // GetAll retrieves all items of type T from the datastore
 // Filters from context are applied automatically
 // Relations can be loaded via ?include= query parameter (parsed into QueryOptions.Include)
-// Returns items, total count (0 if not requested), sums (nil if not requested), and error
-func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64, error) {
+// Returns items, total count (0 if not requested), sums (nil if not requested), cursor info (nil if not cursor mode), and error
+func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64, *metadata.CursorInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -59,25 +97,25 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64,
 	// Get metadata from context
 	meta, err := metadata.FromContext(ctx)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 
 	// Apply parent filters and JOINs from metadata
 	query, err = w.applyParentFiltersWithMeta(ctx, query, meta)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 
 	// Apply ownership filter for type T
 	query, err = w.applyOwnershipFilterWithMeta(ctx, query, meta)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 
 	// Apply tenant filter
 	query, err = w.applyTenantFilter(ctx, query, meta)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 
 	// Get query options from context (optional)
@@ -92,15 +130,27 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64,
 	if opts != nil && (opts.CountTotal || len(opts.Sums) > 0) {
 		totalCount, sums, err = w.computeAggregates(ctx, query, opts, meta)
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, 0, nil, nil, err
 		}
 	}
 
 	// Apply sorting from query options (or default sort)
 	query = w.applyQuerySorting(query, opts, meta)
 
-	// Apply pagination AFTER aggregates
-	query = w.applyQueryPagination(query, opts, meta)
+	// Determine if cursor pagination is active
+	cursorMode := meta.Pagination == metadata.CursorPagination &&
+		(opts == nil || (opts.After != "" || opts.Before != "" || opts.Offset == 0))
+
+	// Apply cursor WHERE clause for keyset pagination
+	if cursorMode && opts != nil {
+		query, err = w.applyCursorWhere(query, opts, meta)
+		if err != nil {
+			return nil, 0, nil, nil, err
+		}
+	}
+
+	// Apply pagination AFTER aggregates (uses N+1 for cursor mode)
+	requestedLimit := w.applyQueryPagination(query, opts, meta)
 
 	// Apply relation includes from query options
 	query = w.applyRelationIncludes(ctx, query, opts, meta)
@@ -108,16 +158,31 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64,
 	if err := query.Scan(ctx); err != nil {
 		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, 0, nil, err
+			return nil, 0, nil, nil, err
 		}
 		// Check for connection issues
 		if errors.Is(err, sql.ErrConnDone) {
-			return nil, 0, nil, apperrors.ErrUnavailable
+			return nil, 0, nil, nil, apperrors.ErrUnavailable
 		}
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 
-	return items, totalCount, sums, nil
+	// Build cursor info for cursor pagination
+	var cursorInfo *metadata.CursorInfo
+	if cursorMode && requestedLimit > 0 {
+		cursorInfo = w.buildCursorInfo(items, opts, meta, requestedLimit)
+		// Trim N+1 extra item
+		if len(items) > requestedLimit {
+			items = items[:requestedLimit]
+		}
+	}
+
+	// For backward pagination, reverse the results to restore natural order
+	if cursorMode && opts != nil && opts.Before != "" {
+		slices.Reverse(items)
+	}
+
+	return items, totalCount, sums, cursorInfo, nil
 }
 
 // Get retrieves a single item of type T by ID from the datastore
@@ -215,32 +280,10 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 	}
 
 	if err != nil {
-		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
-		// Check for connection issues
-		if errors.Is(err, sql.ErrConnDone) {
-			return nil, apperrors.ErrUnavailable
-		}
-		// Check for constraint violations
-		var pgErr pgdriver.Error
-		if errors.As(err, &pgErr) {
-			switch pgErr.Field('C') {
-			case "23505": // unique_violation
-				return nil, apperrors.ErrDuplicate
-			case "23503": // foreign_key_violation
-				return nil, apperrors.ErrInvalidReference
-			}
-		}
-		// SQLite constraint violations
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return nil, apperrors.ErrDuplicate
-		}
-		if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
-			return nil, apperrors.ErrInvalidReference
-		}
-		return nil, err
+		return nil, w.translateError(err)
 	}
 
 	return &item, nil
@@ -249,6 +292,18 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 // Update updates an existing item of type T in the datastore
 // The id parameter is a string to support both integer and UUID primary keys
 func (w *Wrapper[T]) Update(ctx context.Context, id string, item T) (*T, error) {
+	return w.updateWithOp(ctx, id, item, metadata.OpUpdate)
+}
+
+// Patch partially updates an existing item of type T in the datastore.
+// Identical to Update but passes OpPatch to validators and auditors
+// so they can distinguish partial updates from full replacements.
+func (w *Wrapper[T]) Patch(ctx context.Context, id string, item T) (*T, error) {
+	return w.updateWithOp(ctx, id, item, metadata.OpPatch)
+}
+
+// updateWithOp is the shared implementation for Update and Patch.
+func (w *Wrapper[T]) updateWithOp(ctx context.Context, id string, item T, op metadata.Operation) (*T, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -271,7 +326,7 @@ func (w *Wrapper[T]) Update(ctx context.Context, id string, item T) (*T, error) 
 	}
 
 	// Run custom validation with old and new values
-	if err := w.runValidation(ctx, meta, metadata.OpUpdate, existing, &item); err != nil {
+	if err := w.runValidation(ctx, meta, op, existing, &item); err != nil {
 		return nil, err
 	}
 
@@ -284,7 +339,7 @@ func (w *Wrapper[T]) Update(ctx context.Context, id string, item T) (*T, error) 
 				return err
 			}
 			// Run audit with old and new values
-			return w.runAudit(ctx, tx, meta, metadata.OpUpdate, existing, &item)
+			return w.runAudit(ctx, tx, meta, op, existing, &item)
 		})
 	} else {
 		// No audit, just update directly
@@ -292,27 +347,10 @@ func (w *Wrapper[T]) Update(ctx context.Context, id string, item T) (*T, error) 
 	}
 
 	if err != nil {
-		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
-		// Check for connection issues
-		if errors.Is(err, sql.ErrConnDone) {
-			return nil, apperrors.ErrUnavailable
-		}
-		// Check for not found
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, apperrors.ErrNotFound
-		}
-		// Check for foreign key violations
-		var pgErr pgdriver.Error
-		if errors.As(err, &pgErr) && pgErr.Field('C') == "23503" {
-			return nil, apperrors.ErrInvalidReference
-		}
-		if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
-			return nil, apperrors.ErrInvalidReference
-		}
-		return nil, err
+		return nil, w.translateError(err)
 	}
 
 	return &item, nil
@@ -363,15 +401,10 @@ func (w *Wrapper[T]) Delete(ctx context.Context, id string) error {
 	}
 
 	if err != nil {
-		// Pass through context errors unchanged
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
-		// Check for connection issues
-		if errors.Is(err, sql.ErrConnDone) {
-			return apperrors.ErrUnavailable
-		}
-		return err
+		return w.translateError(err)
 	}
 
 	// Check if any rows were affected
@@ -543,15 +576,11 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 
 	// Walk up the chain using ParentMeta pointers
 	for parentMeta != nil {
-		parentJoinCol := childMeta.ParentJoinCol
-		if parentJoinCol == "" {
-			parentJoinCol = "id"
-		}
 		joins = append(joins, joinInfo{
 			childType:     childMeta.ModelType,
 			childTable:    childMeta.TableName,
 			childFKCol:    childMeta.ForeignKeyCol,
-			parentJoinCol: parentJoinCol,
+			parentJoinCol: defaultParentJoinCol(childMeta.ParentJoinCol),
 			parentTable:   parentMeta.TableName,
 			parentURLUUID: parentMeta.URLParamUUID,
 			parentMeta:    parentMeta,
@@ -593,37 +622,24 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 			// Child is the base model, use ?TableAlias
 			if fkOnChild {
 				// Normal case: child.FK = parent.joinCol
-				query = query.Join("JOIN ? ON ?TableAlias.? = ?.?",
-					bun.Ident(join.parentTable),
-					bun.Ident(join.childFKCol),
-					bun.Ident(join.parentTable), bun.Ident(join.parentJoinCol))
+				query = query.Join("JOIN ? ON ?TableAlias.? = ?.?", bun.Ident(join.parentTable), bun.Ident(join.childFKCol), bun.Ident(join.parentTable), bun.Ident(join.parentJoinCol))
 			} else {
 				// Inverted case: parent.FK = child.joinCol
-				query = query.Join("JOIN ? ON ?.? = ?TableAlias.?",
-					bun.Ident(join.parentTable),
-					bun.Ident(join.parentTable), bun.Ident(join.childFKCol),
-					bun.Ident(join.parentJoinCol))
+				query = query.Join("JOIN ? ON ?.? = ?TableAlias.?", bun.Ident(join.parentTable), bun.Ident(join.parentTable), bun.Ident(join.childFKCol), bun.Ident(join.parentJoinCol))
 			}
 		} else {
 			// Child is a previously joined table, use table name
 			if fkOnChild {
 				// Normal case: child.FK = parent.joinCol
-				query = query.Join("JOIN ? ON ?.? = ?.?",
-					bun.Ident(join.parentTable),
-					bun.Ident(join.childTable), bun.Ident(join.childFKCol),
-					bun.Ident(join.parentTable), bun.Ident(join.parentJoinCol))
+				query = query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(join.parentTable), bun.Ident(join.childTable), bun.Ident(join.childFKCol), bun.Ident(join.parentTable), bun.Ident(join.parentJoinCol))
 			} else {
 				// Inverted case: parent.FK = child.joinCol
-				query = query.Join("JOIN ? ON ?.? = ?.?",
-					bun.Ident(join.parentTable),
-					bun.Ident(join.parentTable), bun.Ident(join.childFKCol),
-					bun.Ident(join.childTable), bun.Ident(join.parentJoinCol))
+				query = query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(join.parentTable), bun.Ident(join.parentTable), bun.Ident(join.childFKCol), bun.Ident(join.childTable), bun.Ident(join.parentJoinCol))
 			}
 		}
 
 		// WHERE parent_table.id = ?
-		query = query.Where("?.? = ?",
-			bun.Ident(join.parentTable), bun.Ident("id"), parentID)
+		query = query.Where("?.? = ?", bun.Ident(join.parentTable), bun.Ident("id"), parentID)
 
 		// Issue #28 fix: Apply ownership filter for this parent if needed
 		if slices.Contains(parentsNeedingOwnership, join.parentMeta) && ownershipUserID != "" {
@@ -645,16 +661,12 @@ func (w *Wrapper[T]) applyParentOwnershipFilter(query *bun.SelectQuery, parentMe
 		return query
 	}
 
-	// Get the parent type for column name lookup
-	parentType := parentMeta.ModelType
-	if parentType.Kind() == reflect.Ptr {
-		parentType = parentType.Elem()
-	}
+	parentType := derefType(parentMeta.ModelType)
 
 	// Build WHERE clause for ownership: parent_table.ownership_field = userID
 	// For multiple fields, use OR logic (same as applyOwnershipFilterWithMeta)
 	for i, fieldName := range parentMeta.OwnershipFields {
-		colName, err := w.columnFromGoName(parentType, fieldName)
+		colName, err := ColumnName(parentType, fieldName)
 		if err != nil {
 			continue
 		}
@@ -703,17 +715,13 @@ func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bu
 		}
 	}
 
-	// Get the model type for column name lookup
-	itemType := meta.ModelType
-	if itemType.Kind() == reflect.Ptr {
-		itemType = itemType.Elem()
-	}
+	itemType := derefType(meta.ModelType)
 
 	// Build OR conditions: WHERE (field1 = ? OR field2 = ? OR ...)
 	// Use ?TableAlias to properly qualify columns when JOINs are present
 	if len(meta.OwnershipFields) == 1 {
 		// Single field - simple WHERE clause
-		colName, err := w.columnFromGoName(itemType, meta.OwnershipFields[0])
+		colName, err := ColumnName(itemType, meta.OwnershipFields[0])
 		if err != nil {
 			return nil, fmt.Errorf("failed to get column name for ownership field: %w", err)
 		}
@@ -721,7 +729,7 @@ func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bu
 	} else {
 		// Multiple fields - OR logic
 		for i, fieldName := range meta.OwnershipFields {
-			colName, err := w.columnFromGoName(itemType, fieldName)
+			colName, err := ColumnName(itemType, fieldName)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get column name for ownership field: %w", err)
 			}
@@ -778,17 +786,6 @@ func (w *Wrapper[T]) setOwnershipField(ctx context.Context, item *T) error {
 	return nil
 }
 
-// columnFromGoName resolves a Go field name to its SQL column name using Bun's schema.
-func (w *Wrapper[T]) columnFromGoName(tType reflect.Type, fieldName string) (string, error) {
-	table := w.Store.GetDB().Table(tType)
-	for _, field := range table.Fields {
-		if field.GoName == fieldName {
-			return field.Name, nil
-		}
-	}
-	return "", fmt.Errorf("field %s not found on type %s", fieldName, tType.Name())
-}
-
 // applyTenantFilter applies tenant scoping to a query if enforced in context.
 // For IsTenantTable types, filters by PK = tenantID.
 // For WithTenantScope types, filters by tenant_field = tenantID.
@@ -815,11 +812,7 @@ func (w *Wrapper[T]) applyTenantFilter(ctx context.Context, query *bun.SelectQue
 		query = query.Where("?TableAlias.? = ?", bun.Ident("id"), tenantID)
 	} else {
 		// WithTenantScope: filter by the named tenant field
-		itemType := meta.ModelType
-		if itemType.Kind() == reflect.Ptr {
-			itemType = itemType.Elem()
-		}
-		colName, err := w.columnFromGoName(itemType, meta.TenantField)
+		colName, err := ColumnName(derefType(meta.ModelType), meta.TenantField)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get column name for tenant field: %w", err)
 		}
@@ -835,12 +828,7 @@ func (w *Wrapper[T]) applyParentTenantFilter(query *bun.SelectQuery, parentMeta 
 		return query
 	}
 
-	parentType := parentMeta.ModelType
-	if parentType.Kind() == reflect.Ptr {
-		parentType = parentType.Elem()
-	}
-
-	colName, err := w.columnFromGoName(parentType, parentMeta.TenantField)
+	colName, err := ColumnName(derefType(parentMeta.ModelType), parentMeta.TenantField)
 	if err != nil {
 		return query
 	}
@@ -996,7 +984,7 @@ func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQue
 			}
 
 			// Get column name
-			colName, err := w.columnFromGoName(meta.ModelType, field)
+			colName, err := ColumnName(meta.ModelType, field)
 			if err != nil {
 				slog.WarnContext(ctx, "sum requested for field with invalid column mapping", "field", field, "type", meta.TypeName, "error", err)
 				continue
@@ -1012,22 +1000,16 @@ func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQue
 
 	switch {
 	case hasCount && hasSums:
-		// Both count and sums - combine into one query
-		selectParts := []string{"COUNT(*) AS count"}
+		aggQuery = aggQuery.ColumnExpr("COUNT(*) AS count")
 		for field, colName := range validSumFields {
-			selectParts = append(selectParts, fmt.Sprintf("COALESCE(SUM(%s), 0) AS sum_%s", colName, field))
+			aggQuery = aggQuery.ColumnExpr("COALESCE(SUM(?), 0) AS ?", bun.Ident(colName), bun.Ident("sum_"+field))
 		}
-		aggQuery = aggQuery.ColumnExpr(strings.Join(selectParts, ", "))
 	case hasCount:
-		// Count only
 		aggQuery = aggQuery.ColumnExpr("COUNT(*) AS count")
 	case hasSums:
-		// Sums only
-		selectParts := []string{}
 		for field, colName := range validSumFields {
-			selectParts = append(selectParts, fmt.Sprintf("COALESCE(SUM(%s), 0) AS sum_%s", colName, field))
+			aggQuery = aggQuery.ColumnExpr("COALESCE(SUM(?), 0) AS ?", bun.Ident(colName), bun.Ident("sum_"+field))
 		}
-		aggQuery = aggQuery.ColumnExpr(strings.Join(selectParts, ", "))
 	default:
 		// No valid aggregates - return early
 		return 0, sums, nil
@@ -1078,6 +1060,7 @@ func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQue
 // applyQueryFilters applies filters from QueryOptions to the query
 // Only fields in metadata.FilterableFields are allowed (others silently ignored)
 // Supports relation paths like "Account.Status" or "Account.User.Email"
+// Supports relation-level operators: exists, count_eq, count_neq, count_gt, count_gte, count_lt, count_lte
 //
 // Single-value operators (eq, neq, gt, gte, lt, lte, like): use first value if multiple provided
 // Multi-value operators (in, nin): use all values
@@ -1087,14 +1070,25 @@ func (w *Wrapper[T]) applyQueryFilters(ctx context.Context, query *bun.SelectQue
 		return query
 	}
 
+	allowedIncludes := metadata.AllowedIncludesFromContext(ctx)
+
 	for field, filter := range opts.Filters {
+		// Relation-level operators (exists, count_*) — the entire field key is a relation path
+		if relationOps[filter.Operator] {
+			query = w.applyRelationFilter(ctx, query, meta, field, filter, allowedIncludes)
+			continue
+		}
+
 		path := parseRelationPath(field)
 
-		// Relation path filter
+		// Relation path filter (child or parent field)
 		if len(path.relations) > 0 {
 			firstRel := path.relations[0]
 			if meta.ChildMeta != nil {
 				if _, isChild := meta.ChildMeta[firstRel]; isChild {
+					if !isRelationAuthorized(allowedIncludes, strings.Join(path.relations, ".")) {
+						continue
+					}
 					query = w.applyChildFieldFilter(ctx, query, meta, path, filter)
 					continue
 				}
@@ -1108,7 +1102,7 @@ func (w *Wrapper[T]) applyQueryFilters(ctx context.Context, query *bun.SelectQue
 			continue
 		}
 
-		colName, err := w.columnFromGoName(meta.ModelType, field)
+		colName, err := ColumnName(meta.ModelType, field)
 		if err != nil {
 			continue
 		}
@@ -1160,26 +1154,37 @@ func applyFilter(query *bun.SelectQuery, tableName, colName, operator string, va
 
 	switch operator {
 	case metadata.OpIn:
-		return query.Where(tblCol+" IN (?)", append(args, bun.In(vals))...)
+		return query.Where(tblCol+" IN (?)", append(args, bun.List(vals))...)
 	case metadata.OpNin:
-		return query.Where(tblCol+" NOT IN (?)", append(args, bun.In(vals))...)
+		return query.Where(tblCol+" NOT IN (?)", append(args, bun.List(vals))...)
 	case metadata.OpBt:
+		if len(vals) < 2 {
+			return query
+		}
 		return query.Where(tblCol+" BETWEEN ? AND ?", append(args, vals[0], vals[1])...)
 	case metadata.OpNbt:
+		if len(vals) < 2 {
+			return query
+		}
 		return query.Where(tblCol+" NOT BETWEEN ? AND ?", append(args, vals[0], vals[1])...)
 	default:
 		op := filterOps[operator]
 		if op == "" {
 			op = "="
 		}
-		return query.Where(fmt.Sprintf("%s %s ?", tblCol, op), append(args, vals[0])...)
+		return query.Where(tblCol+" "+op+" ?", append(args, vals[0])...)
 	}
 }
 
-// applyQuerySorting applies sorting from QueryOptions to the query
-// Falls back to metadata.DefaultSort if no sort specified
-// Only fields in metadata.SortableFields are allowed (others silently ignored)
+// applyQuerySorting applies sorting from QueryOptions to the query.
+// Falls back to metadata.DefaultSort if no sort specified.
+// Only fields in metadata.SortableFields are allowed (others silently ignored).
+// Always appends the PK as a final tie-breaker to guarantee deterministic ordering.
+// For backward cursor pagination (?before=), all sort directions are reversed.
 func (w *Wrapper[T]) applyQuerySorting(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
+	hasPKSort := false
+	reverseDir := opts != nil && opts.Before != "" && meta.Pagination == metadata.CursorPagination
+
 	// Use sort from options if provided
 	if opts != nil && len(opts.Sort) > 0 {
 		for _, sort := range opts.Sort {
@@ -1187,22 +1192,28 @@ func (w *Wrapper[T]) applyQuerySorting(query *bun.SelectQuery, opts *metadata.Qu
 				continue // skip invalid sort fields
 			}
 
-			colName, err := w.columnFromGoName(meta.ModelType, sort.Field)
+			if sort.Field == meta.PKField {
+				hasPKSort = true
+			}
+
+			colName, err := ColumnName(meta.ModelType, sort.Field)
 			if err != nil {
 				continue
 			}
 
-			if sort.Desc {
+			desc := sort.Desc
+			if reverseDir {
+				desc = !desc
+			}
+
+			if desc {
 				query = query.OrderExpr("?TableAlias.? DESC", bun.Ident(colName))
 			} else {
 				query = query.OrderExpr("?TableAlias.? ASC", bun.Ident(colName))
 			}
 		}
-		return query
-	}
-
-	// Fall back to default sort from metadata
-	if meta.DefaultSort != "" {
+	} else if meta.DefaultSort != "" {
+		// Fall back to default sort from metadata
 		field := meta.DefaultSort
 		desc := false
 		if strings.HasPrefix(field, "-") {
@@ -1210,7 +1221,15 @@ func (w *Wrapper[T]) applyQuerySorting(query *bun.SelectQuery, opts *metadata.Qu
 			field = field[1:]
 		}
 
-		colName, err := w.columnFromGoName(meta.ModelType, field)
+		if field == meta.PKField {
+			hasPKSort = true
+		}
+
+		if reverseDir {
+			desc = !desc
+		}
+
+		colName, err := ColumnName(meta.ModelType, field)
 		if err == nil {
 			if desc {
 				query = query.OrderExpr("?TableAlias.? DESC", bun.Ident(colName))
@@ -1220,12 +1239,27 @@ func (w *Wrapper[T]) applyQuerySorting(query *bun.SelectQuery, opts *metadata.Qu
 		}
 	}
 
+	// Always append PK as final tie-breaker for deterministic ordering
+	if !hasPKSort && meta.PKField != "" {
+		pkCol, err := ColumnName(meta.ModelType, meta.PKField)
+		if err == nil {
+			desc := reverseDir // normally ASC, reversed for backward
+			if desc {
+				query = query.OrderExpr("?TableAlias.? DESC", bun.Ident(pkCol))
+			} else {
+				query = query.OrderExpr("?TableAlias.? ASC", bun.Ident(pkCol))
+			}
+		}
+	}
+
 	return query
 }
 
-// applyQueryPagination applies limit/offset from QueryOptions to the query
-// Uses metadata defaults if not specified in options
-func (w *Wrapper[T]) applyQueryPagination(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
+// applyQueryPagination applies limit/offset from QueryOptions to the query.
+// Uses metadata defaults if not specified in options.
+// For cursor mode, fetches limit+1 items (N+1 trick) to detect has_more.
+// Returns the requested limit (before N+1 adjustment) so the caller can trim.
+func (w *Wrapper[T]) applyQueryPagination(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) int {
 	limit := meta.DefaultLimit
 	offset := 0
 
@@ -1243,15 +1277,238 @@ func (w *Wrapper[T]) applyQueryPagination(query *bun.SelectQuery, opts *metadata
 		limit = meta.MaxLimit
 	}
 
-	if limit > 0 {
-		query = query.Limit(limit)
+	requestedLimit := limit
+
+	// N+1 trick for cursor mode: fetch one extra to detect has_more
+	cursorMode := meta.Pagination == metadata.CursorPagination &&
+		(opts == nil || (opts.After != "" || opts.Before != "" || opts.Offset == 0))
+	if cursorMode && limit > 0 {
+		_ = query.Limit(limit + 1)
+	} else if limit > 0 {
+		_ = query.Limit(limit)
 	}
 
 	if offset > 0 {
-		query = query.Offset(offset)
+		_ = query.Offset(offset)
 	}
 
-	return query
+	return requestedLimit
+}
+
+// applyCursorWhere adds a keyset WHERE clause for cursor-based pagination.
+// It builds a disjunctive condition that respects per-column sort direction,
+// which is necessary because SQL row-value comparison applies a single
+// comparison direction uniformly and cannot handle mixed ASC/DESC sorts.
+//
+// For columns (A DESC, B ASC, PK ASC) with cursor values (a, b, pk),
+// the forward ("after") condition expands to:
+//
+//	(A < a) OR (A = a AND B > b) OR (A = a AND B = b AND PK > pk)
+func (w *Wrapper[T]) applyCursorWhere(query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) (*bun.SelectQuery, error) {
+	cursorStr := opts.After
+	backward := opts.Before != ""
+	if backward {
+		cursorStr = opts.Before
+	}
+
+	if cursorStr == "" {
+		return query, nil
+	}
+
+	cursor, err := metadata.DecodeCursor(cursorStr)
+	if err != nil {
+		return nil, err
+	}
+
+	sortCols, err := w.effectiveSortColumns(opts, meta)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(cursor.Values) != len(sortCols) {
+		return nil, fmt.Errorf("invalid cursor: expected %d sort values, got %d", len(sortCols), len(cursor.Values))
+	}
+
+	pkCol, err := ColumnName(meta.ModelType, meta.PKField)
+	if err != nil {
+		return nil, fmt.Errorf("invalid cursor: cannot resolve PK column: %w", err)
+	}
+
+	// Build per-column operators based on effective sort direction.
+	// applyQuerySorting already reverses directions for "before", so the
+	// effective directions here account for backward navigation.
+	type colInfo struct {
+		col string // column name, will be wrapped in bun.Ident
+		val any
+		op  string // ">" for ASC, "<" for DESC
+	}
+
+	cols := make([]colInfo, 0, len(sortCols)+1)
+	for i, sc := range sortCols {
+		op := ">"
+		if sc.desc {
+			op = "<"
+		}
+		if backward {
+			if op == ">" {
+				op = "<"
+			} else {
+				op = ">"
+			}
+		}
+		cols = append(cols, colInfo{
+			col: sc.col,
+			val: cursor.Values[i],
+			op:  op,
+		})
+	}
+
+	// PK tie-breaker: normally ASC (>), reversed for backward (<)
+	pkOp := ">"
+	if backward {
+		pkOp = "<"
+	}
+	cols = append(cols, colInfo{
+		col: pkCol,
+		val: cursor.PK,
+		op:  pkOp,
+	})
+
+	// Build disjunctive normal form:
+	// (c0 op v0) OR (c0 = v0 AND c1 op v1) OR ... OR (c0 = v0 AND ... AND cN op vN)
+	var orClauses []string
+	var allVals []any
+
+	for i := range cols {
+		var andParts []string
+		for j := 0; j < i; j++ {
+			andParts = append(andParts, "?TableAlias.? = ?")
+			allVals = append(allVals, bun.Ident(cols[j].col), cols[j].val)
+		}
+		andParts = append(andParts, "?TableAlias.? "+cols[i].op+" ?")
+		allVals = append(allVals, bun.Ident(cols[i].col), cols[i].val)
+
+		orClauses = append(orClauses, "("+strings.Join(andParts, " AND ")+")")
+	}
+
+	whereExpr := "(" + strings.Join(orClauses, " OR ") + ")"
+	query = query.Where(whereExpr, allVals...)
+
+	return query, nil
+}
+
+// sortColumn holds a resolved sort column name and direction
+type sortColumn struct {
+	col  string
+	desc bool
+}
+
+// effectiveSortColumns returns the resolved column names and directions for the current sort,
+// excluding the PK tie-breaker (which is handled separately).
+func (w *Wrapper[T]) effectiveSortColumns(opts *metadata.QueryOptions, meta *metadata.TypeMetadata) ([]sortColumn, error) {
+	var cols []sortColumn
+
+	if opts != nil && len(opts.Sort) > 0 {
+		for _, sort := range opts.Sort {
+			if !slices.Contains(meta.SortableFields, sort.Field) {
+				continue
+			}
+			if sort.Field == meta.PKField {
+				continue // PK is handled as tie-breaker
+			}
+			colName, err := ColumnName(meta.ModelType, sort.Field)
+			if err != nil {
+				continue
+			}
+			cols = append(cols, sortColumn{col: colName, desc: sort.Desc})
+		}
+	} else if meta.DefaultSort != "" {
+		field := meta.DefaultSort
+		desc := false
+		if strings.HasPrefix(field, "-") {
+			desc = true
+			field = field[1:]
+		}
+		if field != meta.PKField {
+			colName, err := ColumnName(meta.ModelType, field)
+			if err == nil {
+				cols = append(cols, sortColumn{col: colName, desc: desc})
+			}
+		}
+	}
+
+	return cols, nil
+}
+
+// buildCursorInfo generates CursorInfo from the fetched items.
+// Uses N+1 detection: if len(items) > requestedLimit, there are more items.
+func (w *Wrapper[T]) buildCursorInfo(items []*T, opts *metadata.QueryOptions, meta *metadata.TypeMetadata, requestedLimit int) *metadata.CursorInfo {
+	info := &metadata.CursorInfo{}
+
+	hasMore := len(items) > requestedLimit
+	info.HasMore = hasMore
+
+	// Trim to view for cursor generation (don't modify the slice yet, caller does that)
+	viewItems := items
+	if len(viewItems) > requestedLimit {
+		viewItems = viewItems[:requestedLimit]
+	}
+
+	if len(viewItems) == 0 {
+		return info
+	}
+
+	sortCols, _ := w.effectiveSortColumns(opts, meta)
+
+	// Build next cursor from the last item
+	if hasMore || (opts != nil && opts.Before != "") {
+		last := viewItems[len(viewItems)-1]
+		if cursor, err := w.buildCursorFromItem(last, sortCols, meta); err == nil {
+			info.NextCursor = cursor
+		}
+	}
+
+	// Build prev cursor from the first item (only if we came from a cursor)
+	if opts != nil && (opts.After != "" || opts.Before != "") {
+		first := viewItems[0]
+		if cursor, err := w.buildCursorFromItem(first, sortCols, meta); err == nil {
+			info.PrevCursor = cursor
+		}
+	}
+
+	return info
+}
+
+// buildCursorFromItem extracts sort field values and PK from an item to create a cursor.
+func (w *Wrapper[T]) buildCursorFromItem(item *T, sortCols []sortColumn, meta *metadata.TypeMetadata) (string, error) {
+	v := reflect.ValueOf(item).Elem()
+
+	// Collect sort field values using the Go field name (not column name)
+	var values []any
+	for _, sc := range sortCols {
+		// Reverse-lookup: column name → Go field name
+		goField, err := FieldName(meta.ModelType, sc.col)
+		if err != nil {
+			continue
+		}
+		field := v.FieldByName(goField)
+		if !field.IsValid() {
+			continue
+		}
+		values = append(values, field.Interface())
+	}
+
+	// Get PK value
+	pkField := v.FieldByName(meta.PKField)
+	if !pkField.IsValid() {
+		return "", fmt.Errorf("PK field %s not found", meta.PKField)
+	}
+
+	cursor := metadata.Cursor{
+		Values: values,
+		PK:     pkField.Interface(),
+	}
+	return metadata.EncodeCursor(cursor)
 }
 
 // runValidation executes the validator function if one is configured in metadata
@@ -1329,13 +1586,45 @@ func (w *Wrapper[T]) GetByParentRelation(ctx context.Context, parentID string) (
 }
 
 // UpdateByParentRelation updates a single item of type T via the parent's foreign key field
-// Fetches the parent, extracts the FK value, then calls normal Update (preserving security checks)
+// Fetches the parent, extracts the FK value, sets it on the item struct (so WherePK targets
+// the correct row), then calls normal Update (preserving security checks).
 func (w *Wrapper[T]) UpdateByParentRelation(ctx context.Context, parentID string, item T) (*T, error) {
 	childID, err := w.resolveChildIDFromParent(ctx, parentID)
 	if err != nil {
 		return nil, err
 	}
+
+	meta, err := metadata.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := common.SetFieldFromString(&item, meta.PKField, childID); err != nil {
+		return nil, fmt.Errorf("failed to set child PK: %w", err)
+	}
+
 	return w.Update(ctx, childID, item)
+}
+
+// PatchByParentRelation patches a single item of type T via the parent's foreign key field.
+// Fetches the parent, extracts the FK value, sets it on the item struct (so WherePK targets
+// the correct row), then calls normal Patch (preserving security checks and OpPatch propagation).
+func (w *Wrapper[T]) PatchByParentRelation(ctx context.Context, parentID string, item T) (*T, error) {
+	childID, err := w.resolveChildIDFromParent(ctx, parentID)
+	if err != nil {
+		return nil, err
+	}
+
+	meta, err := metadata.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := common.SetFieldFromString(&item, meta.PKField, childID); err != nil {
+		return nil, fmt.Errorf("failed to set child PK: %w", err)
+	}
+
+	return w.Patch(ctx, childID, item)
 }
 
 // resolveChildIDFromParent fetches the parent and extracts the foreign key value
@@ -1457,19 +1746,9 @@ func (w *Wrapper[T]) applyNestedInclude(ctx context.Context, query *bun.SelectQu
 // applyNestedChildInclude handles nested child includes like "Accounts.Sites.Bills"
 // Applies ownership filtering at each level that has it configured
 func (w *Wrapper[T]) applyNestedChildInclude(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, parts []string, applyOwnership bool) *bun.SelectQuery {
-	// Build chain of metadata for each level
-	chain := make([]*metadata.TypeMetadata, 0, len(parts))
-	currentMeta := meta
-	for _, part := range parts {
-		if currentMeta.ChildMeta == nil {
-			return query
-		}
-		childMeta, exists := currentMeta.ChildMeta[part]
-		if !exists {
-			return query
-		}
-		chain = append(chain, childMeta)
-		currentMeta = childMeta
+	chain := w.resolveChildChain(meta, parts)
+	if len(chain) == 0 {
+		return query
 	}
 
 	// Add .Relation() for each level, applying ownership where configured
@@ -1514,12 +1793,8 @@ func (w *Wrapper[T]) applyNestedParentInclude(ctx context.Context, query *bun.Se
 // getRelationNameForParent finds the belongs-to relation field name on the child
 // that references the parent type, using Bun's schema
 func (w *Wrapper[T]) getRelationNameForParent(childMeta, parentMeta *metadata.TypeMetadata) string {
-	parentType := parentMeta.ModelType
-	if parentType.Kind() == reflect.Ptr {
-		parentType = parentType.Elem()
-	}
+	parentType := derefType(parentMeta.ModelType)
 
-	// Use Bun's schema to find belongs-to relation pointing to parent type
 	table := w.Store.GetDB().Table(childMeta.ModelType)
 	for name, rel := range table.Relations {
 		if rel.Type == schema.BelongsToRelation && rel.JoinTable.Type == parentType {
@@ -1537,7 +1812,8 @@ func (w *Wrapper[T]) getRelationNameForParent(childMeta, parentMeta *metadata.Ty
 
 // BatchCreate creates multiple items in a single transaction.
 // All-or-nothing: if any item fails, the entire batch is rolled back.
-// Ownership and parent validation are applied per-item.
+// Parent is validated once (all items share the same URL-derived parent).
+// FK, ownership, tenant, and validation are applied per-item.
 func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
@@ -1547,31 +1823,38 @@ func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 		return nil, err
 	}
 
+	// Validate parent once before the transaction — all items in a batch share the
+	// same URL-derived parent. The FK is still set per-item inside the loop.
+	var parentItem interface{}
+	var parentField string
+	if meta.ParentMeta != nil {
+		parentMeta := meta.ParentMeta
+		parentIDs, ok := ctx.Value(metadata.ParentIDsKey).(map[string]string)
+		if !ok || parentIDs == nil {
+			return nil, fmt.Errorf("parent context missing for nested resource")
+		}
+		parentID, exists := parentIDs[parentMeta.URLParamUUID]
+		if !exists {
+			return nil, fmt.Errorf("parent ID not found in context")
+		}
+		parentItem, err = w.getWithMeta(ctx, parentMeta, parentID)
+		if err != nil {
+			return nil, err
+		}
+		parentField = meta.ParentJoinField
+		if parentField == "" {
+			parentField = parentMeta.PKField
+		}
+	}
+
 	results := make([]*T, 0, len(items))
 
 	err = w.Store.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		for i := range items {
 			item := &items[i]
 
-			// Validate parent and set FK if nested
+			// Set FK per-item using the already-validated parent
 			if meta.ParentMeta != nil {
-				parentMeta := meta.ParentMeta
-				parentIDs, ok := ctx.Value(metadata.ParentIDsKey).(map[string]string)
-				if !ok || parentIDs == nil {
-					return fmt.Errorf("parent context missing for nested resource")
-				}
-				parentID, exists := parentIDs[parentMeta.URLParamUUID]
-				if !exists {
-					return fmt.Errorf("parent ID not found in context")
-				}
-				parentItem, err := w.getWithMeta(ctx, parentMeta, parentID)
-				if err != nil {
-					return err
-				}
-				parentField := meta.ParentJoinField
-				if parentField == "" {
-					parentField = parentMeta.PKField
-				}
 				if err := w.setForeignKey(item, meta.ForeignKeyCol, parentItem, parentField); err != nil {
 					return err
 				}
@@ -1622,6 +1905,17 @@ func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 // All-or-nothing: if any item fails, the entire batch is rolled back.
 // Ownership validation is applied per-item via Get before the transaction starts.
 func (w *Wrapper[T]) BatchUpdate(ctx context.Context, items []T) ([]*T, error) {
+	return w.batchUpdateWithOp(ctx, items, metadata.OpUpdate)
+}
+
+// BatchPatch partially updates multiple items in a single transaction.
+// Identical to BatchUpdate but passes OpPatch to validators and auditors.
+func (w *Wrapper[T]) BatchPatch(ctx context.Context, items []T) ([]*T, error) {
+	return w.batchUpdateWithOp(ctx, items, metadata.OpPatch)
+}
+
+// batchUpdateWithOp is the shared implementation for BatchUpdate and BatchPatch.
+func (w *Wrapper[T]) batchUpdateWithOp(ctx context.Context, items []T, op metadata.Operation) ([]*T, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -1631,7 +1925,7 @@ func (w *Wrapper[T]) BatchUpdate(ctx context.Context, items []T) ([]*T, error) {
 	}
 
 	// Pre-fetch all existing items and validate before starting transaction
-	preFetch, err := w.preFetchItems(ctx, meta, items, metadata.OpUpdate)
+	preFetch, err := w.preFetchItems(ctx, meta, items, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1656,7 +1950,7 @@ func (w *Wrapper[T]) BatchUpdate(ctx context.Context, items []T) ([]*T, error) {
 			}
 
 			// Run audit within transaction
-			if err := w.runAudit(ctx, tx, meta, metadata.OpUpdate, preFetch.existingItems[i], item); err != nil {
+			if err := w.runAudit(ctx, tx, meta, op, preFetch.existingItems[i], item); err != nil {
 				return err
 			}
 
@@ -1719,17 +2013,6 @@ func (w *Wrapper[T]) BatchDelete(ctx context.Context, items []T) error {
 	return err
 }
 
-// extractID extracts the primary key field value from an item as a string.
-// The pkFieldName parameter specifies which field to extract (from metadata.PKField).
-func (w *Wrapper[T]) extractID(item *T, pkFieldName string) string {
-	v := reflect.ValueOf(item).Elem()
-	idField := v.FieldByName(pkFieldName)
-	if !idField.IsValid() {
-		return ""
-	}
-	return fmt.Sprintf("%v", idField.Interface())
-}
-
 // preFetchItems validates and fetches existing items before a batch operation.
 // This validates existence, ownership, and parent chain for each item.
 // For update operations, pass the new item to validation; for delete, pass nil.
@@ -1740,7 +2023,7 @@ func (w *Wrapper[T]) preFetchItems(ctx context.Context, meta *metadata.TypeMetad
 	}
 
 	for i := range items {
-		id := w.extractID(&items[i], meta.PKField)
+		id := common.GetFieldAsString(&items[i], meta.PKField)
 		if id == "" {
 			return nil, fmt.Errorf("item at index %d missing ID", i)
 		}
@@ -1800,7 +2083,7 @@ func (w *Wrapper[T]) applyParentFieldFilter(ctx context.Context, query *bun.Sele
 		return query
 	}
 
-	colName, err := w.columnFromGoName(targetMeta.ModelType, path.field)
+	colName, err := ColumnName(targetMeta.ModelType, path.field)
 	if err != nil {
 		return query
 	}
@@ -1860,33 +2143,19 @@ func (w *Wrapper[T]) buildParentJoins(query *bun.SelectQuery, baseMeta *metadata
 }
 
 func (w *Wrapper[T]) joinParentFromBase(query *bun.SelectQuery, child, parent *metadata.TypeMetadata, fkOnChild bool) *bun.SelectQuery {
-	parentJoinCol := child.ParentJoinCol
-	if parentJoinCol == "" {
-		parentJoinCol = "id"
-	}
+	parentJoinCol := defaultParentJoinCol(child.ParentJoinCol)
 	if fkOnChild {
-		return query.Join("JOIN ? ON ?TableAlias.? = ?.?",
-			bun.Ident(parent.TableName), bun.Ident(child.ForeignKeyCol),
-			bun.Ident(parent.TableName), bun.Ident(parentJoinCol))
+		return query.Join("JOIN ? ON ?TableAlias.? = ?.?", bun.Ident(parent.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident(parentJoinCol))
 	}
-	return query.Join("JOIN ? ON ?.? = ?TableAlias.?",
-		bun.Ident(parent.TableName), bun.Ident(parent.TableName),
-		bun.Ident(child.ForeignKeyCol), bun.Ident(parentJoinCol))
+	return query.Join("JOIN ? ON ?.? = ?TableAlias.?", bun.Ident(parent.TableName), bun.Ident(parent.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parentJoinCol))
 }
 
 func (w *Wrapper[T]) joinParentFromTable(query *bun.SelectQuery, child, parent *metadata.TypeMetadata, fkOnChild bool) *bun.SelectQuery {
-	parentJoinCol := child.ParentJoinCol
-	if parentJoinCol == "" {
-		parentJoinCol = "id"
-	}
+	parentJoinCol := defaultParentJoinCol(child.ParentJoinCol)
 	if fkOnChild {
-		return query.Join("JOIN ? ON ?.? = ?.?",
-			bun.Ident(parent.TableName), bun.Ident(child.TableName),
-			bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident(parentJoinCol))
+		return query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(parent.TableName), bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident(parentJoinCol))
 	}
-	return query.Join("JOIN ? ON ?.? = ?.?",
-		bun.Ident(parent.TableName), bun.Ident(parent.TableName),
-		bun.Ident(child.ForeignKeyCol), bun.Ident(child.TableName), bun.Ident(parentJoinCol))
+	return query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(parent.TableName), bun.Ident(parent.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(child.TableName), bun.Ident(parentJoinCol))
 }
 
 // applyChildFieldFilter applies a filter on a child relation field using EXISTS subqueries
@@ -1901,7 +2170,7 @@ func (w *Wrapper[T]) applyChildFieldFilter(ctx context.Context, query *bun.Selec
 		return query
 	}
 
-	colName, err := w.columnFromGoName(targetMeta.ModelType, path.field)
+	colName, err := ColumnName(targetMeta.ModelType, path.field)
 	if err != nil {
 		return query
 	}
@@ -1911,9 +2180,11 @@ func (w *Wrapper[T]) applyChildFieldFilter(ctx context.Context, query *bun.Selec
 		return query
 	}
 
-	condition, args := buildFilterCondition(targetMeta.TableName, colName, filter.Operator, vals)
-	existsSQL := w.wrapInExists(meta, childChain, condition)
-	return query.Where(existsSQL, args...)
+	existsSubq := w.buildExistsChain(meta, childChain, func(q *bun.SelectQuery) *bun.SelectQuery {
+		return applyFilter(q, targetMeta.TableName, colName, filter.Operator, vals)
+	})
+
+	return query.Where("EXISTS (?)", existsSubq)
 }
 
 // resolveChildChain walks down ChildMeta to resolve a relation path
@@ -1935,53 +2206,236 @@ func (w *Wrapper[T]) resolveChildChain(meta *metadata.TypeMetadata, relations []
 	return chain
 }
 
-// buildFilterCondition creates a SQL condition string and args for a filter
-func buildFilterCondition(table, col, operator string, vals []interface{}) (string, []interface{}) {
-	switch operator {
-	case metadata.OpIn:
-		placeholders := strings.Repeat("?, ", len(vals))
-		return fmt.Sprintf("%s.%s IN (%s)", table, col, placeholders[:len(placeholders)-2]), vals
-	case metadata.OpNin:
-		placeholders := strings.Repeat("?, ", len(vals))
-		return fmt.Sprintf("%s.%s NOT IN (%s)", table, col, placeholders[:len(placeholders)-2]), vals
-	case metadata.OpBt:
-		return fmt.Sprintf("%s.%s BETWEEN ? AND ?", table, col), vals[:2]
-	case metadata.OpNbt:
-		return fmt.Sprintf("%s.%s NOT BETWEEN ? AND ?", table, col), vals[:2]
-	default:
-		op := filterOps[operator]
-		if op == "" {
-			op = "="
+// applyRelationFilter applies existence or count-based filters on child relations.
+// The field key is the full relation path (e.g., "Orders" or "Orders.Items").
+func (w *Wrapper[T]) applyRelationFilter(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, field string, filter metadata.FilterValue, allowedIncludes metadata.AllowedIncludes) *bun.SelectQuery {
+	if !isRelationAuthorized(allowedIncludes, field) {
+		return query
+	}
+
+	// Resolve the child chain
+	relations := strings.Split(field, ".")
+	childChain := w.resolveChildChain(meta, relations)
+	if len(childChain) == 0 {
+		return query
+	}
+
+	switch filter.Operator {
+	case metadata.OpExists:
+		existsSubq := w.buildExistsChain(meta, childChain, nil)
+		if existsSubq == nil {
+			return query
 		}
-		return fmt.Sprintf("%s.%s %s ?", table, col, op), vals[:1]
+		val := strings.ToLower(strings.TrimSpace(filter.Value))
+		if val == "false" || val == "0" {
+			return query.Where("NOT EXISTS (?)", existsSubq)
+		}
+		return query.Where("EXISTS (?)", existsSubq)
+
+	default:
+		op, ok := countFilterOps[filter.Operator]
+		if !ok {
+			return query
+		}
+		countVal, err := strconv.Atoi(filter.Value)
+		if err != nil {
+			slog.DebugContext(ctx, "count filter value is not an integer", "field", field, "value", filter.Value)
+			return query
+		}
+		countSubq := w.buildCountChain(meta, childChain)
+		if countSubq == nil {
+			return query
+		}
+		return query.Where("(?) "+op+" ?", countSubq, countVal)
 	}
 }
 
-// wrapInExists wraps a condition in nested EXISTS subqueries
-func (w *Wrapper[T]) wrapInExists(baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, innerCondition string) string {
+// buildCountChain builds a correlated COUNT(*) subquery for a child relation chain.
+// For single-level chains, returns a direct COUNT. For multi-level chains, uses nested
+// subqueries to resolve intermediate IDs before counting at the leaf level.
+func (w *Wrapper[T]) buildCountChain(baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata) *bun.SelectQuery {
 	if len(chain) == 0 {
-		return innerCondition
+		return nil
 	}
 
-	// Pre-compute parent table for each child: base alias for first, chain element for rest
+	db := w.Store.GetDB()
+	baseAlias := db.Table(baseMeta.ModelType).Alias
+
+	leaf := chain[len(chain)-1]
+
+	if len(chain) == 1 {
+		return db.NewSelect().
+			Table(leaf.TableName).
+			ColumnExpr("COUNT(*)").
+			Where("?.? = ?.?", bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol), bun.Ident(baseAlias), bun.Ident(defaultParentJoinCol(leaf.ParentJoinCol)))
+	}
+
+	// Multi-level: build nested subqueries from base outward, count at leaf
+	var subq *bun.SelectQuery
+	for i := 0; i < len(chain)-1; i++ {
+		child := chain[i]
+		childParentJoinCol := defaultParentJoinCol(child.ParentJoinCol)
+
+		nextChild := chain[i+1]
+		selectCol := defaultParentJoinCol(nextChild.ParentJoinCol)
+
+		if i == 0 {
+			subq = db.NewSelect().
+				Table(child.TableName).
+				ColumnExpr("?.?", bun.Ident(child.TableName), bun.Ident(selectCol)).
+				Where("?.? = ?.?", bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(baseAlias), bun.Ident(childParentJoinCol))
+		} else {
+			subq = db.NewSelect().
+				Table(child.TableName).
+				ColumnExpr("?.?", bun.Ident(child.TableName), bun.Ident(selectCol)).
+				Where("?.? IN (?)", bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), subq)
+		}
+	}
+
+	return db.NewSelect().
+		Table(leaf.TableName).
+		ColumnExpr("COUNT(*)").
+		Where("?.? IN (?)", bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol), subq)
+}
+
+// ComputeIncludeCounts computes per-item child relation counts for the given items.
+// Returns a map of relation name → {pk_string → count}. Items with zero counts are omitted.
+// Auth is checked via AllowedIncludes from context.
+func (w *Wrapper[T]) ComputeIncludeCounts(ctx context.Context, items []*T, includeCounts []string) (map[string]map[string]int, error) {
+	if len(items) == 0 || len(includeCounts) == 0 {
+		return nil, nil
+	}
+
+	meta, err := metadata.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	allowedIncludes := metadata.AllowedIncludesFromContext(ctx)
+
+	pks := make([]interface{}, len(items))
+	for i, item := range items {
+		pk := common.GetFieldAsString(item, meta.PKField)
+		if pk == "" {
+			return nil, fmt.Errorf("PK field %s not found", meta.PKField)
+		}
+		pks[i] = pk
+	}
+
+	result := make(map[string]map[string]int)
+
+	for _, relPath := range includeCounts {
+		relations := strings.Split(relPath, ".")
+
+		if !isRelationAuthorized(allowedIncludes, relPath) {
+			continue
+		}
+		childChain := w.resolveChildChain(meta, relations)
+		if len(childChain) == 0 {
+			continue
+		}
+
+		counts, err := w.queryRelationCounts(ctx, meta, childChain, pks)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to compute include count", "relation", relPath, "error", err)
+			continue
+		}
+
+		if len(counts) > 0 {
+			result[relPath] = counts
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// queryRelationCounts runs a grouped count query for a child relation chain.
+// Returns a map of parent PK (as string) → count of matching child records.
+func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, pks []interface{}) (map[string]int, error) {
+	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
+	defer cancel()
+
+	db := w.Store.GetDB()
+
+	firstChild := chain[0]
+	leaf := chain[len(chain)-1]
+	query := db.NewSelect().
+		Table(leaf.TableName).
+		ColumnExpr("?.? AS parent_ref", bun.Ident(firstChild.TableName), bun.Ident(firstChild.ForeignKeyCol)).
+		ColumnExpr("COUNT(*) AS cnt")
+
+	// Add JOINs for intermediate levels (from leaf back to first child)
+	for i := len(chain) - 1; i > 0; i-- {
+		child := chain[i]
+		parent := chain[i-1]
+		query = query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(parent.TableName), bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
+	}
+
+	// WHERE first_child.fk IN (pks)
+	query = query.Where("?.? IN (?)", bun.Ident(firstChild.TableName), bun.Ident(firstChild.ForeignKeyCol), bun.List(pks))
+
+	// GROUP BY first_child.fk
+	query = query.GroupExpr("?.?", bun.Ident(firstChild.TableName), bun.Ident(firstChild.ForeignKeyCol))
+
+	rows, err := query.Rows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var parentRef interface{}
+		var cnt int
+		if err := rows.Scan(&parentRef, &cnt); err != nil {
+			return nil, err
+		}
+		counts[fmt.Sprintf("%v", parentRef)] = cnt
+	}
+
+	return counts, nil
+}
+
+// buildExistsChain builds nested EXISTS subqueries using Bun's query builder.
+// Each level correlates to its parent via FK = parent PK.
+// The optional innerFilter applies additional conditions to the deepest level's subquery.
+func (w *Wrapper[T]) buildExistsChain(baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, innerFilter func(q *bun.SelectQuery) *bun.SelectQuery) *bun.SelectQuery {
+	if len(chain) == 0 {
+		return nil
+	}
+
+	db := w.Store.GetDB()
+
 	parents := make([]string, len(chain))
-	parents[0] = w.Store.GetDB().Table(baseMeta.ModelType).Alias
+	parents[0] = db.Table(baseMeta.ModelType).Alias
 	for i := 1; i < len(chain); i++ {
 		parents[i] = chain[i-1].TableName
 	}
 
-	// Wrap from deepest child up
-	sql := innerCondition
+	var innerSubq *bun.SelectQuery
 	for i := len(chain) - 1; i >= 0; i-- {
 		child := chain[i]
-		parentJoinCol := child.ParentJoinCol
-		if parentJoinCol == "" {
-			parentJoinCol = "id"
+
+		subq := db.NewSelect().
+			Table(child.TableName).
+			ColumnExpr("1").
+			Where("?.? = ?.?", bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parents[i]), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
+
+		if i == len(chain)-1 && innerFilter != nil {
+			subq = innerFilter(subq)
 		}
-		sql = fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = %s.%s AND %s)",
-			child.TableName, child.TableName, child.ForeignKeyCol, parents[i], parentJoinCol, sql)
+
+		if innerSubq != nil {
+			subq = subq.Where("EXISTS (?)", innerSubq)
+		}
+
+		innerSubq = subq
 	}
-	return sql
+
+	return innerSubq
 }
 
 // translateError converts database errors to application errors

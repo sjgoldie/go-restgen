@@ -37,14 +37,41 @@ func TestWithSorts(t *testing.T) {
 }
 
 func TestWithPagination(t *testing.T) {
-	config := WithPagination(20, 100)
+	t.Run("defaults to cursor mode", func(t *testing.T) {
+		config := WithPagination(20, 100)
 
-	if config.DefaultLimit != 20 {
-		t.Errorf("expected default limit 20, got %d", config.DefaultLimit)
-	}
-	if config.MaxLimit != 100 {
-		t.Errorf("expected max limit 100, got %d", config.MaxLimit)
-	}
+		if config.DefaultLimit != 20 {
+			t.Errorf("expected default limit 20, got %d", config.DefaultLimit)
+		}
+		if config.MaxLimit != 100 {
+			t.Errorf("expected max limit 100, got %d", config.MaxLimit)
+		}
+		if config.Pagination != CursorMode {
+			t.Errorf("expected CursorMode, got %d", config.Pagination)
+		}
+	})
+
+	t.Run("explicit offset mode", func(t *testing.T) {
+		config := WithPagination(20, 100, OffsetMode)
+
+		if config.DefaultLimit != 20 {
+			t.Errorf("expected default limit 20, got %d", config.DefaultLimit)
+		}
+		if config.MaxLimit != 100 {
+			t.Errorf("expected max limit 100, got %d", config.MaxLimit)
+		}
+		if config.Pagination != OffsetMode {
+			t.Errorf("expected OffsetMode, got %d", config.Pagination)
+		}
+	})
+
+	t.Run("explicit cursor mode", func(t *testing.T) {
+		config := WithPagination(20, 100, CursorMode)
+
+		if config.Pagination != CursorMode {
+			t.Errorf("expected CursorMode, got %d", config.Pagination)
+		}
+	})
 }
 
 func TestWithDefaultSort(t *testing.T) {
@@ -74,6 +101,7 @@ func TestWithQuery(t *testing.T) {
 		DefaultSort:      "-CreatedAt",
 		DefaultLimit:     25,
 		MaxLimit:         50,
+		Pagination:       CursorMode,
 	}
 
 	config := WithQuery(input)
@@ -92,6 +120,9 @@ func TestWithQuery(t *testing.T) {
 	}
 	if config.MaxLimit != 50 {
 		t.Errorf("expected max limit 50, got %d", config.MaxLimit)
+	}
+	if config.Pagination != CursorMode {
+		t.Errorf("expected CursorMode, got %d", config.Pagination)
 	}
 }
 

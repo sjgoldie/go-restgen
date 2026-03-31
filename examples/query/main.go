@@ -80,7 +80,7 @@ func main() {
 	})
 
 	// Register CRUD routes with comprehensive filter/sort/pagination options
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 	router.RegisterRoutes[Product](b, "/products",
 		router.AllPublic(),
 		router.WithFilters("Name", "Category", "Price", "Stock", "Active"),
@@ -112,9 +112,15 @@ func main() {
 	fmt.Println("  nin  - Not in list:         filter[Category][nin]=Electronics,Books")
 	fmt.Println("  bt   - Between:             filter[Price][bt]=50,150")
 	fmt.Println("  nbt  - Not between:         filter[Price][nbt]=50,150")
+	fmt.Println("\nPagination (cursor-based by default):")
+	fmt.Println("  limit=10               Limit results (max 100)")
+	fmt.Println("  after=<cursor>         Next page (cursor from pagination.next_cursor)")
+	fmt.Println("  before=<cursor>        Previous page (cursor from pagination.prev_cursor)")
+	fmt.Println("  offset=20              Switch to offset pagination")
+	fmt.Println("  count=true             Include total_count in pagination")
 	fmt.Println("\nAggregation:")
 	fmt.Println("  sum  - Sum numeric fields:  sum=Price,Stock")
-	fmt.Println("         Returns X-Sum-Price and X-Sum-Stock headers")
+	fmt.Println("         Returns sums in response body (res.body.sums.Price)")
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

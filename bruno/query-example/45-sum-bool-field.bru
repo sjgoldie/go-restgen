@@ -12,13 +12,13 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 tests {
-  test("X-Sum-Active header returns count of true values", function() {
+  test("Sums return count of true values for bool field", function() {
     // Bool fields are passed to the database — SUM counts true values (stored as 1)
     // 5 products with active=true, 2 with active=false → SUM = 5
-    expect(res.headers['x-sum-active']).to.equal('5');
+    expect(res.body.sums.Active).to.equal(5);
   });
 }

@@ -95,7 +95,7 @@ func main() {
 
 	// Register routes with batch operations enabled
 	// AllPublicWithBatch enables all CRUD + batch operations as public
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 	router.RegisterRoutes[Product](b, "/products",
 		router.AllPublicWithBatch(), // Enable batch operations
 		router.WithBatchLimit(100),  // Optional: limit batch size to 100 items
@@ -104,7 +104,8 @@ func main() {
 		// Nested ProductVariants with relation name for ?include=Variants support
 		func(b *router.Builder) {
 			router.RegisterRoutes[ProductVariant](b, "/variants",
-				router.AllPublic(),
+				router.AllPublicWithBatch(),
+				router.WithBatchLimit(100),
 				router.WithRelationName("Variants"),
 			)
 		},
@@ -118,9 +119,11 @@ func main() {
 	fmt.Println("  GET    http://localhost:8080/products           List products")
 	fmt.Println("  GET    http://localhost:8080/products/{id}      Get product")
 	fmt.Println("  PUT    http://localhost:8080/products/{id}      Update product")
+	fmt.Println("  PATCH  http://localhost:8080/products/{id}      Partial update product")
 	fmt.Println("  DELETE http://localhost:8080/products/{id}      Delete product")
 	fmt.Println("  POST   http://localhost:8080/products/batch     Batch create")
 	fmt.Println("  PUT    http://localhost:8080/products/batch     Batch update")
+	fmt.Println("  PATCH  http://localhost:8080/products/batch     Batch patch")
 	fmt.Println("  DELETE http://localhost:8080/products/batch     Batch delete")
 	fmt.Println("\nExample usage:")
 	fmt.Println("")

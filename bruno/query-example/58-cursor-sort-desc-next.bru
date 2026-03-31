@@ -1,0 +1,29 @@
+meta {
+  name: Cursor Pagination - Sort DESC second page
+  type: http
+  seq: 58
+}
+
+get {
+  url: {{baseUrl}}/products?limit=3&sort=-Price&after={{cursorPriceDescNext}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 3
+  res.body.pagination.has_more: eq true
+}
+
+tests {
+  test("Continues price descending sort from cursor", function() {
+    expect(res.body.data[0].name).to.equal("Apple");
+    expect(res.body.data[0].price).to.equal(100);
+    expect(res.body.data[1].name).to.equal("Eggplant");
+    expect(res.body.data[1].price).to.equal(80);
+    expect(res.body.data[2].name).to.equal("Banana");
+    expect(res.body.data[2].price).to.equal(50);
+  });
+}

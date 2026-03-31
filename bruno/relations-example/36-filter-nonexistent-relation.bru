@@ -1,0 +1,32 @@
+meta {
+  name: Security - Non-existent Relation Filter Ignored
+  type: http
+  seq: 36
+}
+
+get {
+  url: {{baseUrl}}/posts?filter[FakeRelation][exists]=true
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:admin:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 3
+}
+
+tests {
+  test("All posts returned - invalid relation filter silently ignored", function() {
+    expect(res.body.data.length).to.equal(3);
+  });
+}
+
+docs {
+  Filtering on a non-existent relation is silently ignored.
+  The filter is skipped and all results are returned (no error).
+}

@@ -2,15 +2,13 @@ package router
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"reflect"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/schema"
 
+	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/sjgoldie/go-restgen/handler"
 	"github.com/sjgoldie/go-restgen/metadata"
 )
@@ -21,7 +19,6 @@ type NestedFunc func(b *Builder)
 // Builder provides context for registering nested routes and manages the chi router
 type Builder struct {
 	router                  chi.Router             // Chi router being configured
-	db                      *bun.DB                // Database connection for schema introspection
 	parentMeta              *metadata.TypeMetadata // Metadata of the immediate parent (nil for root)
 	parentChildRelationAuth map[string]*AuthConfig // Parent's shared child relation auth map (children add to this via registerChildAuthConfig)
 	parentGetAuth           *AuthConfig            // Parent's GET auth config (for ParentAuth chain on child configs)
@@ -33,6 +30,7 @@ type customHandlers[T any] struct {
 	getAll handler.CustomGetAllFunc[T]
 	create handler.CustomCreateFunc[T]
 	update handler.CustomUpdateFunc[T]
+	patch  handler.CustomPatchFunc[T]
 	delete handler.CustomDeleteFunc[T]
 }
 
@@ -40,6 +38,7 @@ type customHandlers[T any] struct {
 type batchHandlers[T any] struct {
 	create handler.CustomBatchCreateFunc[T]
 	update handler.CustomBatchUpdateFunc[T]
+	patch  handler.CustomBatchPatchFunc[T]
 	delete handler.CustomBatchDeleteFunc[T]
 }
 
@@ -77,12 +76,9 @@ type metadataSetup struct {
 }
 
 // NewBuilder creates a new Builder for registering routes.
-// The db parameter provides access to Bun's schema introspection for resolving
-// field names, column names, table names, and relationships from model types.
-func NewBuilder(r chi.Router, db *bun.DB) *Builder {
+func NewBuilder(r chi.Router) *Builder {
 	return &Builder{
 		router:     r,
-		db:         db,
 		parentMeta: nil,
 	}
 }
@@ -117,6 +113,8 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 	var joinOn *JoinOnConfig
 	var tenantField string
 	var isTenantTable bool
+	var maxBodySize int64
+	var maxUploadSize int64
 
 	for _, opt := range options {
 		switch v := opt.(type) {
@@ -136,6 +134,8 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			custom.create = v.Fn
 		case CustomUpdateConfig[T]:
 			custom.update = v.Fn
+		case CustomPatchConfig[T]:
+			custom.patch = v.Fn
 		case CustomDeleteConfig[T]:
 			custom.delete = v.Fn
 		case BatchLimitConfig:
@@ -144,6 +144,8 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			batch.create = v.Fn
 		case CustomBatchUpdateConfig[T]:
 			batch.update = v.Fn
+		case CustomBatchPatchConfig[T]:
+			batch.patch = v.Fn
 		case CustomBatchDeleteConfig[T]:
 			batch.delete = v.Fn
 		case ActionConfig[T]:
@@ -166,17 +168,26 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			tenantField = v.Field
 		case TenantTableConfig:
 			isTenantTable = true
+		case MaxBodySizeConfig:
+			maxBodySize = v.Size
+		case MaxUploadSizeConfig:
+			maxUploadSize = v.Size
 		case func(*Builder):
 			nested = v
+		default:
+			slog.WarnContext(context.Background(), "RegisterRoutes: unrecognized option type (skipped)",
+				"type", reflect.TypeOf(v).String(),
+				"value", v,
+				"path", path)
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, endpoints, sses, relationName, singleRoute, isFileResource, pkField, joinOn, tenantField, isTenantTable)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, endpoints, sses, relationName, singleRoute, isFileResource, pkField, joinOn, tenantField, isTenantTable, maxBodySize, maxUploadSize)
 }
 
 // prepareMetadata assembles type metadata and auth configuration before route registration.
 // This extracts the setup phase from registerRoutesWithBuilder to reduce cyclomatic complexity.
-func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool) (string, *metadataSetup) {
+func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool, maxBodySize int64, maxUploadSize int64) (string, *metadataSetup) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -198,57 +209,13 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	urlParamUUID := metadata.GenerateTypeID()
 
 	// Get table name from Bun schema
-	tableName := getTableName(b.db, tType)
+	tableName := datastore.TableName(tType)
 
-	// Check if this type has a parent relationship
-	var parentType reflect.Type
-	if b.parentMeta != nil {
-		parentType = b.parentMeta.ModelType
-	}
-
-	var parentRel parentRelation
-	var parentJoinCol string
-	var parentJoinField string
-	if joinOn != nil && b.parentMeta != nil {
-		// WithJoinOn provided — resolve Go field names to column names via Bun schema.
-		childCol, err := columnFromGoName(b.db, tType, joinOn.ChildCol)
-		if err != nil {
-			slog.WarnContext(context.Background(), "WithJoinOn: invalid child field",
-				"type", typeName,
-				"field", joinOn.ChildCol,
-				"error", err)
-		}
-		parentCol, err := columnFromGoName(b.db, b.parentMeta.ModelType, joinOn.ParentCol)
-		if err != nil {
-			slog.WarnContext(context.Background(), "WithJoinOn: invalid parent field",
-				"type", typeName,
-				"field", joinOn.ParentCol,
-				"error", err)
-		}
-		parentRel = parentRelation{foreignKeyCol: childCol, parentJoinCol: parentCol}
-		parentJoinCol = parentCol
-		parentJoinField = joinOn.ParentCol
-	} else {
-		var err error
-		parentRel, err = findParentRelationshipFromType(b.db, tType, parentType)
-		if err != nil {
-			slog.WarnContext(context.Background(), "could not find parent relationship",
-				"type", typeName,
-				"error", err)
-		}
-		parentJoinCol = parentRel.parentJoinCol
-	}
-
-	// Default parent join column/field to "id"/"ID" for standard FK relationships
-	if parentJoinCol == "" {
-		parentJoinCol = "id"
-	}
-	if parentJoinField == "" {
-		parentJoinField = "ID"
-	}
+	// Resolve parent relationship
+	parentType, parentRel, parentJoinCol, parentJoinField := resolveParentRelationship(b.parentMeta, tType, typeName, joinOn)
 
 	// Validate parent relationship
-	validateParentRelationship(b.parentMeta, parentRel.foreignKeyCol, typeName)
+	validateParentRelationship(b.parentMeta, parentRel.ForeignKeyCol, typeName)
 
 	// Determine PK field name - default to "ID" convention
 	if pkField == "" {
@@ -265,7 +232,7 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 		ModelType:       tType,
 		ParentType:      parentType,
 		ParentMeta:      b.parentMeta,
-		ForeignKeyCol:   parentRel.foreignKeyCol,
+		ForeignKeyCol:   parentRel.ForeignKeyCol,
 		ParentJoinCol:   parentJoinCol,
 		ParentJoinField: parentJoinField,
 		ChildMeta:       make(map[string]*metadata.TypeMetadata),
@@ -291,7 +258,7 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 		for _, config := range authMap {
 			if config != nil {
 				config.ParentAuth = b.parentGetAuth
-				config.ParentIncludeName = parentRel.fieldName
+				config.ParentIncludeName = parentRel.FieldName
 			}
 		}
 	}
@@ -351,6 +318,20 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 		meta.BatchLimit = batchLimit
 	}
 
+	// Set max body size — explicit default, no magic zero
+	if maxBodySize > 0 {
+		meta.MaxBodySize = maxBodySize
+	} else {
+		meta.MaxBodySize = metadata.DefaultMaxBodySize
+	}
+
+	// Set max upload size for file resources
+	if maxUploadSize > 0 {
+		meta.MaxUploadSize = maxUploadSize
+	} else {
+		meta.MaxUploadSize = metadata.DefaultMaxUploadSize
+	}
+
 	// Create middleware to inject metadata into context
 	metadataMiddleware := createMetadataMiddleware(meta)
 
@@ -362,9 +343,40 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	}
 }
 
+// registerSingleRoutes registers GET (and optionally PUT/PATCH) for single-object routes.
+func registerSingleRoutes[T any](r chi.Router, b *Builder, meta *metadata.TypeMetadata, singleRoute *SingleRouteConfig, relationName string, custom customHandlers[T], authMap map[string]*AuthConfig) {
+	// Use parent's URL param UUID so handler gets parent ID, or empty for root-level
+	meta.URLParamUUID = ""
+	if b.parentMeta != nil {
+		meta.URLParamUUID = b.parentMeta.URLParamUUID
+	}
+	meta.RelationName = relationName
+	meta.ParentFKField = singleRoute.ParentFKField
+
+	getFunc := custom.get
+	if getFunc == nil {
+		getFunc = handler.StandardGetByParentRelation[T]
+	}
+	r.Method("GET", "/", wrapHandler(handler.Get[T](getFunc), authMap[MethodGet]))
+
+	if singleRoute.WithUpdate {
+		updateFunc := custom.update
+		if updateFunc == nil {
+			updateFunc = handler.StandardUpdateByParentRelation[T]
+		}
+		r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), authMap[MethodPut]))
+
+		patchFunc := custom.patch
+		if patchFunc == nil {
+			patchFunc = handler.StandardPatchByParentRelation[T]
+		}
+		r.Method("PATCH", "/", wrapHandler(handler.Patch[T](patchFunc, handler.StandardGetByParentRelation[T]), authMap[MethodPatch]))
+	}
+}
+
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool) {
-	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, isTenantTable)
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool, maxBodySize int64, maxUploadSize int64) {
+	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, isTenantTable, maxBodySize, maxUploadSize)
 	meta := setup.meta
 	authMap := setup.authMap
 	metadataMiddleware := setup.metadataMiddleware
@@ -377,31 +389,7 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 		var nestedRouter chi.Router
 
 		if singleRoute != nil {
-			// Single route registration (for belongs-to relations like /posts/{id}/author)
-			// Use parent's URL param UUID so handler gets parent ID, or empty for root-level
-			meta.URLParamUUID = ""
-			if b.parentMeta != nil {
-				meta.URLParamUUID = b.parentMeta.URLParamUUID
-			}
-			meta.RelationName = relationName
-			meta.ParentFKField = singleRoute.ParentFKField
-
-			// GET endpoint - returns the single related object
-			getFunc := custom.get
-			if getFunc == nil {
-				getFunc = handler.StandardGetByParentRelation[T]
-			}
-			r.Method("GET", "/", wrapHandler(handler.Get[T](getFunc), authMap[MethodGet]))
-
-			// PUT endpoint - updates the single related object (optional)
-			if singleRoute.WithPut {
-				updateFunc := custom.update
-				if updateFunc == nil {
-					updateFunc = handler.StandardUpdateByParentRelation[T]
-				}
-				r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), authMap[MethodPut]))
-			}
-
+			registerSingleRoutes[T](r, b, meta, singleRoute, relationName, custom, authMap)
 			nestedRouter = r
 		} else {
 			// Standard CRUD routes
@@ -442,6 +430,15 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 						r.Method("PUT", "/", wrapHandler(handler.BatchUpdate[T](batchUpdateFunc), authMap[MethodBatchUpdate]))
 					}
 
+					// Batch patch - PATCH /resources/batch
+					if authMap[MethodBatchPatch] != nil {
+						batchPatchFunc := batch.patch
+						if batchPatchFunc == nil {
+							batchPatchFunc = handler.StandardBatchPatch[T]
+						}
+						r.Method("PATCH", "/", wrapHandler(handler.BatchPatch[T](batchPatchFunc), authMap[MethodBatchPatch]))
+					}
+
 					// Batch delete - DELETE /resources/batch
 					if authMap[MethodBatchDelete] != nil {
 						batchDeleteFunc := batch.delete
@@ -475,6 +472,16 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 						updateFunc = handler.StandardUpdate[T]
 					}
 					r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), authMap[MethodPut]))
+				}
+
+				// Patch endpoint - PATCH /resources/{id}
+				// File resources don't support patch (you delete and re-upload)
+				if !isFileResource {
+					patchFunc := custom.patch
+					if patchFunc == nil {
+						patchFunc = handler.StandardPatch[T]
+					}
+					r.Method("PATCH", "/", wrapHandler(handler.Patch[T](patchFunc, handler.StandardGet[T]), authMap[MethodPatch]))
 				}
 
 				// Delete endpoint - DELETE /resources/{id}
@@ -530,7 +537,6 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 		if nested != nil && nestedRouter != nil {
 			childBuilder := &Builder{
 				router:                  nestedRouter,
-				db:                      b.db,
 				parentMeta:              meta,
 				parentChildRelationAuth: setup.childRelationAuth,
 				parentGetAuth:           setup.authMap[MethodGet],
@@ -538,6 +544,58 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 			nested(childBuilder)
 		}
 	})
+}
+
+// resolveParentRelationship determines the parent type, relation, join column, and join field
+// for a child resource. When joinOn is provided, field names are resolved to column names via
+// Bun schema. Otherwise, the relation is discovered automatically via datastore.FindRelation.
+// Returns defaults of "id"/"ID" for join column/field when not otherwise determined.
+func resolveParentRelationship(parentMeta *metadata.TypeMetadata, childType reflect.Type, typeName string, joinOn *JoinOnConfig) (reflect.Type, datastore.Relation, string, string) {
+	var parentType reflect.Type
+	if parentMeta != nil {
+		parentType = parentMeta.ModelType
+	}
+
+	var parentRel datastore.Relation
+	var parentJoinCol string
+	var parentJoinField string
+	if joinOn != nil && parentMeta != nil {
+		childCol, err := datastore.ColumnName(childType, joinOn.ChildCol)
+		if err != nil {
+			slog.WarnContext(context.Background(), "WithJoinOn: invalid child field",
+				"type", typeName,
+				"field", joinOn.ChildCol,
+				"error", err)
+		}
+		parentCol, err := datastore.ColumnName(parentMeta.ModelType, joinOn.ParentCol)
+		if err != nil {
+			slog.WarnContext(context.Background(), "WithJoinOn: invalid parent field",
+				"type", typeName,
+				"field", joinOn.ParentCol,
+				"error", err)
+		}
+		parentRel = datastore.Relation{ForeignKeyCol: childCol, ParentJoinCol: parentCol}
+		parentJoinCol = parentCol
+		parentJoinField = joinOn.ParentCol
+	} else {
+		var err error
+		parentRel, err = datastore.FindRelation(childType, parentType)
+		if err != nil {
+			slog.WarnContext(context.Background(), "could not find parent relationship",
+				"type", typeName,
+				"error", err)
+		}
+		parentJoinCol = parentRel.ParentJoinCol
+	}
+
+	if parentJoinCol == "" {
+		parentJoinCol = "id"
+	}
+	if parentJoinField == "" {
+		parentJoinField = "ID"
+	}
+
+	return parentType, parentRel, parentJoinCol, parentJoinField
 }
 
 // createMetadataMiddleware creates middleware that injects TypeMetadata and QueryOptions into context.
@@ -550,6 +608,12 @@ func createMetadataMiddleware(meta *metadata.TypeMetadata) func(http.Handler) ht
 			// Parse query options and add to context
 			opts := metadata.ParseQueryOptions(r.URL.Query())
 			ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+			// Limit request body size to prevent memory exhaustion.
+			// File resources are excluded — they have their own limit in the Create handler.
+			if !meta.IsFileResource {
+				r.Body = http.MaxBytesReader(w, r.Body, meta.MaxBodySize)
+			}
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -576,7 +640,7 @@ func createParentIDMiddleware(paramUUID string) func(http.Handler) http.Handler 
 			// Keep as string to support both int and UUID PKs
 			parentID := chi.URLParam(r, paramUUID)
 			if parentID == "" {
-				http.Error(w, "missing parent ID", http.StatusBadRequest)
+				handler.WriteError(w, http.StatusBadRequest, handler.ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 				return
 			}
 
@@ -595,85 +659,6 @@ func createParentIDMiddleware(paramUUID string) func(http.Handler) http.Handler 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-// parentRelation holds the results of finding a parent relationship
-type parentRelation struct {
-	foreignKeyCol string // FK column name (e.g., "author_id")
-	parentJoinCol string // Parent join column name (e.g., "id") — right side of join: tag
-	fieldName     string // Struct field name for belongs-to (e.g., "Author")
-}
-
-// findParentRelationshipFromType uses Bun's schema to find the relationship between child and parent.
-// Checks for:
-// 1. Child has belongs-to Parent (e.g., Article belongs-to User) — FK is on child
-// 2. Parent has has-many/has-one Child — extract join columns from parent's relation
-func findParentRelationshipFromType(db *bun.DB, childType reflect.Type, parentType reflect.Type) (parentRelation, error) {
-	if parentType == nil {
-		return parentRelation{}, nil
-	}
-
-	childTable := db.Table(childType)
-
-	// Case 1: child has a belongs-to relation pointing to parent
-	for _, rel := range childTable.Relations {
-		if rel.Type == schema.BelongsToRelation && rel.JoinTable.Type == parentType {
-			if len(rel.BasePKs) > 0 && len(rel.JoinPKs) > 0 {
-				return parentRelation{
-					foreignKeyCol: rel.BasePKs[0].Name,
-					parentJoinCol: rel.JoinPKs[0].Name,
-					fieldName:     rel.Field.GoName,
-				}, nil
-			}
-		}
-	}
-
-	// Case 2: parent has has-many or has-one pointing to child
-	parentTable := db.Table(parentType)
-	for _, rel := range parentTable.Relations {
-		if (rel.Type == schema.HasManyRelation || rel.Type == schema.HasOneRelation) && rel.JoinTable.Type == childType {
-			if len(rel.BasePKs) > 0 && len(rel.JoinPKs) > 0 {
-				return parentRelation{
-					foreignKeyCol: rel.JoinPKs[0].Name,
-					parentJoinCol: rel.BasePKs[0].Name,
-					fieldName:     rel.Field.GoName,
-				}, nil
-			}
-		}
-	}
-
-	// Case 3: parent has belongs-to pointing to child (inverted belongs-to,
-	// e.g., Post.Author belongs-to User — FK author_id is on the parent)
-	for _, rel := range parentTable.Relations {
-		if rel.Type == schema.BelongsToRelation && rel.JoinTable.Type == childType {
-			if len(rel.BasePKs) > 0 && len(rel.JoinPKs) > 0 {
-				return parentRelation{
-					foreignKeyCol: rel.BasePKs[0].Name,
-					parentJoinCol: rel.JoinPKs[0].Name,
-					fieldName:     rel.Field.GoName,
-				}, nil
-			}
-		}
-	}
-
-	return parentRelation{}, fmt.Errorf("no relationship between %s and %s found", childType.Name(), parentType.Name())
-}
-
-// columnFromGoName resolves a Go field name to its SQL column name using Bun's schema.
-func columnFromGoName(db *bun.DB, tType reflect.Type, goName string) (string, error) {
-	table := db.Table(tType)
-	for _, field := range table.Fields {
-		if field.GoName == goName {
-			return field.Name, nil
-		}
-	}
-	return "", fmt.Errorf("field %s not found on type %s", goName, tType.Name())
-}
-
-// getTableName returns the SQL table name for a model type using Bun's schema.
-func getTableName(db *bun.DB, tType reflect.Type) string {
-	table := db.Table(tType)
-	return table.Name
 }
 
 // mergeQueryConfigs applies query configurations to metadata and returns a new copy.
@@ -696,6 +681,9 @@ func mergeQueryConfigs(meta *metadata.TypeMetadata, queryConfigs []QueryConfig) 
 		}
 		if qc.DefaultLimit > 0 {
 			result.DefaultLimit = qc.DefaultLimit
+		}
+		if qc.Pagination != metadata.NoPagination {
+			result.Pagination = qc.Pagination
 		}
 		if qc.MaxLimit > 0 {
 			result.MaxLimit = qc.MaxLimit

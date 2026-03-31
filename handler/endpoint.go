@@ -45,14 +45,13 @@ func Endpoint[T any](fn EndpointHandler[T]) http.HandlerFunc {
 
 		payload, err := io.ReadAll(r.Body)
 		if err != nil {
-			slog.DebugContext(rc.ctx, "failed to read request body", "error", err)
-			http.Error(w, "bad request", http.StatusBadRequest)
+			handleBodyReadError(rc.ctx, w, err, "failed to read request body")
 			return
 		}
 
 		result, statusCode, err := fn(rc.ctx, rc.svc, rc.meta, rc.auth, rc.id, rc.item, payload)
 		if err != nil {
-			handleMutationError(rc.ctx, w, err, "endpoint")
+			handleOperationError(rc.ctx, w, err, "endpoint")
 			return
 		}
 
@@ -70,7 +69,7 @@ func RootEndpoint(fn RootEndpointHandler) http.HandlerFunc {
 
 		result, statusCode, err := fn(ctx, auth, r)
 		if err != nil {
-			handleMutationError(ctx, w, err, "root endpoint")
+			handleOperationError(ctx, w, err, "root endpoint")
 			return
 		}
 

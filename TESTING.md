@@ -4,17 +4,18 @@ go-restgen uses a combination of unit tests, integration tests, and end-to-end A
 
 ## Test Coverage Summary
 
-**Core Framework Coverage: 83.0%** (excluding examples)
+**Core Framework Coverage: 86.6%** (excluding examples)
 
-- **metadata**: 98.4% - Registry and ownership configuration tests
-- **router**: 90.2% - Route registration, middleware, and auth tests
+- **metadata**: 98.6% - Registry and ownership configuration tests
+- **metrics**: 92.7% - Metrics middleware tests
+- **router**: 92.3% - Route registration, middleware, and auth tests
 - **filestore**: 88.9% - File storage abstraction tests
+- **handler**: 88.2% - HTTP handler tests
 - **service**: 82.7% - Comprehensive CRUD operation tests
-- **handler**: 80.7% - HTTP handler tests
-- **datastore**: 78.6% - Database operations (uses SQLite in-memory)
+- **datastore**: 82.3% - Database operations (uses SQLite in-memory)
 - **errors**: 100.0% - Domain error types
 
-**Integration Test Coverage: ~197 end-to-end API tests** (Bruno) across 12 examples
+**Integration Test Coverage: 300 end-to-end API tests** (Bruno) across 16 examples
 
 All unit tests use SQLite in-memory databases - no external database required!
 
@@ -29,7 +30,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 go tool cover -func=/tmp/coverage.out
 ```
 
-This gives accurate framework coverage (75.3%) without including example applications.
+This gives accurate framework coverage (86.6%) without including example applications.
 
 ### All Tests (Including Examples)
 
@@ -88,7 +89,7 @@ Tests verify:
 
 ### End-to-End API Tests (Bruno)
 
-Located in `bruno/` directory with ~197 tests across 12 example applications.
+Located in `bruno/` directory with 300 tests across 16 example applications.
 
 **Running All Tests:**
 ```bash
@@ -103,18 +104,22 @@ Located in `bruno/` directory with ~197 tests across 12 example applications.
 ```
 
 **Examples and Test Counts:**
-- **simple** (17 tests) - CRUD, filtering, sorting, pagination
+- **simple** (19 tests) - CRUD, filtering, sorting, pagination
 - **nested** (16 tests) - 3-level nested resources, parent validation
-- **auth** (35 tests) - Scopes, ownership, admin bypass
+- **auth** (48 tests) - Scopes, ownership, admin bypass
 - **uuid** (14 tests) - UUID primary keys
 - **validator** (16 tests) - Custom validation
 - **audit** (8 tests) - Audit logging
-- **relations** (23 tests) - Relation includes (?include=)
+- **relations** (24 tests) - Relation includes (?include=)
 - **files-proxy** (13 tests) - File upload with proxy mode
 - **files-signed** (13 tests) - File upload with signed URLs
 - **actions** (12 tests) - Custom action endpoints
-- **batch** (14 tests) - Batch create/update/delete
+- **batch** (15 tests) - Batch create/update/delete, nested batch create
 - **custom** (16 tests) - Custom handler functions
+- **custom-join** (11 tests) - Custom join fields
+- **query** (36 tests) - Filtering, sorting, pagination, sum
+- **tenant** (29 tests) - Multi-tenant isolation
+- **anything** (10 tests) - Anything funcs, SSE, webhooks
 
 See `bruno/README.md` for running instructions.
 
@@ -166,12 +171,13 @@ For CI/CD pipelines:
 ## Coverage Goals
 
 - **errors**: 100% (achieved: 100.0%) ✅
-- **metadata**: > 95% (achieved: 98.4%) ✅
-- **router**: > 85% (achieved: 90.2%) ✅
+- **metadata**: > 95% (achieved: 98.6%) ✅
+- **metrics**: > 90% (achieved: 92.7%) ✅
+- **router**: > 85% (achieved: 92.3%) ✅
 - **filestore**: > 85% (achieved: 88.9%) ✅
+- **handler**: > 85% (achieved: 88.2%) ✅
 - **service**: > 80% (achieved: 82.7%) ✅
-- **handler**: > 75% (achieved: 80.7%) ✅
-- **datastore**: > 75% (achieved: 78.6%) ✅
+- **datastore**: > 80% (achieved: 82.3%) ✅
 
 Main coverage gaps are in error path testing that requires mocking (service unavailability, rare edge cases).
 

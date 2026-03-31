@@ -16,16 +16,16 @@ auth:bearer {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 tests {
   test("Alice sees only her own project in org-a (tenant + ownership)", function() {
-    expect(res.body).to.be.an('array');
-    expect(res.body.length).to.equal(1);
-    expect(res.body[0].name).to.equal("Alpha Project");
-    expect(res.body[0].org_id).to.equal("org-a");
-    expect(res.body[0].owner_id).to.equal("alice");
+    expect(res.body.data).to.be.an('array');
+    expect(res.body.data.length).to.equal(1);
+    expect(res.body.data[0].name).to.equal("Alpha Project");
+    expect(res.body.data[0].org_id).to.equal("org-a");
+    expect(res.body.data[0].owner_id).to.equal("alice");
   });
 }
 

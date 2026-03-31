@@ -139,20 +139,28 @@ func authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// getMe is a custom get function that returns a hardcoded user
-// Used for /me endpoint where there's no parent FK - the ID comes from custom logic
+// getMe is a custom get function that returns the authenticated user
+// Used for /me endpoint where there's no parent FK - the ID comes from auth context
 func getMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string) (*User, error) {
-	// In a real app, you'd look up the user ID from auth context
-	// For this example, we just return user with ID "1"
-	return svc.Get(ctx, "1")
+	db, _ := datastore.Get()
+	var user User
+	err := db.GetDB().NewSelect().Model(&user).Where("external_id = ?", auth.UserID).Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
 }
 
-// updateMe is a custom update function that updates the hardcoded user
+// updateMe is a custom update function that updates the authenticated user
 func updateMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string, item User) (*User, error) {
-	// In a real app, you'd look up the user ID from auth context
-	// For this example, we just update user with ID 1
-	item.ID = 1
-	return svc.Update(ctx, "1", item)
+	db, _ := datastore.Get()
+	var user User
+	err := db.GetDB().NewSelect().Model(&user).Where("external_id = ?", auth.UserID).Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	item.ID = user.ID
+	return svc.Update(ctx, fmt.Sprintf("%d", user.ID), item)
 }
 
 func main() {
@@ -193,27 +201,27 @@ func main() {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 
 	// Users - public access
 	router.RegisterRoutes[User](b, "/users",
 		router.AllPublic(),
 	)
 
-	// /me - single route with custom get/put that returns current user from auth
-	// This demonstrates AsSingleRouteWithPut("") with no parent FK - ID comes from auth context
+	// /me - single route with custom get/put/patch that returns current user from auth
+	// This demonstrates AsSingleRouteWithUpdate("") with no parent FK - ID comes from auth context
 	router.RegisterRoutes[User](b, "/me",
-		router.AsSingleRouteWithPut(""),
-		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut}, Scopes: []string{"user"}},
+		router.AsSingleRouteWithUpdate(""),
+		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut, router.MethodPatch}, Scopes: []string{"user"}},
 		router.WithCustomGet(getMe),
 		router.WithCustomUpdate(updateMe),
 	)
 
-	// /broken-me - single route without custom get/put (should return 500)
-	// This demonstrates what happens when AsSingleRouteWithPut("") is used without custom handlers
+	// /broken-me - single route without custom get/put/patch (should return 500)
+	// This demonstrates what happens when AsSingleRouteWithUpdate("") is used without custom handlers
 	router.RegisterRoutes[User](b, "/broken-me",
-		router.AsSingleRouteWithPut(""),
-		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut}, Scopes: []string{"user"}},
+		router.AsSingleRouteWithUpdate(""),
+		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut, router.MethodPatch}, Scopes: []string{"user"}},
 	)
 
 	// Posts - top level, ownership-based with admin bypass
@@ -221,11 +229,11 @@ func main() {
 	router.RegisterRoutes[Post](b, "/posts",
 		router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
 		func(b *router.Builder) {
-			// Author - single route for belongs-to relation (GET/PUT /posts/{id}/author)
+			// Author - single route for belongs-to relation (GET/PUT/PATCH /posts/{id}/author)
 			// Also enables ?include=Author on Post
 			router.RegisterRoutes[User](b, "/author",
 				router.WithRelationName("Author"),
-				router.AsSingleRouteWithPut("AuthorID"),
+				router.AsSingleRouteWithUpdate("AuthorID"),
 				router.AllPublic(),
 			)
 			// Comments - has-many collection route (GET /posts/{id}/comments)

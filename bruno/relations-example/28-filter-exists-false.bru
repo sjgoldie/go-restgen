@@ -1,0 +1,32 @@
+meta {
+  name: Filter Exists False - Posts without Comments
+  type: http
+  seq: 28
+}
+
+get {
+  url: {{baseUrl}}/posts?filter[Comments][exists]=false
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:admin:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 1
+}
+
+tests {
+  test("Only posts without comments returned", function() {
+    expect(res.body.data[0].title).to.equal("Empty Post");
+  });
+}
+
+docs {
+  Admin filters posts that have NO comments.
+  Only the Empty Post matches.
+}

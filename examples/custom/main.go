@@ -218,18 +218,18 @@ func customUpdateMe(ctx context.Context, svc *service.Common[User], _ *metadata.
 }
 
 // Custom handler: GetAll tasks filtered by current user
-func customGetMyTasks(ctx context.Context, svc *service.Common[Task], _ *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*Task, int, map[string]float64, error) {
+func customGetMyTasks(ctx context.Context, svc *service.Common[Task], _ *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*Task, int, map[string]float64, *metadata.CursorInfo, error) {
 	if auth == nil {
-		return nil, 0, nil, fmt.Errorf("not authenticated")
+		return nil, 0, nil, nil, fmt.Errorf("not authenticated")
 	}
 	// Get all tasks for current user
 	tasks := []*Task{} // Initialize as empty slice, not nil
 	err := db.GetDB().NewSelect().Model(&tasks).Where("owner_id = ?", auth.UserID).Order("priority DESC", "created_at DESC").Scan(ctx)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 	_ = svc
-	return tasks, len(tasks), nil, nil
+	return tasks, len(tasks), nil, nil, nil
 }
 
 // Custom handler: Create task with auto-set owner
@@ -317,12 +317,12 @@ func main() {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 
 	// /me endpoint - single route with custom Get and Update using auth token
-	// AsSingleRouteWithPut("") creates GET /me and PUT /me (no {id} parameter)
+	// AsSingleRouteWithUpdate("") creates GET, PUT, and PATCH /me (no {id} parameter)
 	router.RegisterRoutes[User](b, "/me",
-		router.AsSingleRouteWithPut(""), // Empty string = no parent FK, ID from custom logic
+		router.AsSingleRouteWithUpdate(""), // Empty string = no parent FK, ID from custom logic
 		router.IsAuthenticated(),
 		router.WithCustomGet(customGetMe),
 		router.WithCustomUpdate(customUpdateMe),

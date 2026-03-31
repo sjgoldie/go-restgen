@@ -1,0 +1,22 @@
+meta {
+  name: Patch Non-existent User
+  type: http
+  seq: 23
+}
+
+patch {
+  url: {{baseUrl}}/users/99999
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Ghost"
+  }
+}
+
+assert {
+  res.status: eq 404
+  res.body.error: eq not_found
+}

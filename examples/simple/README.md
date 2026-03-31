@@ -14,7 +14,7 @@ go run main.go
 
 ## Testing
 
-This example includes 17 comprehensive Bruno API tests that verify the full CRUD lifecycle plus filtering, sorting, and pagination. See [`../../bruno/README.md`](../../bruno/README.md) for instructions on running the tests.
+This example includes 19 comprehensive Bruno API tests that verify the full CRUD lifecycle plus filtering, sorting, pagination, and request body size limits. See [`../../bruno/README.md`](../../bruno/README.md) for instructions on running the tests.
 
 Run tests with the automated script:
 ```bash
@@ -48,8 +48,14 @@ curl 'http://localhost:8080/users?filter[Name][like]=John%'
 # Sort by name descending
 curl 'http://localhost:8080/users?sort=-Name'
 
-# Pagination with total count
-curl 'http://localhost:8080/users?limit=10&offset=0&count=true'
+# Cursor pagination (default) with total count
+curl 'http://localhost:8080/users?limit=10&count=true'
+
+# Next page using cursor from previous response
+curl 'http://localhost:8080/users?limit=10&after=<next_cursor>'
+
+# Offset pagination (opt-in)
+curl 'http://localhost:8080/users?limit=10&offset=20&count=true'
 
 # Combined
 curl 'http://localhost:8080/users?filter[Name][like]=J%&sort=-Name&limit=10&count=true'
@@ -82,16 +88,18 @@ This example shows:
 2. **Model with timestamps** - Automatic `created_at` and `updated_at` handling via `BeforeAppendModel` hook
 3. **Builder API** - Register routes with support for nesting:
    ```go
-   b := router.NewBuilder(r, db.GetDB())
+   b := router.NewBuilder(r)
    router.RegisterRoutes[User](b, "/users",
        router.AllPublic(),
        router.WithFilters("Name", "Email"),
        router.WithSorts("Name", "Email"),
        router.WithPagination(20, 100),
+       router.WithMaxBodySize(1024),
    )
    ```
 4. **Query parameters** - Filtering, sorting, and pagination with `WithFilters`, `WithSorts`, `WithPagination`
-5. **Security by default** - Path IDs always take precedence over JSON body IDs
+5. **Request body size limits** - Configurable per-resource limit via `WithMaxBodySize` (default: 1 MB)
+6. **Security by default** - Path IDs always take precedence over JSON body IDs
 
 ## Using PostgreSQL Instead
 

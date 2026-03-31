@@ -1,0 +1,43 @@
+meta {
+  name: Security - Include Count with Ownership
+  type: http
+  seq: 35
+}
+
+get {
+  url: {{baseUrl}}/posts?include_count=Comments
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.counts: isDefined
+  res.body.counts.Comments: isDefined
+}
+
+tests {
+  test("Only Alice's posts returned (ownership enforced)", function() {
+    expect(res.body.data.every(p => p.owner_id === "alice")).to.be.true;
+  });
+
+  test("Counts only include Alice's posts", function() {
+    const counts = res.body.counts.Comments;
+    const alicePostId = String(bru.getVar("alicePostId"));
+    expect(counts[alicePostId]).to.equal(2);
+
+    const bobPostId = String(bru.getVar("bobPostId"));
+    expect(counts[bobPostId]).to.be.undefined;
+  });
+}
+
+docs {
+  Alice requests include_count=Comments. Ownership enforced:
+  Only her posts are returned, and counts only cover her posts.
+  Bob's post and its counts are not leaked.
+}

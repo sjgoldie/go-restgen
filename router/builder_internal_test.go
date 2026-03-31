@@ -1,39 +1,53 @@
 package router
 
 import (
+	"bytes"
 	"context"
-	"database/sql"
 	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/sqlitedialect"
-	_ "github.com/uptrace/bun/driver/sqliteshim"
 
 	"github.com/sjgoldie/go-restgen/filestore"
 	"github.com/sjgoldie/go-restgen/metadata"
 )
 
-func testDB(t *testing.T) *bun.DB {
-	t.Helper()
-	sqlDB, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = sqlDB.Close() })
-	return bun.NewDB(sqlDB, sqlitedialect.New())
+const testFieldName = "Name"
+const testParentIDCol = "parent_id"
+
+// fileModel with bun tags for file resource tests (prepareMetadata needs bun table)
+type fileModel struct {
+	bun.BaseModel `bun:"table:file_models"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	Name          string `bun:"name"`
+	filestore.FileFields
 }
 
-const testFieldName = "Name"
-const testAuthorIDCol = "author_id"
-
-// testModel is a simple model for testing route registration
 type testModel struct {
-	bun.BaseModel `bun:"table:test_models"`
-	ID            int    `bun:"id,pk,autoincrement" json:"id"`
-	Name          string `bun:"name" json:"name"`
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// Models with bun tags for resolveParentRelationship tests
+type parentModel struct {
+	bun.BaseModel `bun:"table:rpr_parents"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	Code          string `bun:"code"`
+	Name          string `bun:"name"`
+}
+
+type childModel struct {
+	bun.BaseModel `bun:"table:rpr_children"`
+	ID            int          `bun:"id,pk,autoincrement"`
+	ParentID      int          `bun:"parent_id,notnull"`
+	Parent        *parentModel `bun:"rel:belongs-to,join:parent_id=id"`
+	Title         string       `bun:"title"`
 }
 
 func TestMergeQueryConfigs(t *testing.T) {
@@ -175,128 +189,67 @@ func TestMergeQueryConfigs(t *testing.T) {
 			t.Error("original metadata was mutated")
 		}
 	})
-}
 
-type columnFromGoNameTestModel struct {
-	bun.BaseModel `bun:"table:test_ftc"`
-	ID            int    `bun:"id,pk,autoincrement"`
-	NMI           string `bun:"nmi,notnull"`
-	AuthorID      int    `bun:"author_id,notnull"`
-}
-
-func TestColumnFromGoName(t *testing.T) {
-	db := testDB(t)
-	tType := reflect.TypeOf(columnFromGoNameTestModel{})
-
-	t.Run("standard field", func(t *testing.T) {
-		col, err := columnFromGoName(db, tType, "AuthorID")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+	t.Run("cursor pagination mode is applied from config", func(t *testing.T) {
+		original := &metadata.TypeMetadata{
+			TypeID: "test",
 		}
-		if col != testAuthorIDCol {
-			t.Errorf("expected 'author_id', got '%s'", col)
+
+		configs := []QueryConfig{
+			{
+				DefaultLimit: 20,
+				MaxLimit:     100,
+				Pagination:   CursorMode,
+			},
+		}
+
+		result := mergeQueryConfigs(original, configs)
+
+		if result.Pagination != metadata.CursorPagination {
+			t.Errorf("expected CursorPagination, got %d", result.Pagination)
+		}
+		if result.DefaultLimit != 20 {
+			t.Errorf("expected DefaultLimit 20, got %d", result.DefaultLimit)
 		}
 	})
 
-	t.Run("acronym field", func(t *testing.T) {
-		col, err := columnFromGoName(db, tType, "NMI")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+	t.Run("offset pagination mode is applied from config", func(t *testing.T) {
+		original := &metadata.TypeMetadata{
+			TypeID: "test",
 		}
-		if col != "nmi" {
-			t.Errorf("expected 'nmi', got '%s'", col)
+
+		configs := []QueryConfig{
+			{
+				DefaultLimit: 20,
+				MaxLimit:     100,
+				Pagination:   OffsetMode,
+			},
+		}
+
+		result := mergeQueryConfigs(original, configs)
+
+		if result.Pagination != metadata.OffsetPagination {
+			t.Errorf("expected OffsetPagination, got %d", result.Pagination)
 		}
 	})
 
-	t.Run("pk field", func(t *testing.T) {
-		col, err := columnFromGoName(db, tType, "ID")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+	t.Run("pagination mode not overridden when config has NoPagination", func(t *testing.T) {
+		original := &metadata.TypeMetadata{
+			TypeID:     "test",
+			Pagination: metadata.CursorPagination,
 		}
-		if col != "id" {
-			t.Errorf("expected 'id', got '%s'", col)
-		}
-	})
 
-	t.Run("field not found", func(t *testing.T) {
-		_, err := columnFromGoName(db, tType, "Nonexistent")
-		if err == nil {
-			t.Fatal("expected error for nonexistent field")
+		configs := []QueryConfig{
+			{
+				// Only setting filters, no pagination mode
+				FilterableFields: []string{"Name"},
+			},
 		}
-	})
-}
 
-// Models for testing findParentRelationshipFromType — inverted belongs-to case
-// (parent has belongs-to pointing to child, e.g., Post.Author belongs-to User)
-type parentRelUser struct {
-	bun.BaseModel `bun:"table:parent_rel_users"`
-	ID            int    `bun:"id,pk,autoincrement"`
-	Name          string `bun:"name"`
-}
+		result := mergeQueryConfigs(original, configs)
 
-type parentRelPost struct {
-	bun.BaseModel `bun:"table:parent_rel_posts"`
-	ID            int            `bun:"id,pk,autoincrement"`
-	AuthorID      int            `bun:"author_id,notnull"`
-	Author        *parentRelUser `bun:"rel:belongs-to,join:author_id=id"`
-	Title         string         `bun:"title"`
-}
-
-func TestFindParentRelationshipFromType(t *testing.T) {
-	db := testDB(t)
-	userType := reflect.TypeOf(parentRelUser{})
-	postType := reflect.TypeOf(parentRelPost{})
-
-	t.Run("child belongs-to parent", func(t *testing.T) {
-		// Post belongs-to User (standard case: FK author_id is on Post)
-		rel, err := findParentRelationshipFromType(db, postType, userType)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if rel.foreignKeyCol != testAuthorIDCol {
-			t.Errorf("expected foreignKeyCol 'author_id', got %q", rel.foreignKeyCol)
-		}
-		if rel.parentJoinCol != "id" {
-			t.Errorf("expected parentJoinCol 'id', got %q", rel.parentJoinCol)
-		}
-		if rel.fieldName != "Author" {
-			t.Errorf("expected fieldName 'Author', got %q", rel.fieldName)
-		}
-	})
-
-	t.Run("parent belongs-to child (inverted)", func(t *testing.T) {
-		// User registered as child of Post — Post.Author belongs-to User
-		// FK author_id is on the parent (Post), not on the child (User)
-		rel, err := findParentRelationshipFromType(db, userType, postType)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if rel.foreignKeyCol != testAuthorIDCol {
-			t.Errorf("expected foreignKeyCol 'author_id', got %q", rel.foreignKeyCol)
-		}
-		if rel.parentJoinCol != "id" {
-			t.Errorf("expected parentJoinCol 'id', got %q", rel.parentJoinCol)
-		}
-		if rel.fieldName != "Author" {
-			t.Errorf("expected fieldName 'Author', got %q", rel.fieldName)
-		}
-	})
-
-	t.Run("no relationship", func(t *testing.T) {
-		unrelatedType := reflect.TypeOf(testModel{})
-		_, err := findParentRelationshipFromType(db, unrelatedType, userType)
-		if err == nil {
-			t.Fatal("expected error for unrelated types")
-		}
-	})
-
-	t.Run("nil parent returns empty", func(t *testing.T) {
-		rel, err := findParentRelationshipFromType(db, postType, nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if rel.foreignKeyCol != "" {
-			t.Errorf("expected empty foreignKeyCol, got %q", rel.foreignKeyCol)
+		if result.Pagination != metadata.CursorPagination {
+			t.Errorf("expected original CursorPagination preserved, got %d", result.Pagination)
 		}
 	})
 }
@@ -398,7 +351,7 @@ func TestSharedChildRelationAuth(t *testing.T) {
 		// This test verifies that when we use AllPublicWithBatch and register child routes,
 		// the batch auth configs have access to the same ChildAuth map as regular GET/LIST configs
 		r := chi.NewRouter()
-		b := NewBuilder(r, testDB(t))
+		b := NewBuilder(r)
 
 		// We need to capture the auth configs to verify they share the same ChildAuth
 		// Since we can't easily access them after registration, we'll verify the behavior
@@ -489,7 +442,361 @@ func TestFileResourceRegistration(t *testing.T) {
 		}
 
 		r := chi.NewRouter()
-		b := NewBuilder(r, testDB(t))
+		b := NewBuilder(r)
 		RegisterRoutes[testModel](b, "/test", AsFileResource())
+	})
+}
+
+func TestResolveParentRelationship(t *testing.T) {
+	childType := reflect.TypeOf(childModel{})
+	parentType := reflect.TypeOf(parentModel{})
+
+	parentMeta := &metadata.TypeMetadata{
+		ModelType: parentType,
+	}
+
+	t.Run("no parent returns empty relation with defaults", func(t *testing.T) {
+		gotParentType, rel, joinCol, joinField := resolveParentRelationship(nil, childType, "childModel", nil)
+
+		if gotParentType != nil {
+			t.Errorf("expected nil parentType, got %v", gotParentType)
+		}
+		if rel.ForeignKeyCol != "" {
+			t.Errorf("expected empty ForeignKeyCol, got %q", rel.ForeignKeyCol)
+		}
+		if joinCol != "id" {
+			t.Errorf("expected default joinCol \"id\", got %q", joinCol)
+		}
+		if joinField != "ID" {
+			t.Errorf("expected default joinField \"ID\", got %q", joinField)
+		}
+	})
+
+	t.Run("auto-discovers belongs-to relation", func(t *testing.T) {
+		gotParentType, rel, joinCol, joinField := resolveParentRelationship(parentMeta, childType, "childModel", nil)
+
+		if gotParentType != parentType {
+			t.Errorf("expected parentType %v, got %v", parentType, gotParentType)
+		}
+		if rel.ForeignKeyCol != testParentIDCol {
+			t.Errorf("expected ForeignKeyCol \"parent_id\", got %q", rel.ForeignKeyCol)
+		}
+		if joinCol != "id" {
+			t.Errorf("expected joinCol \"id\", got %q", joinCol)
+		}
+		if joinField != "ID" {
+			t.Errorf("expected joinField \"ID\", got %q", joinField)
+		}
+	})
+
+	t.Run("explicit joinOn resolves field names to columns", func(t *testing.T) {
+		joinOn := &JoinOnConfig{
+			ChildCol:  "ParentID",
+			ParentCol: "Code",
+		}
+
+		gotParentType, rel, joinCol, joinField := resolveParentRelationship(parentMeta, childType, "childModel", joinOn)
+
+		if gotParentType != parentType {
+			t.Errorf("expected parentType %v, got %v", parentType, gotParentType)
+		}
+		if rel.ForeignKeyCol != testParentIDCol {
+			t.Errorf("expected ForeignKeyCol \"parent_id\", got %q", rel.ForeignKeyCol)
+		}
+		if rel.ParentJoinCol != "code" {
+			t.Errorf("expected ParentJoinCol \"code\", got %q", rel.ParentJoinCol)
+		}
+		if joinCol != "code" {
+			t.Errorf("expected joinCol \"code\", got %q", joinCol)
+		}
+		if joinField != "Code" {
+			t.Errorf("expected joinField \"Code\", got %q", joinField)
+		}
+	})
+
+	t.Run("joinOn without parent falls back to auto-discovery", func(t *testing.T) {
+		joinOn := &JoinOnConfig{
+			ChildCol:  "ParentID",
+			ParentCol: "Code",
+		}
+
+		_, rel, joinCol, joinField := resolveParentRelationship(nil, childType, "childModel", joinOn)
+
+		// joinOn is ignored when parentMeta is nil — falls back to FindRelation with nil parentType
+		if rel.ForeignKeyCol != "" {
+			t.Errorf("expected empty ForeignKeyCol, got %q", rel.ForeignKeyCol)
+		}
+		if joinCol != "id" {
+			t.Errorf("expected default joinCol \"id\", got %q", joinCol)
+		}
+		if joinField != "ID" {
+			t.Errorf("expected default joinField \"ID\", got %q", joinField)
+		}
+	})
+
+	t.Run("joinOn with invalid child field logs warning and returns empty col", func(t *testing.T) {
+		joinOn := &JoinOnConfig{
+			ChildCol:  "NonExistentField",
+			ParentCol: "Code",
+		}
+
+		_, rel, _, _ := resolveParentRelationship(parentMeta, childType, "childModel", joinOn)
+
+		// Invalid field returns empty string from ColumnName
+		if rel.ForeignKeyCol != "" {
+			t.Errorf("expected empty ForeignKeyCol for invalid field, got %q", rel.ForeignKeyCol)
+		}
+	})
+
+	t.Run("joinOn with invalid parent field logs warning and returns empty col", func(t *testing.T) {
+		joinOn := &JoinOnConfig{
+			ChildCol:  "ParentID",
+			ParentCol: "NonExistentField",
+		}
+
+		_, rel, joinCol, _ := resolveParentRelationship(parentMeta, childType, "childModel", joinOn)
+
+		if rel.ForeignKeyCol != testParentIDCol {
+			t.Errorf("expected ForeignKeyCol \"parent_id\", got %q", rel.ForeignKeyCol)
+		}
+		// Invalid parent col falls through to default
+		if joinCol != "id" {
+			t.Errorf("expected default joinCol \"id\" for invalid parent field, got %q", joinCol)
+		}
+	})
+
+	t.Run("auto-discovery with unrelated types returns defaults", func(t *testing.T) {
+		unrelatedType := reflect.TypeOf(testModel{})
+		unrelatedMeta := &metadata.TypeMetadata{
+			ModelType: unrelatedType,
+		}
+
+		_, rel, joinCol, joinField := resolveParentRelationship(unrelatedMeta, childType, "childModel", nil)
+
+		// No relation found — ForeignKeyCol may be empty
+		if rel.ForeignKeyCol != "" {
+			t.Errorf("expected empty ForeignKeyCol for unrelated types, got %q", rel.ForeignKeyCol)
+		}
+		if joinCol != "id" {
+			t.Errorf("expected default joinCol \"id\", got %q", joinCol)
+		}
+		if joinField != "ID" {
+			t.Errorf("expected default joinField \"ID\", got %q", joinField)
+		}
+	})
+}
+
+func TestCreateMetadataMiddleware(t *testing.T) {
+	t.Run("applies MaxBytesReader for non-file resources", func(t *testing.T) {
+		meta := &metadata.TypeMetadata{
+			MaxBodySize:    512,
+			IsFileResource: false,
+		}
+
+		middleware := createMetadataMiddleware(meta)
+
+		var capturedBody http.Request
+		handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedBody = *r
+		}))
+
+		body := strings.NewReader(strings.Repeat("x", 1024))
+		req := httptest.NewRequest("POST", "/test", body)
+		w := httptest.NewRecorder()
+
+		handler.ServeHTTP(w, req)
+
+		// Reading beyond the limit should fail
+		buf := make([]byte, 1024)
+		_, err := capturedBody.Body.Read(buf)
+		if err == nil {
+			t.Error("expected error reading beyond MaxBodySize limit")
+		}
+	})
+
+	t.Run("skips MaxBytesReader for file resources", func(t *testing.T) {
+		meta := &metadata.TypeMetadata{
+			MaxBodySize:    512,
+			IsFileResource: true,
+		}
+
+		middleware := createMetadataMiddleware(meta)
+
+		var capturedBody http.Request
+		handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedBody = *r
+		}))
+
+		body := strings.NewReader(strings.Repeat("x", 1024))
+		req := httptest.NewRequest("POST", "/test", body)
+		w := httptest.NewRecorder()
+
+		handler.ServeHTTP(w, req)
+
+		// Should be able to read full body — no limit applied
+		buf := make([]byte, 1024)
+		n, err := capturedBody.Body.Read(buf)
+		if err != nil {
+			t.Errorf("expected no error reading body for file resource, got %v", err)
+		}
+		if n != 1024 {
+			t.Errorf("expected to read 1024 bytes, got %d", n)
+		}
+	})
+
+	t.Run("injects metadata into context", func(t *testing.T) {
+		meta := &metadata.TypeMetadata{
+			TypeID:      "test-type",
+			MaxBodySize: metadata.DefaultMaxBodySize,
+		}
+
+		middleware := createMetadataMiddleware(meta)
+
+		var capturedMeta *metadata.TypeMetadata
+		handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedMeta = r.Context().Value(metadata.MetadataKey).(*metadata.TypeMetadata)
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		w := httptest.NewRecorder()
+
+		handler.ServeHTTP(w, req)
+
+		if capturedMeta == nil {
+			t.Fatal("expected metadata in context")
+		}
+		if capturedMeta.TypeID != "test-type" {
+			t.Errorf("expected TypeID \"test-type\", got %q", capturedMeta.TypeID)
+		}
+	})
+
+	t.Run("uses exact MaxBodySize value from metadata", func(t *testing.T) {
+		customLimit := int64(256)
+		meta := &metadata.TypeMetadata{
+			MaxBodySize: customLimit,
+		}
+
+		middleware := createMetadataMiddleware(meta)
+
+		var capturedBody http.Request
+		handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedBody = *r
+		}))
+
+		// Send exactly at the limit — should succeed
+		body := strings.NewReader(strings.Repeat("x", 256))
+		req := httptest.NewRequest("POST", "/test", body)
+		w := httptest.NewRecorder()
+
+		handler.ServeHTTP(w, req)
+
+		buf := make([]byte, 256)
+		n, _ := capturedBody.Body.Read(buf)
+		if n != 256 {
+			t.Errorf("expected to read 256 bytes at limit, got %d", n)
+		}
+	})
+}
+
+func TestWithMaxUploadSize(t *testing.T) {
+	t.Run("returns MaxUploadSizeConfig with given size", func(t *testing.T) {
+		config := WithMaxUploadSize(10 << 20)
+		if config.Size != 10<<20 {
+			t.Errorf("expected size %d, got %d", 10<<20, config.Size)
+		}
+	})
+}
+
+func TestMaxUploadSizeDefault(t *testing.T) {
+	if !filestore.IsInitialized() {
+		storage := &mockFileStorage{}
+		if err := filestore.Initialize(storage); err != nil {
+			t.Fatalf("failed to initialize filestore: %v", err)
+		}
+	}
+
+	t.Run("file resource gets DefaultMaxUploadSize when not specified", func(t *testing.T) {
+		r := chi.NewRouter()
+		b := NewBuilder(r)
+
+		_, setup := prepareMetadata[fileModel](b, "/files", nil, nil, nil, nil, 0, "", true, "", nil, "", false, 0, 0)
+
+		if setup.meta.MaxUploadSize != metadata.DefaultMaxUploadSize {
+			t.Errorf("expected default MaxUploadSize %d, got %d", metadata.DefaultMaxUploadSize, setup.meta.MaxUploadSize)
+		}
+	})
+
+	t.Run("custom MaxUploadSize is set on metadata", func(t *testing.T) {
+		r := chi.NewRouter()
+		b := NewBuilder(r)
+
+		customSize := int64(10 << 20)
+		_, setup := prepareMetadata[fileModel](b, "/files", nil, nil, nil, nil, 0, "", true, "", nil, "", false, 0, customSize)
+
+		if setup.meta.MaxUploadSize != customSize {
+			t.Errorf("expected MaxUploadSize %d, got %d", customSize, setup.meta.MaxUploadSize)
+		}
+	})
+
+	t.Run("non-file resource gets DefaultMaxUploadSize", func(t *testing.T) {
+		r := chi.NewRouter()
+		b := NewBuilder(r)
+
+		_, setup := prepareMetadata[testModel](b, "/items", nil, nil, nil, nil, 0, "", false, "", nil, "", false, 0, 0)
+
+		if setup.meta.MaxUploadSize != metadata.DefaultMaxUploadSize {
+			t.Errorf("expected default MaxUploadSize %d, got %d", metadata.DefaultMaxUploadSize, setup.meta.MaxUploadSize)
+		}
+	})
+}
+
+func TestRegisterRoutes_UnrecognizedOption(t *testing.T) {
+	t.Run("logs warning for unrecognized option type", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		original := slog.Default()
+		slog.SetDefault(logger)
+		defer slog.SetDefault(original)
+
+		r := chi.NewRouter()
+		b := NewBuilder(r)
+		RegisterRoutes[testModel](b, "/test", "bogus-option")
+
+		output := buf.String()
+		if !strings.Contains(output, "unrecognized option type") {
+			t.Errorf("expected warning about unrecognized option type, got: %s", output)
+		}
+		if !strings.Contains(output, "string") {
+			t.Errorf("expected warning to include type name \"string\", got: %s", output)
+		}
+		if !strings.Contains(output, "/test") {
+			t.Errorf("expected warning to include path \"/test\", got: %s", output)
+		}
+	})
+
+	t.Run("unrecognized option does not prevent valid options from working", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		original := slog.Default()
+		slog.SetDefault(logger)
+		defer slog.SetDefault(original)
+
+		r := chi.NewRouter()
+		b := NewBuilder(r)
+		RegisterRoutes[testModel](b, "/test",
+			AuthConfig{
+				Methods: []string{MethodAll},
+				Scopes:  []string{ScopePublic},
+			},
+			12345,
+		)
+
+		output := buf.String()
+		if !strings.Contains(output, "unrecognized option type") {
+			t.Errorf("expected warning for unrecognized int option, got: %s", output)
+		}
+		if !strings.Contains(output, "int") {
+			t.Errorf("expected warning to include type name \"int\", got: %s", output)
+		}
 	})
 }

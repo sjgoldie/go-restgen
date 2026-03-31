@@ -1,0 +1,30 @@
+meta {
+  name: Cursor Pagination - With sum aggregation
+  type: http
+  seq: 61
+}
+
+get {
+  url: {{baseUrl}}/products?limit=2&sum=Price&count=true
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 2
+  res.body.pagination.has_more: eq true
+  res.body.pagination.total_count: eq 7
+}
+
+tests {
+  test("Sum reflects all items, not just current page", function() {
+    expect(res.body.sums.Price).to.equal(2297);
+  });
+
+  test("Cursor pagination fields present", function() {
+    expect(res.body.pagination.next_cursor).to.be.a("string");
+    expect(res.body.pagination.has_more).to.be.true;
+  });
+}

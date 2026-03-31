@@ -12,17 +12,17 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
-  res.body: length 2
+  res.body.data: isArray
+  res.body.data: length 2
 }
 
 tests {
-  test("X-Sum-Price header contains sum of filtered prices only", function() {
+  test("Sums contain sum of filtered prices only", function() {
     // Only Fruit products: Apple=100 + Banana=50 = 150
-    expect(res.headers['x-sum-price']).to.equal('150');
+    expect(res.body.sums.Price).to.equal(150);
   });
 
   test("All returned products are Fruit", function() {
-    expect(res.body.every(p => p.category === 'Fruit')).to.be.true;
+    expect(res.body.data.every(p => p.category === 'Fruit')).to.be.true;
   });
 }

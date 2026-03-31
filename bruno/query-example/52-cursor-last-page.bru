@@ -1,0 +1,33 @@
+meta {
+  name: Cursor Pagination - Last page (has_more=false)
+  type: http
+  seq: 52
+}
+
+get {
+  url: {{baseUrl}}/products?limit=3&after={{cursorPage2Next}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 1
+  res.body.pagination.has_more: eq false
+  res.body.pagination.prev_cursor: isDefined
+}
+
+tests {
+  test("Returns last product only", function() {
+    expect(res.body.data[0].name).to.equal("FalseItem");
+  });
+
+  test("No next_cursor on last page", function() {
+    expect(res.body.pagination.next_cursor).to.be.undefined;
+  });
+}
+
+script:post-response {
+  bru.setVar("cursorPage3Prev", res.body.pagination.prev_cursor);
+}

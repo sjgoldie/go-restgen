@@ -1,0 +1,39 @@
+meta {
+  name: Security - Exists Filter with Ownership
+  type: http
+  seq: 33
+}
+
+get {
+  url: {{baseUrl}}/posts?filter[Comments][exists]=true
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 1
+}
+
+tests {
+  test("Ownership still enforced - Alice only sees her own posts", function() {
+    expect(res.body.data[0].title).to.equal("Alice's First Post");
+    expect(res.body.data[0].owner_id).to.equal("alice");
+  });
+
+  test("Bob's post is not visible despite having comments", function() {
+    const titles = res.body.data.map(p => p.title);
+    expect(titles).to.not.include("Bob's First Post");
+  });
+}
+
+docs {
+  Alice filters posts by exists=true on Comments.
+  Ownership on Posts is still enforced: Alice only sees her own posts.
+  Bob's post (which also has comments) is not returned.
+}

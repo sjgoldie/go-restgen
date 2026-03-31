@@ -12,12 +12,12 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
-  res.body: length 3
+  res.body.data: isArray
+  res.body.data: length 3
 }
 
 tests {
   test("All results have Category in [Fruit, Bakery]", function() {
-    expect(res.body.every(p => p.category === "Fruit" || p.category === "Bakery")).to.be.true;
+    expect(res.body.data.every(p => p.category === "Fruit" || p.category === "Bakery")).to.be.true;
   });
 }

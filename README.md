@@ -40,7 +40,30 @@ See the [simple example](./examples/simple) for a simple working example to get 
 
 ## Using with AI Coding Agents
 
-The [AGENT.md](./AGENT.md) file provides a concise reference optimized for AI coding assistants (Claude, Copilot, etc.). Point your AI agent to this file for quick, accurate go-restgen implementations.
+### Claude Code / Cursor (Auto-Install)
+
+Install go-restgen rules so your AI agent automatically knows the framework patterns:
+
+```bash
+# Claude Code (default)
+go run github.com/sjgoldie/go-restgen/cmd/install-skill@latest
+
+# Cursor
+go run github.com/sjgoldie/go-restgen/cmd/install-skill@latest --agent=cursor
+
+# Both
+go run github.com/sjgoldie/go-restgen/cmd/install-skill@latest --agent=all
+```
+
+This writes rule files into your project's agent-specific directory (`.claude/skills/go-restgen/` or `.cursor/rules/`). The agent auto-detects them and loads framework context whenever you work on the project — no manual prompting needed.
+
+### Other Agents
+
+For agents that support project-level instruction files (Codex CLI, Cline, etc.), copy the contents of [AGENT.md](./AGENT.md) into your agent's instructions file. For detailed handler signatures and all route options, also include [cmd/install-skill/skill/patterns.md](./cmd/install-skill/skill/patterns.md).
+
+### Manual Prompting
+
+For any AI agent, you can point it directly to the reference file:
 
 **Sample prompt:**
 ```
@@ -225,7 +248,7 @@ type UsageData struct {
     Reading       int    `bun:"reading" json:"reading"`
 }
 
-b := router.NewBuilder(r, db.GetDB())
+b := router.NewBuilder(r)
 router.RegisterRoutes[Site](b, "/sites", router.AllPublic(), func(b *router.Builder) {
     router.RegisterRoutes[UsageData](b, "/usage",
         router.AllPublic(),
@@ -329,19 +352,71 @@ router.RegisterRoutes[Author](b, "/authors",
 | Alice + `?include=Posts` | Author + only Alice's posts (ownership filtered) |
 | Admin + `?include=Posts` | Author + all posts (bypass scope) |
 
+### Nested Includes (Dot Notation)
+
+Use dot notation to load deeper relations in a single request:
+
+```bash
+# Load author's posts and each post's comments
+GET /authors/1?include=Posts.Comments
+
+# Multiple nested paths
+GET /authors/1?include=Posts.Comments,Posts.Tags
+```
+
+**Requirements for child includes (downward):**
+- Each level in the chain must have `WithRelationName` configured on its route registration
+- The struct must have matching relation fields (e.g., `Posts []*Post` with `bun:"rel:has-many"`)
+
+```go
+router.RegisterRoutes[Author](b, "/authors",
+    router.AllPublic(),
+    func(b *router.Builder) {
+        router.RegisterRoutes[Post](b, "/posts",
+            router.AllPublic(),
+            router.WithRelationName("Posts"),  // Enables ?include=Posts on Author
+            func(b *router.Builder) {
+                router.RegisterRoutes[Comment](b, "/comments",
+                    router.AllPublic(),
+                    router.WithRelationName("Comments"),  // Enables ?include=Posts.Comments on Author
+                )
+            },
+        )
+    },
+)
+```
+
+**Parent includes (upward)** work automatically from `rel:belongs-to` tags — no `WithRelationName` needed:
+
+```go
+type Post struct {
+    bun.BaseModel `bun:"table:posts"`
+    ID            int     `bun:"id,pk,autoincrement" json:"id"`
+    AuthorID      int     `bun:"author_id,notnull" json:"author_id"`
+    Author        *Author `bun:"rel:belongs-to,join:author_id=id" json:"author,omitempty"`
+    Title         string  `bun:"title" json:"title"`
+}
+
+// GET /posts/1?include=Author  — loads the parent Author automatically
+```
+
+**Auth is cumulative across levels:**
+- **Access (AND):** a deeper level is only reachable if every level above it passes auth
+- **Ownership (OR):** if any level in the chain has ownership configured, ownership filtering applies to the dotted path
+- If a middle level fails auth, everything below it is silently omitted
+
 ### Key Points
 
 - **Relation name must match the struct field** - `WithRelationName("Posts")` maps to `Posts []*Post` field
 - **Unknown relation names are silently ignored** - for security, no error is returned
 - **Works with GET, LIST, and Actions** - `/authors/1?include=Posts`, `/authors?include=Posts`, and `/orders/1/complete?include=Items`
 - **Does not work with Batch operations** - batch create/update return items without relations (reload separately if needed)
-- **Nested includes supported** - use dot notation for deeper relations: `?include=Posts.Comments`
 
 See the [relations example](./examples/relations) for a complete working example.
 
 ## Single Routes (Belongs-To Relations)
 
-go-restgen supports single-object routes for belongs-to relationships. Unlike collection routes that return arrays, single routes return a single object and only support GET (and optionally PUT).
+go-restgen supports single-object routes for belongs-to relationships. Unlike collection routes that return arrays, single routes return a single object and only support GET (and optionally PUT and/or PATCH).
 
 ### Use Cases
 
@@ -350,7 +425,7 @@ go-restgen supports single-object routes for belongs-to relationships. Unlike co
 
 ### Nested Single Route (Parent FK Field)
 
-When a parent has a foreign key to a child (e.g., `Post.AuthorID` → `User.ID`), use `AsSingleRoute()` or `AsSingleRouteWithPut()`:
+When a parent has a foreign key to a child (e.g., `Post.AuthorID` → `User.ID`), use `AsSingleRoute()` or `AsSingleRouteWithUpdate()`:
 
 ```go
 type Post struct {
@@ -373,11 +448,11 @@ router.RegisterRoutes[Post](b, "/posts",
 )
 ```
 
-To also allow PUT on the single route:
+To also allow PUT and PATCH on the single route:
 
 ```go
 router.RegisterRoutes[User](b, "/author",
-    router.AsSingleRouteWithPut("AuthorID"),  // Enables both GET and PUT
+    router.AsSingleRouteWithUpdate("AuthorID"),  // Enables GET, PUT, and PATCH
     router.AllPublic(),
 )
 ```
@@ -407,21 +482,21 @@ func updateMe(ctx context.Context, svc *service.Common[User], meta *metadata.Typ
 }
 
 router.RegisterRoutes[User](b, "/me",
-    router.AsSingleRouteWithPut(""),  // Empty string = no parent FK
+    router.AsSingleRouteWithUpdate(""),  // Empty string = no parent FK
     router.IsAuthenticated(),
     router.WithCustomGet(getMe),
     router.WithCustomUpdate(updateMe),
 )
 ```
 
-**Important**: Without custom handlers on root-level single routes, GET/PUT will fail because there's no way to determine the ID.
+**Important**: Without custom handlers on root-level single routes, GET/PUT/PATCH will fail because there's no way to determine the ID.
 
 ### Key Differences from Collection Routes
 
 | Feature | Collection Route | Single Route |
 |---------|-----------------|--------------|
 | Response | Array `[...]` | Single object `{...}` |
-| Endpoints | GET, POST, PUT, DELETE | GET only (or GET + PUT with `WithPut`) |
+| Endpoints | GET, POST, PUT, PATCH, DELETE | GET only (or GET + PUT + PATCH with `WithUpdate`) |
 | ID source | URL parameter | Parent's FK field or custom logic |
 | Use case | Has-many relations | Belongs-to relations |
 
@@ -510,7 +585,7 @@ router.RegisterRoutes[Post](b, "/posts",
         Scopes:  []string{router.ScopePublic},  // Public reads
     },
     router.AuthConfig{
-        Methods: []string{router.MethodPost, router.MethodPut, router.MethodDelete},
+        Methods: []string{router.MethodPost, router.MethodPut, router.MethodPatch, router.MethodDelete},
         Scopes:  []string{"user"},  // Authenticated writes
     },
 )
@@ -557,7 +632,7 @@ router.RegisterRoutes[Post](b, "/posts", router.AuthConfig{
 **How Ownership Works:**
 - **CREATE**: Automatically sets `UserID` from `AuthInfo.UserID` (ignores JSON body value)
 - **GET/LIST**: Auto-applies `WHERE user_id = <authUserID>` filter
-- **UPDATE/DELETE**: Validates resource belongs to user before allowing operation
+- **UPDATE/PATCH/DELETE**: Validates resource belongs to user before allowing operation
 - **Returns 404** if resource doesn't belong to user (doesn't leak existence)
 
 ### Ownership with Admin Bypass
@@ -621,9 +696,9 @@ router.RegisterRoutes[Post](b, "/posts",
             BypassScopes: []string{},
         },
     },
-    // Owners can update/delete their own, admins can update/delete any
+    // Owners can update/patch/delete their own, admins can do any
     router.AuthConfig{
-        Methods: []string{router.MethodPut, router.MethodDelete},
+        Methods: []string{router.MethodPut, router.MethodPatch, router.MethodDelete},
         Ownership: &router.OwnershipConfig{
             Fields:       []string{"UserID"},
             BypassScopes: []string{"admin"},
@@ -638,15 +713,15 @@ router.RegisterRoutes[Post](b, "/posts",
 // HTTP Methods
 router.MethodGet     // Single item: GET /resources/{id}
 router.MethodList    // Collection: GET /resources
-router.MethodPost, router.MethodPut, router.MethodDelete
-router.MethodAll     // Expands to Get, List, Post, Put, Delete (excludes batch)
+router.MethodPost, router.MethodPut, router.MethodPatch, router.MethodDelete
+router.MethodAll     // Expands to Get, List, Post, Put, Patch, Delete (excludes batch)
 
 // Special Scopes
 router.ScopePublic    // "__restgen_public__" - No auth required
 router.ScopeAuthOnly  // "__restgen_auth_only__" - Auth required, no scope check
 
 // Context Key
-router.AuthInfoKey  // "authInfo" - Key for AuthInfo in context
+router.AuthInfoKey  // Typed context key for AuthInfo (use the constant, not the raw string)
 ```
 
 ### Auth Helper Functions
@@ -711,7 +786,7 @@ type Task struct {
 ### Registering Routes
 
 ```go
-b := router.NewBuilder(r, db.GetDB())
+b := router.NewBuilder(r)
 
 // Tenant entity: PK = tenant ID, filtered by WHERE id = tenantID
 router.RegisterRoutes[Organization](b, "/organizations",
@@ -762,7 +837,7 @@ func authMiddleware(next http.Handler) http.Handler {
 |-----------|----------|
 | **CREATE** | Tenant field auto-set from `AuthInfo.TenantID` (ignores JSON body value) |
 | **GET/LIST** | Auto-applies `WHERE org_id = <tenantID>` filter |
-| **UPDATE** | Re-enforces tenant field (prevents cross-tenant moves via PUT) |
+| **UPDATE/PATCH** | Re-enforces tenant field (prevents cross-tenant moves via PUT/PATCH) |
 | **DELETE** | Validates resource belongs to tenant before deletion |
 | **Cross-tenant access** | Returns 404 (doesn't leak existence) |
 | **Missing TenantID** | Returns 401 Unauthorized |
@@ -775,7 +850,7 @@ Tenant scoping works with all other go-restgen features:
 - **Ownership** — Tenant filter + ownership filter stack (e.g., Alice in org-a only sees her projects in org-a)
 - **Nested routes** — Children inherit tenant scope; parent chain validation includes tenant filtering
 - **Relation includes** — `?include=Tasks` respects tenant boundaries
-- **Batch operations** — Tenant field enforced on every item in batch create/update
+- **Batch operations** — Tenant field enforced on every item in batch create/update/patch
 - **Query parameters** — Filters, sorts, and pagination apply within tenant scope
 
 See the [tenant example](./examples/tenant) for a complete working example with organizations, projects, tasks, and comprehensive cross-tenant isolation tests.
@@ -793,12 +868,29 @@ router.RegisterRoutes[User](b, "/users",
     router.AllPublic(),
     router.WithFilters("Name", "Email", "Status"),      // Allow filtering by these fields
     router.WithSorts("Name", "Email", "CreatedAt"),     // Allow sorting by these fields
-    router.WithPagination(20, 100),                     // Default 20 items, max 100
+    router.WithPagination(20, 100),                     // Cursor-based pagination (default), 20 items, max 100
     router.WithDefaultSort("-CreatedAt"),               // Default sort (- prefix = descending)
 )
 ```
 
-**Security Note**: Only fields explicitly listed in `WithFilters` and `WithSorts` can be used. Invalid fields are silently ignored.
+Alternatively, use `WithQuery` to configure all query options in a single struct:
+
+```go
+router.RegisterRoutes[User](b, "/users",
+    router.AllPublic(),
+    router.WithQuery(router.QueryConfig{
+        FilterableFields: []string{"Name", "Email", "Status"},
+        SortableFields:   []string{"Name", "Email", "CreatedAt"},
+        SummableFields:   []string{"Score"},
+        DefaultSort:      "-CreatedAt",
+        DefaultLimit:     20,
+        MaxLimit:         100,
+        Pagination:       router.CursorMode, // default; use router.OffsetMode for offset-based
+    }),
+)
+```
+
+**Security Note**: Only fields explicitly listed in `WithFilters`/`WithSorts` (or `QueryConfig`) can be used. Invalid fields are silently ignored.
 
 ### Filtering
 
@@ -832,6 +924,36 @@ GET /users?filter[Status]=active&filter[Role]=admin
 | `bt` | Between (inclusive) | `filter[Age][bt]=18,65` |
 | `nbt` | Not between | `filter[Price][nbt]=100,500` |
 
+**Child Relation Filters:**
+
+Filter parent resources based on child relation existence or count. Requires `WithRelationName` on the child route and the relation must be in `AllowedIncludes`.
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `exists` | Has/doesn't have children | `filter[Comments][exists]=true` |
+| `count_eq` | Exact child count | `filter[Comments][count_eq]=3` |
+| `count_neq` | Child count not equal | `filter[Comments][count_neq]=0` |
+| `count_gt` | Child count greater than | `filter[Comments][count_gt]=5` |
+| `count_gte` | Child count greater than or equal | `filter[Comments][count_gte]=1` |
+| `count_lt` | Child count less than | `filter[Comments][count_lt]=10` |
+| `count_lte` | Child count less than or equal | `filter[Comments][count_lte]=2` |
+
+```bash
+# Posts that have at least one comment
+GET /posts?filter[Comments][exists]=true
+
+# Posts with no comments
+GET /posts?filter[Comments][exists]=false
+
+# Posts with more than 5 comments
+GET /posts?filter[Comments][count_gt]=5
+
+# Combine with field filters
+GET /posts?filter[Status]=published&filter[Comments][count_gte]=1
+```
+
+Relation filters use correlated subqueries, so they respect tenant scoping and parent filtering automatically. Unauthorized relations are silently ignored (the filter is skipped and the broader result set is returned).
+
 ### Sorting
 
 Sort results using the `sort` query parameter:
@@ -849,30 +971,74 @@ GET /users?sort=Status,-CreatedAt
 
 ### Pagination
 
-Control result size with `limit` and `offset`:
+go-restgen supports two pagination modes. **Cursor-based** is the default when using `WithPagination`.
+
+#### Cursor-Based Pagination (Default)
+
+Cursor pagination uses opaque cursors for efficient, consistent page navigation:
 
 ```bash
-# First 10 results
+# First page
 GET /users?limit=10
 
-# Skip first 20, get next 10
-GET /users?limit=10&offset=20
+# Next page (use next_cursor from previous response)
+GET /users?limit=10&after=<cursor>
+
+# Previous page (use prev_cursor from previous response)
+GET /users?limit=10&before=<cursor>
 ```
 
-**Response Headers:**
-- `X-Limit` - The limit applied to the query
-- `X-Offset` - The offset applied to the query
+**Response body** includes pagination metadata:
+```json
+{
+  "data": [...],
+  "pagination": {
+    "has_more": true,
+    "next_cursor": "eyJ2IjpbIkFsaWNlIl0sInBrIjoxfQ==",
+    "prev_cursor": "eyJ2IjpbIkJvYiJdLCJwayI6Mn0=",
+    "total_count": 47
+  }
+}
+```
+
+- `has_more` — whether more items exist beyond the current page
+- `next_cursor` — pass to `?after=` for the next page (absent on last page)
+- `prev_cursor` — pass to `?before=` for the previous page (absent on first page)
+- `total_count` — only included when `?count=true` is requested
+
+#### Offset-Based Pagination (Opt-In)
+
+Use `?offset=` to switch to traditional offset pagination, or configure it as the default:
+
+```go
+router.WithPagination(20, 100, router.OffsetMode) // offset-based as default
+```
+
+```bash
+GET /users?limit=10&offset=20&count=true
+```
+
+**Response body:**
+```json
+{
+  "data": [...],
+  "pagination": {
+    "limit": 10,
+    "offset": 20,
+    "total_count": 47
+  }
+}
+```
 
 ### Total Count
 
 Request total count (useful for pagination UI) with `count=true`:
 
 ```bash
-GET /users?limit=10&offset=20&count=true
+GET /users?limit=10&count=true
 ```
 
-**Response Headers:**
-- `X-Total-Count` - Total number of records (before pagination)
+The count is returned in `pagination.total_count` in the response body.
 
 ### Sum Aggregation
 
@@ -897,24 +1063,128 @@ GET /products?sum=Price,Stock
 GET /products?filter[Category]=Electronics&sum=Price,Stock&count=true
 ```
 
-**Response Headers:**
-- `X-Sum-Price` - Sum of the Price field across matching records
-- `X-Sum-Stock` - Sum of the Stock field across matching records
+**Response body** includes sums alongside data:
+```json
+{
+  "data": [...],
+  "sums": {"Price": 1500.0, "Stock": 200.0}
+}
+```
 
 Fields not listed in `WithSums` are silently ignored (returns 0). Bool fields return the count of `true` values. The database validates types — summing a non-numeric column (e.g. a string) returns a database error.
+
+### Relation Counts
+
+Request child relation counts per item using the `include_count` query parameter. The relation must be registered with `WithRelationName` and authorized via `AllowedIncludes`.
+
+```bash
+# Count comments per post
+GET /posts?include_count=Comments
+
+# Multiple relations
+GET /posts?include_count=Comments,Tags
+
+# Combine with filters and pagination
+GET /posts?filter[Status]=published&include_count=Comments&limit=10
+```
+
+**Response body** includes counts alongside data:
+```json
+{
+  "data": [
+    {"id": 1, "title": "First Post"},
+    {"id": 2, "title": "Second Post"}
+  ],
+  "counts": {
+    "Comments": {"1": 5, "2": 0},
+    "Tags": {"1": 3, "2": 1}
+  }
+}
+```
+
+The `counts` object maps relation name to a map of item primary key (as string) to count. Unauthorized relations are silently excluded from the response.
 
 See the [query example](./examples/query) for a complete working example with all filter operators, sorting, pagination, and sum aggregation.
 
 ### Complete Example
 
 ```bash
-# Get active users, sorted by newest first, page 2 (10 per page), with total count
+# Cursor pagination: first page of active users, sorted by newest first, with total count
+curl 'http://localhost:8080/users?filter[Status]=active&sort=-CreatedAt&limit=10&count=true'
+
+# Response body:
+# {"data": [...], "pagination": {"has_more": true, "next_cursor": "...", "total_count": 47}}
+
+# Next page using cursor from previous response
+curl 'http://localhost:8080/users?filter[Status]=active&sort=-CreatedAt&limit=10&after=<next_cursor>'
+
+# Offset pagination (opt-in via offset parameter)
 curl 'http://localhost:8080/users?filter[Status]=active&sort=-CreatedAt&limit=10&offset=10&count=true'
 
-# Response headers include:
-# X-Total-Count: 47
-# X-Limit: 10
-# X-Offset: 10
+# Response body:
+# {"data": [...], "pagination": {"limit": 10, "offset": 10, "total_count": 47}}
+```
+
+## Request Body Size Limits
+
+All JSON request bodies are limited to prevent denial-of-service via oversized payloads. The default limit is **1 MB** per request.
+
+### Configuration
+
+Set a custom limit per resource:
+
+```go
+router.RegisterRoutes[User](b, "/users",
+    router.AllPublic(),
+    router.WithMaxBodySize(1024),  // 1 KB limit
+)
+```
+
+The limit applies to all JSON-consuming endpoints for the resource: Create, Update, Patch, Batch Create, Batch Update, Batch Patch, Batch Delete, Actions, and Endpoints.
+
+Requests exceeding the limit receive `413 Request Entity Too Large`.
+
+### Multipart Uploads
+
+File upload endpoints using `multipart/form-data` are **not** affected by `WithMaxBodySize`. They default to a 32 MB limit. Use `WithMaxUploadSize` to configure per route:
+
+```go
+router.RegisterRoutes[Image](b, "/images",
+    router.AsFileResource(),
+    router.AllPublic(),
+    router.WithMaxUploadSize(10 << 20), // 10 MB limit
+)
+```
+
+## Error Responses
+
+All error responses are returned as structured JSON with a consistent format:
+
+```json
+{"error": "not_found", "message": "Not Found"}
+```
+
+| HTTP Status | Error Code | Message |
+|-------------|-----------|---------|
+| 400 | `bad_request` | Bad Request |
+| 400 | `validation_error` | Custom message from validator |
+| 400 | `duplicate` | Bad Request |
+| 400 | `invalid_reference` | Bad Request |
+| 401 | `unauthorized` | Unauthorized |
+| 403 | `forbidden` | Forbidden |
+| 404 | `not_found` | Not Found |
+| 504 | `request_timeout` | Gateway Timeout |
+| 413 | `request_too_large` | Request Entity Too Large |
+| 500 | `internal_error` | Internal Server Error |
+| 501 | `not_implemented` | Not Implemented |
+| 503 | `service_unavailable` | Service Unavailable |
+
+The `error` field is a machine-readable code for programmatic error handling. The `message` field uses `http.StatusText()` — the standard HTTP status text for the response code. For validation errors, the `message` contains the custom message from your validator function. Error code constants are exported as `handler.ErrCodeBadRequest`, `handler.ErrCodeNotFound`, etc.
+
+`handler.WriteError` is exported for use in custom middleware and handlers:
+
+```go
+handler.WriteError(w, http.StatusBadRequest, "bad_request", "custom error message")
 ```
 
 ## Multi-Registration
@@ -935,7 +1205,7 @@ type Item struct {
     Name          string `bun:"name" json:"name"`
 }
 
-b := router.NewBuilder(r, db.GetDB())
+b := router.NewBuilder(r)
 
 // Root registration - public read, admin write
 router.RegisterRoutes[Item](b, "/items",
@@ -1200,7 +1470,7 @@ type CustomGetAllFunc[T any] func(
     svc *service.Common[T],
     meta *metadata.TypeMetadata,
     auth *metadata.AuthInfo,
-) ([]*T, int, map[string]float64, error)
+) ([]*T, int, map[string]float64, *metadata.CursorInfo, error)
 
 // CustomCreateFunc - for POST /resource
 // Includes file parameters for file resource support (nil for regular JSON requests).
@@ -1222,6 +1492,18 @@ type CustomUpdateFunc[T any] func(
     auth *metadata.AuthInfo,
     id string,
     item T,
+) (*T, error)
+
+// CustomPatchFunc - for PATCH /resource/{id}
+// Receives both the existing item (before patch) and the patched item (after JSON overlay).
+type CustomPatchFunc[T any] func(
+    ctx context.Context,
+    svc *service.Common[T],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    existing *T,
+    patched T,
 ) (*T, error)
 
 // CustomDeleteFunc - for DELETE /resource/{id}
@@ -1251,7 +1533,7 @@ func customGetMe(ctx context.Context, svc *service.Common[User], meta *metadata.
 }
 
 router.RegisterRoutes[User](b, "/me",
-    router.AsSingleRouteWithPut(""),  // Empty string = no parent FK, ID from custom logic
+    router.AsSingleRouteWithUpdate(""),  // Empty string = no parent FK, ID from custom logic
     router.IsAuthenticated(),
     router.WithCustomGet(customGetMe),
 )
@@ -1278,14 +1560,14 @@ router.RegisterRoutes[Task](b, "/tasks",
 ### Example: Filter GetAll by Owner
 
 ```go
-func customGetMyTasks(ctx context.Context, svc *service.Common[Task], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*Task, int, map[string]float64, error) {
+func customGetMyTasks(ctx context.Context, svc *service.Common[Task], meta *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*Task, int, map[string]float64, *metadata.CursorInfo, error) {
     if auth == nil {
-        return nil, 0, nil, fmt.Errorf("not authenticated")
+        return nil, 0, nil, nil, fmt.Errorf("not authenticated")
     }
     // Return only tasks owned by current user
     tasks := []*Task{}
     err := db.GetDB().NewSelect().Model(&tasks).Where("owner_id = ?", auth.UserID).Scan(ctx)
-    return tasks, len(tasks), nil, err
+    return tasks, len(tasks), nil, nil, err
 }
 
 router.RegisterRoutes[Task](b, "/my-tasks",
@@ -1416,9 +1698,243 @@ POST /orders/{id}/approve  → approveOrder handler
 | `(nil, nil)` | 204 No Content |
 | `(_, error)` | Error response (400, 404, 500, etc.) |
 
+## Custom Endpoints (Anything Funcs)
+
+go-restgen supports fully custom endpoints that go beyond CRUD and actions. Unlike actions (which are always POST and return `*T`), custom endpoints support **any HTTP method** and can return **any type** with an explicit status code. There are also SSE (Server-Sent Events) variants for streaming.
+
+### Item-Level Endpoints (`WithEndpoint`)
+
+Item-level endpoints are mounted at `METHOD /resource/{id}/{name}`. The framework pre-fetches the item (validating existence, parent chain, and ownership), then passes it to your handler.
+
+```go
+// Handler signature: receives the pre-fetched item, returns any type + status code
+func getWorkflowStatus(
+    ctx context.Context,
+    svc *service.Common[Order],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    item *Order,
+    payload []byte,
+) (any, int, error) {
+    return &WorkflowStatus{
+        OrderID: id,
+        State:   item.Status,
+    }, http.StatusOK, nil
+}
+
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllPublic(),
+    router.WithEndpoint("GET", "wf-status", getWorkflowStatus, router.AuthConfig{
+        Scopes: []string{router.ScopePublic},
+    }),
+    router.WithEndpoint("POST", "pay", processPayment, router.AuthConfig{
+        Scopes: []string{"user"},
+    }),
+)
+```
+
+Generated endpoints:
+```
+GET  /orders/{id}/wf-status  → getWorkflowStatus handler
+POST /orders/{id}/pay        → processPayment handler
+```
+
+### Root-Level Endpoints (`RegisterRootEndpoint`)
+
+Root endpoints have no parent model — they receive the raw `*http.Request` for maximum flexibility. Registered directly on the builder, not inside `RegisterRoutes`.
+
+```go
+// Handler signature: raw request access, returns any type + status code
+func getSystemInfo(
+    ctx context.Context,
+    auth *metadata.AuthInfo,
+    r *http.Request,
+) (any, int, error) {
+    return &SystemInfo{Version: "1.0.0"}, http.StatusOK, nil
+}
+
+router.RegisterRootEndpoint(b, "GET", "/system/info", getSystemInfo, router.AllPublic())
+router.RegisterRootEndpoint(b, "POST", "/webhooks/notify", handleWebhook, router.AllScoped("admin"))
+```
+
+### Item-Level SSE (`WithSSE`)
+
+SSE endpoints stream events to the client. The framework handles all SSE protocol details (headers, event formatting, flushing, client disconnect). Always registered as GET.
+
+```go
+// Handler signature: write SSEEvent structs to the channel, return when done
+func streamOrderEvents(
+    ctx context.Context,
+    svc *service.Common[Order],
+    meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo,
+    id string,
+    item *Order,
+    events chan<- handler.SSEEvent,
+) error {
+    events <- handler.SSEEvent{
+        Event: "status",
+        Data:  map[string]string{"order_id": id, "state": item.Status},
+        ID:    "1",
+    }
+    return nil
+}
+
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllPublic(),
+    router.WithSSE("events", streamOrderEvents, router.AuthConfig{
+        Scopes: []string{router.ScopePublic},
+    }),
+)
+```
+
+Generated endpoint: `GET /orders/{id}/events`
+
+### Root-Level SSE (`RegisterRootSSE`)
+
+Root SSE endpoints have no parent model. Always registered as GET.
+
+```go
+func streamSystemEvents(
+    ctx context.Context,
+    auth *metadata.AuthInfo,
+    r *http.Request,
+    events chan<- handler.SSEEvent,
+) error {
+    events <- handler.SSEEvent{
+        Event: "heartbeat",
+        Data:  map[string]string{"status": "ok"},
+    }
+    return nil
+}
+
+router.RegisterRootSSE(b, "/events/system", streamSystemEvents, router.AllPublic())
+```
+
+### SSEEvent
+
+The `handler.SSEEvent` struct controls the event format:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Event` | `string` | Event type (omitted if empty) |
+| `Data` | `any` | Event data, JSON-encoded by the framework |
+| `ID` | `string` | Event ID (omitted if empty) |
+
+### Response Handling
+
+| Handler Returns | HTTP Response |
+|----------------|---------------|
+| `(result, statusCode, nil)` | Status code + JSON body |
+| `(result, 0, nil)` | 200 OK + JSON body (0 defaults to 200) |
+| `(nil, _, nil)` | 204 No Content |
+| `(_, _, error)` | Error response (400, 404, 500, etc.) |
+
+### Auth Per Endpoint
+
+Each endpoint and SSE stream has its own auth configuration, independent of the parent route's CRUD auth:
+
+```go
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllPublic(),  // CRUD is public
+    router.WithEndpoint("GET", "wf-status", getWorkflowStatus, router.AuthConfig{
+        Scopes: []string{router.ScopePublic},
+    }),
+    router.WithEndpoint("POST", "pay", processPayment, router.AuthConfig{
+        Scopes: []string{"user"},
+        Ownership: &router.OwnershipConfig{
+            Fields:       []string{"CustomerID"},
+            BypassScopes: []string{"admin"},
+        },
+    }),
+    router.WithSSE("events", streamOrderEvents, router.AuthConfig{
+        Scopes: []string{router.ScopeAuthOnly},
+    }),
+)
+```
+
+See the [anything funcs example](./examples/anything) for a complete working example with all four endpoint types.
+
+## Partial Updates (PATCH)
+
+go-restgen supports `PATCH` for partial updates. Unlike `PUT` which requires the complete resource body, `PATCH` only requires the fields you want to change. Omitted fields are preserved.
+
+### How It Works
+
+1. The framework fetches the existing item from the database
+2. Clones it (`patched := *existing`)
+3. Overlays your request body onto the clone via `json.Unmarshal`
+4. Saves the merged result
+
+```bash
+# Only update the title — email, name, etc. are preserved
+PATCH /users/1
+Content-Type: application/json
+
+{"title": "New Title"}
+
+# Response: 200 OK
+{"id": 1, "title": "New Title", "email": "original@example.com", ...}
+```
+
+### PATCH is Included in MethodAll
+
+`router.AllPublic()`, `router.AllScoped()`, and `router.MethodAll` all include PATCH automatically. No extra configuration needed.
+
+To configure PATCH auth separately from PUT:
+
+```go
+router.RegisterRoutes[Post](b, "/posts",
+    router.AuthConfig{
+        Methods: []string{router.MethodPut},
+        Scopes:  []string{"admin"},  // Only admins can full-replace
+    },
+    router.AuthConfig{
+        Methods: []string{router.MethodPatch},
+        Scopes:  []string{"user"},  // Regular users can partial-update
+    },
+)
+```
+
+### Custom Patch Handler
+
+The custom patch handler receives both the existing and patched items, allowing comparison:
+
+```go
+router.WithCustomPatch(func(
+    ctx context.Context, svc *service.Common[Post],
+    meta *metadata.TypeMetadata, auth *metadata.AuthInfo,
+    id string, existing *Post, patched Post,
+) (*Post, error) {
+    // Compare existing vs patched to detect what changed
+    if existing.Status != patched.Status {
+        // Status changed — apply business logic
+    }
+    return svc.Patch(ctx, id, patched)
+})
+```
+
+### Validators Distinguish PATCH from PUT
+
+Custom validators receive `metadata.OpPatch` for PATCH requests and `metadata.OpUpdate` for PUT, so you can enforce different rules:
+
+```go
+router.WithValidator(func(vc metadata.ValidationContext[Post]) error {
+    if vc.Operation == metadata.OpPatch {
+        // Relaxed validation for partial updates
+    }
+    return nil
+})
+```
+
+### Parent-Only Scope
+
+Both PUT and PATCH only affect the parent resource's own fields. Child relations (e.g., `Posts` on a `Blog`) are managed through their own endpoints. Sending child data in a PUT or PATCH body has no effect — use the child's dedicated CRUD endpoints instead.
+
 ## Batch Operations
 
-go-restgen supports batch create, update, and delete operations via `/resource/batch` endpoints. Batch operations run in a transaction for all-or-nothing semantics.
+go-restgen supports batch create, update, patch, and delete operations via `/resource/batch` endpoints. Batch operations run in a transaction for all-or-nothing semantics.
 
 ### Enabling Batch Operations
 
@@ -1435,7 +1951,7 @@ router.RegisterRoutes[Post](b, "/posts",
 router.RegisterRoutes[Post](b, "/posts",
     router.AllPublic(),
     router.AuthConfig{
-        Methods: []string{router.MethodBatchCreate, router.MethodBatchUpdate, router.MethodBatchDelete},
+        Methods: []string{router.MethodBatchCreate, router.MethodBatchUpdate, router.MethodBatchPatch, router.MethodBatchDelete},
         Scopes:  []string{"admin"},
     },
 )
@@ -1448,6 +1964,7 @@ router.RegisterRoutes[Post](b, "/posts",
 ```
 POST   /posts/batch  → Batch create
 PUT    /posts/batch  → Batch update
+PATCH  /posts/batch  → Batch patch (partial update)
 DELETE /posts/batch  → Batch delete
 ```
 
@@ -1486,6 +2003,26 @@ Content-Type: application/json
 [
     {"id": 1, "title": "Updated Post 1", ...},
     {"id": 2, "title": "Updated Post 2", ...}
+]
+```
+
+### Batch Patch (Partial Update)
+
+```bash
+PATCH /posts/batch
+Content-Type: application/json
+
+[
+    {"id": 1, "title": "Updated Title Only"},
+    {"id": 2, "content": "Updated Content Only"}
+]
+
+# Response: 200 OK
+# Each item is fetched, the request body is overlaid onto a clone,
+# and the merged item is saved. Only the fields you send are changed.
+[
+    {"id": 1, "title": "Updated Title Only", "content": "original content", ...},
+    {"id": 2, "title": "Original Title", "content": "Updated Content Only", ...}
 ]
 ```
 
@@ -1543,12 +2080,14 @@ Batch operations have special handling for file resources:
 - **Batch DELETE works** - Legitimate use case for bulk cleanup
 - **Batch CREATE returns 501** - File uploads require multipart form
 - **Batch UPDATE returns 501** - File resources don't support update
+- **Batch PATCH returns 501** - File resources don't support patch
 
 ### Method Constants
 
 ```go
 router.MethodBatchCreate    // "BATCH_CREATE"
 router.MethodBatchUpdate    // "BATCH_UPDATE"
+router.MethodBatchPatch     // "BATCH_PATCH"
 router.MethodBatchDelete    // "BATCH_DELETE"
 router.MethodAllWithBatch   // Expands to all methods including batch
 ```
@@ -1590,7 +2129,7 @@ type Image struct {
     ID            int       `bun:"id,pk,autoincrement" json:"id"`
     PostID        int       `bun:"post_id,notnull" json:"post_id"`
     Post          *Post     `bun:"rel:belongs-to,join:post_id=id" json:"-"`
-    filestore.FileFields    // Embeds StorageKey, Filename, ContentType, Size, DownloadURL
+    filestore.FileFields    // Embeds StorageKey, Filename, ContentType, Size
     AltText       string    `bun:"alt_text" json:"alt_text,omitempty"`
     CreatedAt     time.Time `bun:"created_at,notnull" json:"created_at"`
 }
@@ -1601,7 +2140,6 @@ type Image struct {
 - `Filename` - Original filename from upload
 - `ContentType` - MIME type of the file
 - `Size` - File size in bytes
-- `DownloadURL` - Generated URL for downloading (populated at response time)
 
 ### Implementing Storage
 
@@ -1696,7 +2234,7 @@ if err := filestore.Initialize(storage); err != nil {
 }
 
 // Register parent with nested file resource
-b := router.NewBuilder(r, db.GetDB())
+b := router.NewBuilder(r)
 router.RegisterRoutes[Post](b, "/posts",
     router.AllPublic(),
     func(b *router.Builder) {
@@ -1719,7 +2257,7 @@ router.RegisterRoutes[Post](b, "/posts",
 - `GET /posts/{id}/images/{id}/download` - Download file (streams through server)
 - `DELETE /posts/{id}/images/{id}` - Delete file
 
-**Signed URL mode** generates the same endpoints except no `/download` endpoint. The `download_url` in responses points directly to storage.
+**Signed URL mode** generates the same endpoints. The `/download` endpoint redirects (307) to the signed URL instead of streaming.
 
 ### Uploading Files
 
@@ -1731,7 +2269,7 @@ curl -X POST http://localhost:8080/posts/1/images \
   -F 'metadata={"alt_text":"A beautiful photo"}'
 ```
 
-Response includes the generated download URL:
+Response includes file metadata:
 
 ```json
 {
@@ -1740,11 +2278,12 @@ Response includes the generated download URL:
     "filename": "photo.jpg",
     "content_type": "image/jpeg",
     "size": 12345,
-    "download_url": "/posts/1/images/1/download",
     "alt_text": "A beautiful photo",
     "created_at": "2025-01-01T00:00:00Z"
 }
 ```
+
+To download the file, use the `/download` endpoint (proxy mode) or get a redirect to the signed URL.
 
 ### Proxy vs Signed URL Mode
 
@@ -1752,8 +2291,8 @@ The mode is determined by your `GenerateSignedURL` implementation:
 
 | Feature | Proxy Mode (`return ""`) | Signed URL Mode (`return url`) |
 |---------|--------------------------|--------------------------------|
-| Download endpoint | `/resource/{id}/download` | Direct URL to storage |
-| Server load | All downloads through server | Minimal (only metadata) |
+| Download endpoint | `/resource/{id}/download` streams file | `/resource/{id}/download` redirects (307) to signed URL |
+| Server load | All downloads through server | Minimal (only metadata + redirect) |
 | Auth on download | Full control | URL is the auth (time-limited in production) |
 | Best for | Small files, strict auth | Large files, CDN, S3/Minio |
 
@@ -1946,11 +2485,18 @@ metrics.RecordCustom(ctx, "Order", "cancel", 200, 45.2)
 
 If OTEL is not configured, metrics are no-ops with negligible overhead.
 
+**Direct access to metric instruments** (for testing or custom dashboards):
+
+```go
+histogram := metrics.GetRequestDuration()  // metric.Float64Histogram
+counter := metrics.GetRequestCount()       // metric.Int64Counter
+```
+
 ### Mix with Custom Handlers
 
 ```go
 // Register standard CRUD
-b := router.NewBuilder(r, db.GetDB())
+b := router.NewBuilder(r)
 router.RegisterRoutes[User](b, "/users", router.AllPublic())
 
 // Add custom endpoints
@@ -1961,16 +2507,19 @@ r.Get("/users/search", searchUsersHandler)
 ### Direct Access to Services
 
 ```go
-import "github.com/sjgoldie/go-restgen/service"
+import (
+    "github.com/sjgoldie/go-restgen/handler"
+    "github.com/sjgoldie/go-restgen/service"
+)
 
 func myCustomHandler(w http.ResponseWriter, r *http.Request) {
     svc, err := service.New[User]()
     if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
+        handler.WriteError(w, http.StatusInternalServerError, handler.ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
         return
     }
 
-    users, _, _, err := svc.GetAll(r.Context())
+    users, _, _, _, err := svc.GetAll(r.Context())
     // ... handle response
 }
 ```
@@ -1990,6 +2539,7 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[File Upload (Proxy)](./examples/files_proxy)** - File upload/download with proxy mode (files stream through server)
 - **[File Upload (Signed URL)](./examples/files_signed)** - File upload/download with signed URL mode (direct to storage)
 - **[Action Endpoints](./examples/actions)** - Custom actions on resources (cancel, complete)
+- **[Custom Endpoints / Anything Funcs](./examples/anything)** - Custom endpoints with any HTTP method and return type, plus SSE streaming
 - **[Batch Operations](./examples/batch)** - Bulk create, update, and delete operations
 - **[Custom Handlers](./examples/custom)** - Override default CRUD behavior with custom handler functions
 - **[Custom Join Columns](./examples/custom_join)** - Non-FK relationships using `WithJoinOn` for shared attribute joins
@@ -2041,7 +2591,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 go tool cover -func=/tmp/coverage.out
 ```
 
-For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 271 API tests across 15 example applications.
+For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 300 API tests across 16 example applications.
 
 You can override the default port (8080) using the `PORT` environment variable:
 
@@ -2062,7 +2612,7 @@ go-restgen builds on these excellent projects:
 - [x] Nested resource support with automatic parent validation
 - [x] Multi-registration support (same model at different routes with different configs)
 - [x] Query parameter filtering and sorting
-- [x] Pagination with limit/offset and total count
+- [x] Cursor-based pagination (default) with offset pagination opt-in
 - [x] Custom validation for business rules
 - [x] Transactional audit logging
 - [x] UUID primary key support
@@ -2070,9 +2620,11 @@ go-restgen builds on these excellent projects:
 - [x] Single routes for belongs-to relations (`AsSingleRoute`)
 - [x] File upload/download with pluggable storage (proxy and signed URL modes)
 - [x] Action endpoints for custom operations (`POST /resource/{id}/action`)
-- [x] Batch operations for bulk create/update/delete (`/resource/batch`)
+- [x] Batch operations for bulk create/update/patch/delete (`/resource/batch`)
+- [x] PATCH endpoint for partial updates (field-level, no deep patch)
 - [x] Custom join columns via `WithJoinOn` for non-FK relationships
 - [x] Multi-tenant data isolation with `WithTenantScope` and `IsTenantTable`
+- [x] Child relation filters (`exists`, `count_*`) and `include_count` for relation counts
 - [ ] MySQL support
 - [ ] OpenAPI/Swagger generation
 - [ ] Standalone examples (separate go.mod per example to avoid polluting main module)

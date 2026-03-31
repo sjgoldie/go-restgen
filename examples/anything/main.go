@@ -18,6 +18,7 @@ import (
 	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/sjgoldie/go-restgen/handler"
 	"github.com/sjgoldie/go-restgen/metadata"
+	"github.com/sjgoldie/go-restgen/metrics"
 	"github.com/sjgoldie/go-restgen/router"
 	"github.com/sjgoldie/go-restgen/service"
 )
@@ -200,6 +201,7 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(metrics.Middleware())
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -207,7 +209,7 @@ func main() {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	b := router.NewBuilder(r, db.GetDB())
+	b := router.NewBuilder(r)
 
 	// Item-level endpoints and SSE on orders
 	router.RegisterRoutes[Order](b, "/orders",

@@ -1,0 +1,25 @@
+meta {
+  name: Cursor Pagination - Backward to first page
+  type: http
+  seq: 54
+}
+
+get {
+  url: {{baseUrl}}/products?limit=3&before={{cursorPage2Prev}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.pagination.next_cursor: isDefined
+}
+
+tests {
+  test("Returns first page items in natural order", function() {
+    expect(res.body.data[0].name).to.equal("123");
+    expect(res.body.data[1].name).to.equal("Apple");
+    expect(res.body.data[2].name).to.equal("Banana");
+  });
+}

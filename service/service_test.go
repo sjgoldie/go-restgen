@@ -164,7 +164,7 @@ func TestService_GetAll(t *testing.T) {
 				t.Fatal("Failed to create service:", err)
 			}
 
-			items, _, _, err := svc.GetAll(ctxWithMeta(testModelMeta))
+			items, _, _, _, err := svc.GetAll(ctxWithMeta(testModelMeta))
 			if err != nil {
 				t.Fatal("GetAll failed:", err)
 			}
@@ -560,6 +560,7 @@ func TestService_UpdateByParentRelation(t *testing.T) {
 		TypeName:      "ChildModel",
 		TableName:     "child_models",
 		URLParamUUID:  parentMeta.URLParamUUID,
+		PKField:       "ID",
 		ModelType:     reflect.TypeOf(ChildModel{}),
 		ParentType:    reflect.TypeOf(ParentModel{}),
 		ParentMeta:    parentMeta,
@@ -587,6 +588,83 @@ func TestService_UpdateByParentRelation(t *testing.T) {
 	}
 	if check.Name != "Updated Name" {
 		t.Errorf("Expected persisted name 'Updated Name', got '%s'", check.Name)
+	}
+}
+
+func TestService_PatchByParentRelation(t *testing.T) {
+	db, _ := datastore.Get()
+	_, err := db.GetDB().NewCreateTable().Model((*ParentModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create parent table:", err)
+	}
+	_, err = db.GetDB().NewCreateTable().Model((*ChildModel)(nil)).IfNotExists().Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create child table:", err)
+	}
+	defer func() {
+		db.GetDB().NewDropTable().Model((*ParentModel)(nil)).IfExists().Exec(context.Background())
+		db.GetDB().NewDropTable().Model((*ChildModel)(nil)).IfExists().Exec(context.Background())
+	}()
+
+	db.GetDB().NewDelete().Model((*ParentModel)(nil)).Where("1=1").Exec(context.Background())
+	db.GetDB().NewDelete().Model((*ChildModel)(nil)).Where("1=1").Exec(context.Background())
+
+	child := &ChildModel{Name: "Original Name"}
+	_, err = db.GetDB().NewInsert().Model(child).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create child:", err)
+	}
+
+	parent := &ParentModel{Name: "Test Parent", ChildID: child.ID}
+	_, err = db.GetDB().NewInsert().Model(parent).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create parent:", err)
+	}
+
+	svc, err := service.New[ChildModel]()
+	if err != nil {
+		t.Fatal("Failed to create service:", err)
+	}
+
+	parentMeta := &metadata.TypeMetadata{
+		TypeID:       "parent_model_id",
+		TypeName:     "ParentModel",
+		TableName:    "parent_models",
+		URLParamUUID: "parent_id",
+		ModelType:    reflect.TypeOf(ParentModel{}),
+	}
+
+	childMeta := &metadata.TypeMetadata{
+		TypeID:        "child_model_id",
+		TypeName:      "ChildModel",
+		TableName:     "child_models",
+		URLParamUUID:  parentMeta.URLParamUUID,
+		PKField:       "ID",
+		ModelType:     reflect.TypeOf(ChildModel{}),
+		ParentType:    reflect.TypeOf(ParentModel{}),
+		ParentMeta:    parentMeta,
+		ParentFKField: "ChildID",
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, childMeta)
+
+	patchedChild := ChildModel{Name: "Patched Name"}
+	patched, err := svc.PatchByParentRelation(ctx, strconv.Itoa(parent.ID), patchedChild)
+	if err != nil {
+		t.Fatal("PatchByParentRelation failed:", err)
+	}
+
+	if patched.Name != "Patched Name" {
+		t.Errorf("Expected name 'Patched Name', got '%s'", patched.Name)
+	}
+
+	var check ChildModel
+	err = db.GetDB().NewSelect().Model(&check).Where("id = ?", child.ID).Scan(context.Background())
+	if err != nil {
+		t.Fatal("Failed to verify patch:", err)
+	}
+	if check.Name != "Patched Name" {
+		t.Errorf("Expected persisted name 'Patched Name', got '%s'", check.Name)
 	}
 }
 
@@ -1054,7 +1132,7 @@ func TestService_BatchDelete(t *testing.T) {
 	}
 
 	// Verify they're gone
-	all, _, _, err := svc.GetAll(ctx)
+	all, _, _, _, err := svc.GetAll(ctx)
 	if err != nil {
 		t.Fatal("GetAll failed:", err)
 	}

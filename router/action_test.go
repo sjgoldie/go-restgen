@@ -100,7 +100,7 @@ func TestAction_Registration(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[ActionTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -145,7 +145,7 @@ func TestAction_MultipleActions(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[ActionTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -204,7 +204,7 @@ func TestAction_WithAuth(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[ActionTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -261,7 +261,7 @@ func TestAction_WithOwnership(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	// Ownership needs to be on the resource auth config to be stored in metadata
 	// The action inherits this from the context set by wrapWithAuth
@@ -313,7 +313,7 @@ func TestAction_BlockedByDefault(t *testing.T) {
 	}
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	// Action with empty auth config (no scopes) - should be blocked
 	router.RegisterRoutes[ActionTestOrder](b, "/orders",
@@ -337,7 +337,7 @@ func TestAction_NotFound(t *testing.T) {
 	cleanActionTestTable(t)
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[ActionTestOrder](b, "/orders",
 		router.AllPublic(),
@@ -381,7 +381,7 @@ func TestAction_CRUDStillWorks(t *testing.T) {
 	cleanActionTestTable(t)
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[ActionTestOrder](b, "/orders",
 		router.AllPublic(),

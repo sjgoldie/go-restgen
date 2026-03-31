@@ -56,7 +56,7 @@ func setupAuthTest(t *testing.T, registerFunc func(*router.Builder)) *chi.Mux {
 
 	// Create router
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	registerFunc(b)
 
 	return r
@@ -132,7 +132,7 @@ func TestAuth_AuthOnlyRoute(t *testing.T) {
 
 	// Test with auth (any scopes) - create new router with auth middleware
 	r2 := addAuthMiddleware(chi.NewRouter(), "user123", []string{"random_scope"})
-	b := router.NewBuilder(r2, testDB(t))
+	b := router.NewBuilder(r2)
 	router.RegisterRoutes[AuthTestUser](b, "/users", router.AuthConfig{
 		Methods: []string{router.MethodAll},
 		Scopes:  []string{router.ScopeAuthOnly},
@@ -166,7 +166,7 @@ func TestAuth_ScopeRequired(t *testing.T) {
 
 	// With auth but wrong scope - 403
 	r = addAuthMiddleware(chi.NewRouter(), "user123", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	router.RegisterRoutes[AuthTestUser](b, "/users", router.AuthConfig{
 		Methods: []string{router.MethodAll},
 		Scopes:  []string{"admin", "moderator"},
@@ -182,7 +182,7 @@ func TestAuth_ScopeRequired(t *testing.T) {
 
 	// With correct scope - 200
 	r = addAuthMiddleware(chi.NewRouter(), "user123", []string{"admin"})
-	b = router.NewBuilder(r, testDB(t))
+	b = router.NewBuilder(r)
 	router.RegisterRoutes[AuthTestUser](b, "/users", router.AuthConfig{
 		Methods: []string{router.MethodAll},
 		Scopes:  []string{"admin", "moderator"},
@@ -200,7 +200,7 @@ func TestAuth_ScopeRequired(t *testing.T) {
 func TestAuth_MethodSpecificAuth(t *testing.T) {
 	// Public reads, authenticated writes
 	r := addAuthMiddleware(chi.NewRouter(), "user123", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	// First register without auth for GET/LIST (public reads)
 	router.RegisterRoutes[AuthTestUser](b, "/users",
@@ -216,7 +216,7 @@ func TestAuth_MethodSpecificAuth(t *testing.T) {
 
 	// GET /users (list) without auth - should succeed (public)
 	r2 := chi.NewRouter()
-	b2 := router.NewBuilder(r2, testDB(t))
+	b2 := router.NewBuilder(r2)
 	router.RegisterRoutes[AuthTestUser](b2, "/users",
 		router.AuthConfig{
 			Methods: []string{router.MethodGet, router.MethodList},
@@ -263,7 +263,7 @@ func TestAuth_MethodListVsMethodGet(t *testing.T) {
 	t.Run("PublicGet_AuthenticatedList", func(t *testing.T) {
 		// List requires auth, Get is public
 		r := chi.NewRouter()
-		b := router.NewBuilder(r, testDB(t))
+		b := router.NewBuilder(r)
 
 		router.RegisterRoutes[AuthTestPost](b, "/posts",
 			router.AuthConfig{
@@ -298,7 +298,7 @@ func TestAuth_MethodListVsMethodGet(t *testing.T) {
 	t.Run("PublicList_AuthenticatedGet", func(t *testing.T) {
 		// List is public, Get requires auth
 		r := chi.NewRouter()
-		b := router.NewBuilder(r, testDB(t))
+		b := router.NewBuilder(r)
 
 		router.RegisterRoutes[AuthTestPost](b, "/posts",
 			router.AuthConfig{
@@ -334,7 +334,7 @@ func TestAuth_MethodListVsMethodGet(t *testing.T) {
 func TestAuth_MethodAllOverride(t *testing.T) {
 	// MethodAll sets default, specific method overrides
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[AuthTestUser](b, "/users",
 		router.AuthConfig{
@@ -370,7 +370,7 @@ func TestAuth_MethodAllOverride(t *testing.T) {
 func TestAuth_Ownership_Create(t *testing.T) {
 	// Setup with ownership on posts
 	r := addAuthMiddleware(chi.NewRouter(), "auth0|user123", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[AuthTestPost](b, "/posts", router.AuthConfig{
 		Methods: []string{router.MethodAll},
@@ -422,7 +422,7 @@ func TestAuth_Ownership_List(t *testing.T) {
 
 	// User1 should only see their post
 	r := addAuthMiddleware(chi.NewRouter(), "user1", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[AuthTestPost](b, "/posts", router.AuthConfig{
 		Methods: []string{router.MethodAll},
@@ -440,10 +440,13 @@ func TestAuth_Ownership_List(t *testing.T) {
 		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var posts []AuthTestPost
-	if err := json.Unmarshal(w.Body.Bytes(), &posts); err != nil {
+	var envelope struct {
+		Data []AuthTestPost `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
+	posts := envelope.Data
 
 	// Should only see user1's post
 	if len(posts) != 1 {
@@ -469,7 +472,7 @@ func TestAuth_Ownership_BypassScope(t *testing.T) {
 
 	// Admin with bypass scope should see all posts
 	r := addAuthMiddleware(chi.NewRouter(), "admin_user", []string{"admin"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[AuthTestPost](b, "/posts", router.AuthConfig{
 		Methods: []string{router.MethodAll},
@@ -487,10 +490,13 @@ func TestAuth_Ownership_BypassScope(t *testing.T) {
 		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var posts []AuthTestPost
-	if err := json.Unmarshal(w.Body.Bytes(), &posts); err != nil {
+	var envelope struct {
+		Data []AuthTestPost `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
+	posts := envelope.Data
 
 	// Admin should see all posts
 	if len(posts) != 2 {
@@ -511,7 +517,7 @@ func TestAuth_Ownership_Get404(t *testing.T) {
 
 	// User2 tries to access user1's post - should get 404
 	r := addAuthMiddleware(chi.NewRouter(), "user2", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[AuthTestPost](b, "/posts", router.AuthConfig{
 		Methods: []string{router.MethodAll},
@@ -723,7 +729,7 @@ func TestAuth_ChildAuthPopulated(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	// Register parent (public) with child (ownership-based) using WithRelationName
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
@@ -816,7 +822,7 @@ func TestAuth_ChildAuthWithBypass(t *testing.T) {
 		})
 	})
 
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
 		router.AllPublic(),
@@ -874,7 +880,7 @@ func TestAuth_ChildAuthNoAuth(t *testing.T) {
 
 	// Create router WITHOUT auth middleware (unauthenticated)
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
 		router.AllPublic(),
@@ -1001,7 +1007,7 @@ func TestAuth_NestedChildInclude(t *testing.T) {
 	author, _, _ := seedNestedIncludeData(t, db)
 
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	registerNestedIncludeRoutes(b, router.AllPublic())
 
 	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts.Comments"
@@ -1042,7 +1048,7 @@ func TestAuth_NestedChildInclude_DeeperLevelBlocked(t *testing.T) {
 
 	// Comments require "premium" scope; user only has "user"
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	registerNestedIncludeRoutes(b, router.AllScoped("premium"))
 
 	// Single-level Posts include should still work
@@ -1097,7 +1103,7 @@ func TestAuth_NestedParentInclude(t *testing.T) {
 	author, post, comment := seedNestedIncludeData(t, db)
 
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	registerNestedIncludeRoutes(b, router.AllPublic())
 
 	// GET comment with ?include=Post.Author
@@ -1140,7 +1146,7 @@ func TestAuth_ParentInclude_SingleLevel(t *testing.T) {
 	author, post, comment := seedNestedIncludeData(t, db)
 
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	registerNestedIncludeRoutes(b, router.AllPublic())
 
 	url := "/authors/" + strconv.Itoa(author.ID) +
@@ -1195,7 +1201,7 @@ func TestAuth_NestedParentInclude_DeeperLevelBlocked(t *testing.T) {
 
 	// Author requires "admin" scope; user only has "user"
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
 		router.AllScoped("admin"),
@@ -1268,7 +1274,7 @@ func TestAuth_SimpleChildInclude(t *testing.T) {
 	author, _, _ := seedNestedIncludeData(t, db)
 
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	registerNestedIncludeRoutes(b, router.AllPublic())
 
 	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts"
@@ -1299,7 +1305,7 @@ func TestAuth_ChildInclude_NoAuth(t *testing.T) {
 
 	// No auth middleware — unauthenticated request
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 	registerNestedIncludeRoutes(b, router.AllPublic())
 
 	url := "/authors/" + strconv.Itoa(author.ID) + "?include=Posts"
@@ -1329,7 +1335,7 @@ func TestAuth_ChildInclude_WrongScope(t *testing.T) {
 	author, _, _ := seedNestedIncludeData(t, db)
 
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	// Posts require "premium" scope
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
@@ -1369,7 +1375,7 @@ func TestAuth_ChildInclude_ScopeGrantsAccess(t *testing.T) {
 
 	// User has "premium" scope which matches the child's requirement
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user", "premium"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	// Author is public, Posts require "premium" scope
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
@@ -1409,7 +1415,7 @@ func TestAuth_ParentInclude_NoAuth(t *testing.T) {
 	author, post, comment := seedNestedIncludeData(t, db)
 
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	// Author requires "admin" scope, Post requires "editor" scope, Comment is public.
 	// No ownership at any level — avoids issue #28 parent ownership check blocking the request.
@@ -1460,7 +1466,7 @@ func TestAuth_ParentInclude_WrongScope(t *testing.T) {
 	author, post, comment := seedNestedIncludeData(t, db)
 
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	// Author requires "admin", Post is ownership, Comment is public
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
@@ -1515,7 +1521,7 @@ func TestAuth_MixedPublicParent_ScopedChildInclude(t *testing.T) {
 
 	// No auth — unauthenticated request
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	// Author is public, Posts require "premium" scope
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
@@ -1562,7 +1568,7 @@ func TestAuth_NestedChildInclude_MiddleLevelBlocked(t *testing.T) {
 
 	// User has "user" scope only
 	r := addAuthMiddleware(chi.NewRouter(), "alice", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	// Author is public, Posts require "editor" scope, Comments are public
 	router.RegisterRoutes[IncludeTestAuthor](b, "/authors",
@@ -1662,7 +1668,7 @@ func TestAuth_Issue24_OwnershipWithEmptyUserID(t *testing.T) {
 
 	// Create router with middleware that sets empty UserID (simulating dhe pattern)
 	r := addAuthMiddlewareEmptyUserID(chi.NewRouter())
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	// Register route with ownership but no explicit scopes (the problematic pattern)
 	router.RegisterRoutes[AuthTestPost](b, "/posts", router.AuthConfig{
@@ -1702,7 +1708,7 @@ func TestAuth_Issue24_ScopeAuthOnlyWithEmptyUserID(t *testing.T) {
 
 	// Create router with middleware that sets empty UserID
 	r := addAuthMiddlewareEmptyUserID(chi.NewRouter())
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	// Register route with ScopeAuthOnly
 	router.RegisterRoutes[AuthTestUser](b, "/users", router.AuthConfig{
@@ -1772,7 +1778,7 @@ func TestAuth_Issue28_ParentOwnershipNoAuth(t *testing.T) {
 
 	// Create router WITHOUT auth (simulating public child under owned parent)
 	r := chi.NewRouter()
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[OwnershipTestProject](b, "/projects",
 		router.AuthConfig{
@@ -1835,7 +1841,7 @@ func TestAuth_Issue28_ParentOwnershipFiltering(t *testing.T) {
 			}
 
 			r := addAuthMiddleware(chi.NewRouter(), tt.authUser, []string{"user"})
-			b := router.NewBuilder(r, testDB(t))
+			b := router.NewBuilder(r)
 
 			router.RegisterRoutes[OwnershipTestProject](b, "/projects",
 				router.AuthConfig{
@@ -1859,10 +1865,13 @@ func TestAuth_Issue28_ParentOwnershipFiltering(t *testing.T) {
 				t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
 			}
 
-			var tasks []OwnershipTestTask
-			if err := json.Unmarshal(w.Body.Bytes(), &tasks); err != nil {
+			var envelope struct {
+				Data []OwnershipTestTask `json:"data"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 				t.Fatalf("failed to parse response: %v", err)
 			}
+			tasks := envelope.Data
 
 			if len(tasks) != tt.expectedTasks {
 				t.Errorf("expected %d tasks, got %d", tt.expectedTasks, len(tasks))
@@ -1895,7 +1904,7 @@ func TestAuth_Issue28_ParentOwnershipBypass(t *testing.T) {
 
 	// Create router with Admin (has bypass scope)
 	r := addAuthMiddleware(chi.NewRouter(), "admin", []string{"user", "admin"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[OwnershipTestProject](b, "/projects",
 		router.AuthConfig{
@@ -2000,7 +2009,7 @@ func TestTenantAuth_RequiresTenantID(t *testing.T) {
 
 	// Auth middleware with empty TenantID
 	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[TenantTestProject](b, "/projects",
 		router.WithTenantScope("OrgID"),
@@ -2032,7 +2041,7 @@ func TestTenantAuth_List_FiltersByTenant(t *testing.T) {
 
 	// User in org-a
 	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "org-a", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[TenantTestProject](b, "/projects",
 		router.WithTenantScope("OrgID"),
@@ -2047,10 +2056,13 @@ func TestTenantAuth_List_FiltersByTenant(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var projects []TenantTestProject
-	if err := json.Unmarshal(w.Body.Bytes(), &projects); err != nil {
+	var envelope struct {
+		Data []TenantTestProject `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
+	projects := envelope.Data
 
 	if len(projects) != 1 {
 		t.Errorf("expected 1 project for org-a, got %d", len(projects))
@@ -2072,7 +2084,7 @@ func crossTenantRequestReturns404(t *testing.T, method string) {
 	_, _ = db.NewInsert().Model(p).Returning("*").Exec(ctx)
 
 	r := addTenantAuthMiddleware(chi.NewRouter(), "bob", "org-b", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[TenantTestProject](b, "/projects",
 		router.WithTenantScope("OrgID"),
@@ -2096,7 +2108,7 @@ func TestTenantAuth_Create_AutoSetsTenantField(t *testing.T) {
 	setupTenantTest(t)
 
 	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "org-a", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[TenantTestProject](b, "/projects",
 		router.WithTenantScope("OrgID"),
@@ -2138,7 +2150,7 @@ func TestTenantAuth_Update_CrossTenant_404(t *testing.T) {
 
 	// org-b tries to update org-a's project
 	r := addTenantAuthMiddleware(chi.NewRouter(), "bob", "org-b", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[TenantTestProject](b, "/projects",
 		router.WithTenantScope("OrgID"),
@@ -2171,7 +2183,7 @@ func TestTenantAuth_IsTenantTable_ViewOwnOrg(t *testing.T) {
 	_, _ = db.NewInsert().Model(&TenantTestOrg{ID: "org-b", Name: "Beta"}).Exec(ctx)
 
 	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "org-a", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[TenantTestOrg](b, "/organizations",
 		router.IsTenantTable(),
@@ -2187,10 +2199,13 @@ func TestTenantAuth_IsTenantTable_ViewOwnOrg(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var orgs []TenantTestOrg
-	if err := json.Unmarshal(w.Body.Bytes(), &orgs); err != nil {
+	var envelope struct {
+		Data []TenantTestOrg `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
+	orgs := envelope.Data
 
 	if len(orgs) != 1 {
 		t.Errorf("expected 1 org (own), got %d", len(orgs))
@@ -2211,7 +2226,7 @@ func TestTenantAuth_IsTenantTable_CrossTenant_404(t *testing.T) {
 
 	// org-b tries to GET org-a
 	r := addTenantAuthMiddleware(chi.NewRouter(), "bob", "org-b", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[TenantTestOrg](b, "/organizations",
 		router.IsTenantTable(),
@@ -2248,7 +2263,7 @@ func TestTenantAuth_ChildInheritsTenantScope(t *testing.T) {
 
 	// org-a user accesses tasks under their project
 	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "org-a", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[TenantTestProject](b, "/projects",
 		router.WithTenantScope("OrgID"),
@@ -2270,10 +2285,13 @@ func TestTenantAuth_ChildInheritsTenantScope(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var tasks []TenantTestTask
-	if err := json.Unmarshal(w.Body.Bytes(), &tasks); err != nil {
+	var envelope struct {
+		Data []TenantTestTask `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
+	tasks := envelope.Data
 
 	if len(tasks) != 1 {
 		t.Errorf("expected 1 task for org-a, got %d", len(tasks))
@@ -2287,10 +2305,13 @@ func TestTenantAuth_ChildInheritsTenantScope(t *testing.T) {
 	// Parent project belongs to org-b — should be blocked
 	// Either 404 (parent not found) or empty results
 	if w2.Code == http.StatusOK {
-		var crossTasks []TenantTestTask
-		if err := json.Unmarshal(w2.Body.Bytes(), &crossTasks); err != nil {
+		var crossEnvelope struct {
+			Data []TenantTestTask `json:"data"`
+		}
+		if err := json.Unmarshal(w2.Body.Bytes(), &crossEnvelope); err != nil {
 			t.Fatalf("failed to unmarshal cross-tenant tasks: %v", err)
 		}
+		crossTasks := crossEnvelope.Data
 		if len(crossTasks) != 0 {
 			t.Errorf("expected 0 tasks for cross-tenant parent, got %d", len(crossTasks))
 		}
@@ -2311,7 +2332,7 @@ func TestTenantAuth_WithOwnership_BothEnforced(t *testing.T) {
 
 	// Alice in org-a: should only see her own project in org-a
 	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "org-a", []string{"user"})
-	b := router.NewBuilder(r, testDB(t))
+	b := router.NewBuilder(r)
 
 	router.RegisterRoutes[TenantTestProject](b, "/projects",
 		router.WithTenantScope("OrgID"),
@@ -2326,10 +2347,13 @@ func TestTenantAuth_WithOwnership_BothEnforced(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var projects []TenantTestProject
-	if err := json.Unmarshal(w.Body.Bytes(), &projects); err != nil {
+	var envelope struct {
+		Data []TenantTestProject `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to parse: %v", err)
 	}
+	projects := envelope.Data
 
 	if len(projects) != 1 {
 		t.Errorf("expected 1 project (alice in org-a), got %d", len(projects))
@@ -2338,5 +2362,108 @@ func TestTenantAuth_WithOwnership_BothEnforced(t *testing.T) {
 		if projects[0].OwnerID != "alice" || projects[0].OrgID != "org-a" {
 			t.Errorf("expected alice/org-a, got %s/%s", projects[0].OwnerID, projects[0].OrgID)
 		}
+	}
+}
+
+func TestAuth_PatchRoute_AllPublic(t *testing.T) {
+	r := setupAuthTest(t, func(b *router.Builder) {
+		router.RegisterRoutes[AuthTestUser](b, "/users", router.AllPublic())
+	})
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	_, _ = db.NewInsert().Model(&AuthTestUser{Name: "Test User"}).Exec(context.Background())
+
+	body := `{"name": "Patched"}`
+	req := httptest.NewRequest("PATCH", "/users/1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == http.StatusMethodNotAllowed {
+		t.Error("PATCH should not return 405; AllPublic must include MethodPatch")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAuth_PatchRoute_MethodSpecific(t *testing.T) {
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	ctx := context.Background()
+
+	if _, err := db.NewCreateTable().Model((*AuthTestPost)(nil)).IfNotExists().Exec(ctx); err != nil {
+		t.Fatalf("failed to create posts table: %v", err)
+	}
+	_, _ = db.NewDelete().Model((*AuthTestPost)(nil)).Where("1=1").Exec(ctx)
+	_, _ = db.Exec("DELETE FROM sqlite_sequence WHERE name = 'auth_test_posts'")
+	_, _ = db.NewInsert().Model(&AuthTestPost{UserID: "user123", Title: "Test Post"}).Exec(ctx)
+
+	r := addAuthMiddleware(chi.NewRouter(), "user123", []string{"user"})
+	b := router.NewBuilder(r)
+	router.RegisterRoutes[AuthTestPost](b, "/posts",
+		router.AuthConfig{
+			Methods: []string{router.MethodPut},
+			Scopes:  []string{"admin"},
+		},
+		router.AuthConfig{
+			Methods: []string{router.MethodPatch},
+			Scopes:  []string{"user"},
+		},
+		router.AuthConfig{
+			Methods: []string{router.MethodGet, router.MethodList, router.MethodPost, router.MethodDelete},
+			Scopes:  []string{router.ScopePublic},
+		},
+	)
+
+	putBody := `{"title": "Updated", "user_id": "user123"}`
+	req := httptest.NewRequest("PUT", "/posts/1", bytes.NewBufferString(putBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected PUT to return 403 (requires admin), got %d", w.Code)
+	}
+
+	patchBody := `{"title": "Patched"}`
+	req = httptest.NewRequest("PATCH", "/posts/1", bytes.NewBufferString(patchBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == http.StatusMethodNotAllowed {
+		t.Error("PATCH should not return 405")
+	}
+	if w.Code == http.StatusForbidden {
+		t.Error("PATCH should not return 403 for user with 'user' scope")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected PATCH to return 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAuth_BatchPatchRoute(t *testing.T) {
+	r := setupAuthTest(t, func(b *router.Builder) {
+		router.RegisterRoutes[AuthTestUser](b, "/users", router.AllPublicWithBatch())
+	})
+
+	ds, _ := datastore.Get()
+	db := ds.GetDB()
+	_, _ = db.NewInsert().Model(&AuthTestUser{Name: "User 1"}).Exec(context.Background())
+	_, _ = db.NewInsert().Model(&AuthTestUser{Name: "User 2"}).Exec(context.Background())
+
+	body := `[{"id": 1, "name": "Patched 1"}]`
+	req := httptest.NewRequest("PATCH", "/users/batch", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == http.StatusMethodNotAllowed || w.Code == http.StatusNotFound {
+		t.Errorf("Batch PATCH route should exist; got %d", w.Code)
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 }

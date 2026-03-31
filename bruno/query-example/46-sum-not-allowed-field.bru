@@ -12,12 +12,12 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 tests {
-  test("X-Sum-CreatedAt header returns 0 for non-allowed field", function() {
+  test("Sums return 0 for non-allowed field", function() {
     // Field not in SummableFields should return 0 (security - don't reveal field existence)
-    expect(res.headers['x-sum-createdat']).to.equal('0');
+    expect(res.body.sums.CreatedAt).to.equal(0);
   });
 }

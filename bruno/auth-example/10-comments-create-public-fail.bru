@@ -19,10 +19,15 @@ body:json {
 
 assert {
   res.status: eq 401
+  res.body.error: eq unauthorized
+  res.body.message: eq Unauthorized
 }
 
 tests {
   test("Creating comment without auth should fail (auth required)", function() {
     expect(res.status).to.equal(401);
+    const body = res.getBody();
+    expect(body.error).to.equal("unauthorized");
+    expect(body.message).to.equal("Unauthorized");
   });
 }

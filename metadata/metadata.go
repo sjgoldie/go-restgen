@@ -18,6 +18,7 @@ type Operation string
 const (
 	OpCreate Operation = "create"
 	OpUpdate Operation = "update"
+	OpPatch  Operation = "patch"
 	OpDelete Operation = "delete"
 )
 
@@ -117,6 +118,25 @@ type parentTenantKeyType string
 // Value is []*TypeMetadata - list of parent types in the chain that require tenant checks
 const ParentTenantKey parentTenantKeyType = "restgen_parent_tenant"
 
+// PaginationMode controls whether cursor-based or offset-based pagination is used.
+// Zero value means no pagination mode configured.
+type PaginationMode int
+
+const (
+	// NoPagination means pagination is not configured (zero value).
+	NoPagination PaginationMode = iota
+	// CursorPagination uses cursor-based (keyset) pagination.
+	CursorPagination
+	// OffsetPagination uses traditional offset-based pagination.
+	OffsetPagination
+)
+
+// DefaultMaxBodySize is the default maximum size for JSON request bodies (1 MB).
+const DefaultMaxBodySize int64 = 1 << 20
+
+// DefaultMaxUploadSize is the default maximum size for multipart file uploads (32 MB).
+const DefaultMaxUploadSize int64 = 32 << 20
+
 // TypeMetadata contains all metadata for a registered type
 type TypeMetadata struct {
 	TypeID          string        // Unique UUID for this type
@@ -145,12 +165,13 @@ type TypeMetadata struct {
 	ParentFKField string // Field name on parent that holds this object's ID (e.g., "AuthorID")
 
 	// Query options for GetAll
-	FilterableFields []string // Field names allowed for filtering (empty = no filtering)
-	SortableFields   []string // Field names allowed for sorting (empty = no sorting)
-	SummableFields   []string // Field names allowed for sum aggregation (empty = no sums)
-	DefaultSort      string   // Default sort field (prefix with - for descending)
-	DefaultLimit     int      // Default page size (0 = no limit)
-	MaxLimit         int      // Maximum allowed limit (0 = no max)
+	FilterableFields []string       // Field names allowed for filtering (empty = no filtering)
+	SortableFields   []string       // Field names allowed for sorting (empty = no sorting)
+	SummableFields   []string       // Field names allowed for sum aggregation (empty = no sums)
+	DefaultSort      string         // Default sort field (prefix with - for descending)
+	DefaultLimit     int            // Default page size (0 = no limit)
+	MaxLimit         int            // Maximum allowed limit (0 = no max)
+	Pagination       PaginationMode // Pagination strategy (CursorPagination or OffsetPagination)
 
 	// Validation
 	Validator any // ValidatorFunc[T] stored as any for type erasure
@@ -163,6 +184,10 @@ type TypeMetadata struct {
 
 	// Batch operations
 	BatchLimit int // Maximum items in batch operations (0 = no limit)
+
+	// Request body limits
+	MaxBodySize   int64 // Max JSON request body size in bytes (default: DefaultMaxBodySize)
+	MaxUploadSize int64 // Max multipart file upload size in bytes (default: DefaultMaxUploadSize)
 }
 
 // Clone returns a deep copy of the TypeMetadata.
@@ -185,10 +210,13 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 		DefaultSort:     m.DefaultSort,
 		DefaultLimit:    m.DefaultLimit,
 		MaxLimit:        m.MaxLimit,
+		Pagination:      m.Pagination,
 		Validator:       m.Validator,
 		Auditor:         m.Auditor,
 		IsFileResource:  m.IsFileResource,
 		BatchLimit:      m.BatchLimit,
+		MaxBodySize:     m.MaxBodySize,
+		MaxUploadSize:   m.MaxUploadSize,
 		TenantField:     m.TenantField,
 		IsTenantTable:   m.IsTenantTable,
 	}
@@ -228,13 +256,16 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 
 // QueryOptions holds parsed query parameters for filtering, sorting, and pagination
 type QueryOptions struct {
-	Filters    map[string]FilterValue // field -> value/operator
-	Sort       []SortField            // ordered list of sort fields
-	Limit      int                    // 0 means use default
-	Offset     int                    // 0 means start from beginning
-	CountTotal bool                   // whether to return total count
-	Include    []string               // relation names to include via ?include=
-	Sums       []string               // field names to compute sum aggregates via ?sum=
+	Filters       map[string]FilterValue // field -> value/operator
+	Sort          []SortField            // ordered list of sort fields
+	Limit         int                    // 0 means use default
+	Offset        int                    // 0 means start from beginning
+	After         string                 // cursor for forward pagination (next page)
+	Before        string                 // cursor for backward pagination (previous page)
+	CountTotal    bool                   // whether to return total count
+	Include       []string               // relation names to include via ?include=
+	Sums          []string               // field names to compute sum aggregates via ?sum=
+	IncludeCounts []string               // relation names to include counts via ?include_count=
 }
 
 // AllowedIncludes maps relation names to whether ownership filtering should be applied.
@@ -270,6 +301,15 @@ const (
 	OpNin  = "nin"  // Not in list
 	OpBt   = "bt"   // Between (inclusive)
 	OpNbt  = "nbt"  // Not between
+
+	// Relation-level operators (applied to child relations, not fields)
+	OpExists   = "exists"    // Existence filter: ?filter[Relation][exists]=true/false
+	OpCountEq  = "count_eq"  // Count equals: ?filter[Relation][count_eq]=5
+	OpCountNeq = "count_neq" // Count not equals
+	OpCountGt  = "count_gt"  // Count greater than
+	OpCountGte = "count_gte" // Count greater than or equal
+	OpCountLt  = "count_lt"  // Count less than
+	OpCountLte = "count_lte" // Count less than or equal
 )
 
 // FilterValue represents a filter with value and operator
@@ -379,6 +419,10 @@ func ParseQueryOptions(query url.Values) *QueryOptions {
 		}
 	}
 
+	// Parse cursor pagination
+	opts.After = query.Get("after")
+	opts.Before = query.Get("before")
+
 	// Parse count flag
 	if countStr := query.Get("count"); countStr == "true" || countStr == "1" {
 		opts.CountTotal = true
@@ -400,6 +444,16 @@ func ParseQueryOptions(query url.Values) *QueryOptions {
 			field = strings.TrimSpace(field)
 			if field != "" {
 				opts.Sums = append(opts.Sums, field)
+			}
+		}
+	}
+
+	// Parse include_count: include_count=Relation1,Relation2
+	if includeCountStr := query.Get("include_count"); includeCountStr != "" {
+		for _, rel := range strings.Split(includeCountStr, ",") {
+			rel = strings.TrimSpace(rel)
+			if rel != "" {
+				opts.IncludeCounts = append(opts.IncludeCounts, rel)
 			}
 		}
 	}

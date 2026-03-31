@@ -16,17 +16,17 @@ auth:bearer {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 tests {
   test("Alice sees only her draft blogs (ownership + status filter)", function() {
-    expect(res.body).to.be.an('array');
+    expect(res.body.data).to.be.an('array');
     // All results should be Alice's
-    expect(res.body.every(blog => blog.author_id === "alice")).to.be.true;
+    expect(res.body.data.every(blog => blog.author_id === "alice")).to.be.true;
     // All results should be draft
-    expect(res.body.every(blog => blog.status === "draft")).to.be.true;
+    expect(res.body.data.every(blog => blog.status === "draft")).to.be.true;
     // Should have exactly 1 draft blog
-    expect(res.body.length).to.equal(1);
+    expect(res.body.data.length).to.equal(1);
   });
 }

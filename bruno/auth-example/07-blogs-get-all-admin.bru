@@ -16,12 +16,12 @@ auth:bearer {
 
 assert {
   res.status: eq 200
-  res.body: isArray
+  res.body.data: isArray
 }
 
 tests {
   test("Admin should see all blogs (bypasses ownership)", function() {
-    expect(res.body).to.be.an('array');
-    expect(res.body.length).to.be.at.least(2);
+    expect(res.body.data).to.be.an('array');
+    expect(res.body.data.length).to.be.at.least(2);
   });
 }

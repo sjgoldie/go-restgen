@@ -3,9 +3,11 @@ package datastore
 import (
 	"database/sql"
 	"errors"
+	"reflect"
 	"testing"
 
 	apperrors "github.com/sjgoldie/go-restgen/errors"
+	"github.com/sjgoldie/go-restgen/metadata"
 )
 
 func TestTranslateError(t *testing.T) {
@@ -62,5 +64,46 @@ func TestTranslateError(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDefaultParentJoinCol(t *testing.T) {
+	if got := defaultParentJoinCol(""); got != "id" {
+		t.Errorf("expected 'id' for empty string, got %q", got)
+	}
+	if got := defaultParentJoinCol("nmi"); got != "nmi" {
+		t.Errorf("expected 'nmi', got %q", got)
+	}
+}
+
+func TestDerefType(t *testing.T) {
+	type Foo struct{}
+
+	direct := reflect.TypeOf(Foo{})
+	if got := derefType(direct); got != direct {
+		t.Errorf("expected non-pointer type returned as-is, got %v", got)
+	}
+
+	ptr := reflect.TypeOf((*Foo)(nil))
+	if got := derefType(ptr); got != direct {
+		t.Errorf("expected pointer type unwrapped to %v, got %v", direct, got)
+	}
+}
+
+func TestIsRelationAuthorized(t *testing.T) {
+	if !isRelationAuthorized(nil, "Posts") {
+		t.Error("nil allowedIncludes should authorize everything")
+	}
+
+	includes := metadata.AllowedIncludes{"Posts": true, "Comments": false}
+
+	if !isRelationAuthorized(includes, "Posts") {
+		t.Error("expected Posts to be authorized")
+	}
+	if !isRelationAuthorized(includes, "Comments") {
+		t.Error("expected Comments to be authorized")
+	}
+	if isRelationAuthorized(includes, "Tags") {
+		t.Error("expected Tags to be unauthorized")
 	}
 }

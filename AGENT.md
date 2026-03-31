@@ -531,6 +531,9 @@ Built-in support on GetAll endpoints:
 |-----------|---------|-------------|
 | Filter | `?filter[status]=active` | Exact match |
 | Filter ops | `?filter[age][gt]=18` | Operators: eq, neq, gt, gte, lt, lte, like, in, nin, bt, nbt |
+| Child field filter | `?filter[Orders.Status][eq]=active` | Filter by child/grandchild field value (uses EXISTS subquery). Dot notation for nested chains. |
+| Exists filter | `?filter[Orders][exists]=true` | Filter by existence of child relations. `true` = has children, `false` = has none. |
+| Count filter | `?filter[Orders][count_gt]=5` | Filter by child relation count. Operators: count_eq, count_neq, count_gt, count_gte, count_lt, count_lte |
 | Sort | `?sort=name,-created_at` | `-` prefix for descending |
 | Limit | `?limit=10` | Max results per page |
 | After | `?after=<cursor>` | Next page (cursor from `pagination.next_cursor`) |
@@ -538,6 +541,7 @@ Built-in support on GetAll endpoints:
 | Offset | `?offset=20` | Skip results (switches to offset pagination) |
 | Count | `?count=true` | Include `total_count` in `pagination` |
 | Include | `?include=Posts` or `?include=Posts.Comments` | Load relations (requires WithRelationName on child route). Dot notation for nested. |
+| Include count | `?include_count=Orders` or `?include_count=Orders,Items` | Include per-item child relation counts in response envelope. Comma-separated for multiple. |
 | Sum | `?sum=Price,Stock` | Sum fields, returns in `sums` object in response body (requires WithSums). Works with any DB-numeric type including `decimal.Decimal`. Bool fields return count of `true` values. DB validates types — non-numeric columns return a database error. |
 
 **Response envelope (GetAll):**
@@ -545,11 +549,13 @@ Built-in support on GetAll endpoints:
 {
   "data": [...],
   "pagination": {"has_more": true, "next_cursor": "...", "prev_cursor": "...", "total_count": 42},
-  "sums": {"Price": 1500.0, "Stock": 200.0}
+  "sums": {"Price": 1500.0, "Stock": 200.0},
+  "counts": {"Orders": {"1": 3, "2": 0}, "Items": {"1": 12, "2": 5}}
 }
 ```
 Cursor mode fields: `has_more`, `next_cursor`, `prev_cursor`, `total_count` (if `count=true`).
 Offset mode fields: `limit`, `offset`, `total_count` (if `count=true`).
+`counts` maps relation name → item PK → count (only present when `?include_count=` is used).
 Batch responses use `{"data": [...]}` envelope.
 Single-item responses (Get, Create, Update, Patch, Delete) return the raw object (no envelope).
 
@@ -558,6 +564,15 @@ Single-item responses (Get, Create, Update, Patch, Delete) return the raw object
 - `nin` - Not in list: `?filter[Status][nin]=deleted,archived`
 - `bt` - Between (inclusive): `?filter[Age][bt]=18,65`
 - `nbt` - Not between: `?filter[Price][nbt]=100,500`
+
+**Child relation filters:**
+- Child field: `?filter[Orders.Status][eq]=shipped` — parents WHERE EXISTS child with Status=shipped
+- Multi-level: `?filter[Orders.Items.SKU][eq]=ABC` — parents with grandchild matching
+- Exists: `?filter[Orders][exists]=true` — parents that have at least one Order
+- Count: `?filter[Orders][count_gt]=5` — parents with more than 5 Orders
+- Count operators: `count_eq`, `count_neq`, `count_gt`, `count_gte`, `count_lt`, `count_lte`
+- All relation filters require the child route to use `WithRelationName` (same as includes)
+- Auth: relation filters respect AllowedIncludes — unauthorized relations are silently skipped
 
 **Nested includes (dot notation):**
 - Child direction: `?include=Posts.Comments` — each level needs `WithRelationName` on its route

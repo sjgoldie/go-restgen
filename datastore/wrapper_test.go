@@ -3803,6 +3803,11 @@ func setupRelationFilterTestDB(t *testing.T) (*datastore.SQLite, func()) {
 		t.Fatal("Failed to create SQLite:", err)
 	}
 
+	if err := datastore.Initialize(db); err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to initialize datastore:", err)
+	}
+
 	ctx := context.Background()
 	models := []interface{}{
 		(*RelUser)(nil),
@@ -3818,7 +3823,10 @@ func setupRelationFilterTestDB(t *testing.T) (*datastore.SQLite, func()) {
 		}
 	}
 
-	return db, func() { db.GetDB().Close() }
+	return db, func() {
+		datastore.Cleanup()
+		db.Cleanup()
+	}
 }
 
 // createRelationFilterTestMeta creates the full 5-level metadata chain
@@ -4832,7 +4840,11 @@ func TestRelationFilter_CombinedFilterAndInclude(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
 	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
-	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Accounts": false})
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{
+		"Accounts":             false,
+		"Accounts.Sites":       false,
+		"Accounts.Sites.Bills": false,
+	})
 
 	users, _, _, _, err := userWrapper.GetAll(ctx)
 	if err != nil {
@@ -4847,6 +4859,612 @@ func TestRelationFilter_CombinedFilterAndInclude(t *testing.T) {
 	// Her accounts should be included
 	if len(users) > 0 && len(users[0].Accounts) == 0 {
 		t.Error("Expected Accounts to be included")
+	}
+}
+
+// ============================================================================
+// Issue #99: Existence Filter Tests
+// ============================================================================
+
+func TestExistsFilter_True(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts": {Value: "true", Operator: metadata.OpExists},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Both Alice and Bob have accounts
+	if len(users) != 2 {
+		t.Errorf("Expected 2 users with accounts, got %d", len(users))
+	}
+}
+
+func TestExistsFilter_False(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Add a user with no accounts
+	noAcctUser := RelUser{Name: "Charlie NoAccounts", Email: "charlie@example.com"}
+	_, err := db.GetDB().NewInsert().Model(&noAcctUser).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create user:", err)
+	}
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts": {Value: "false", Operator: metadata.OpExists},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(users) != 1 {
+		t.Errorf("Expected 1 user without accounts, got %d", len(users))
+	}
+	if len(users) > 0 && users[0].Name != "Charlie NoAccounts" {
+		t.Errorf("Expected Charlie, got %s", users[0].Name)
+	}
+}
+
+func TestExistsFilter_MultiLevel(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	// Both Alice and Bob have accounts with sites
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts.Sites": {Value: "true", Operator: metadata.OpExists},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(users) != 2 {
+		t.Errorf("Expected 2 users with accounts.sites, got %d", len(users))
+	}
+}
+
+func TestExistsFilter_Security_UnauthorizedRelation_Ignored(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts": {Value: "true", Operator: metadata.OpExists},
+		},
+	}
+
+	// Auth configured but Accounts NOT authorized
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Other": false})
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Filter silently skipped — all users returned
+	if len(users) != 2 {
+		t.Errorf("Expected 2 users (filter skipped), got %d", len(users))
+	}
+}
+
+func TestExistsFilter_Security_MultiLevel_RequiresFullPath(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts.Sites": {Value: "true", Operator: metadata.OpExists},
+		},
+	}
+
+	// Only "Accounts" authorized, NOT "Accounts.Sites" — filter must be blocked
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Accounts": false})
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Filter blocked (Accounts.Sites not explicitly authorized) — all users returned
+	if len(users) != 2 {
+		t.Errorf("Expected 2 users (filter blocked, Accounts.Sites not authorized), got %d", len(users))
+	}
+}
+
+func TestExistsFilter_Security_OwnershipStillEnforced(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts": {Value: "true", Operator: metadata.OpExists},
+		},
+	}
+
+	// Ownership enforced — Bob should only see his own record
+	userMeta.OwnershipFields = []string{"Email"}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "bob@example.com", Scopes: []string{"user"}})
+	ctx = context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctx = context.WithValue(ctx, metadata.OwnershipUserIDKey, "bob@example.com")
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(users) != 1 {
+		t.Errorf("Expected 1 user (ownership enforced), got %d", len(users))
+	}
+	if len(users) > 0 && users[0].Email != "bob@example.com" {
+		t.Errorf("Expected Bob, got %s", users[0].Email)
+	}
+}
+
+// ============================================================================
+// Issue #99: Count Filter Tests
+// ============================================================================
+
+func TestCountFilter_GreaterThan(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	// Alice has 2 accounts, Bob has 1
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts": {Value: "1", Operator: metadata.OpCountGt},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(users) != 1 {
+		t.Errorf("Expected 1 user with >1 accounts, got %d", len(users))
+	}
+	if len(users) > 0 && users[0].Name != "Alice Smith" {
+		t.Errorf("Expected Alice, got %s", users[0].Name)
+	}
+}
+
+func TestCountFilter_Equal(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	// Bob has exactly 1 account
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts": {Value: "1", Operator: metadata.OpCountEq},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(users) != 1 {
+		t.Errorf("Expected 1 user with exactly 1 account, got %d", len(users))
+	}
+	if len(users) > 0 && users[0].Name != "Bob Jones" {
+		t.Errorf("Expected Bob, got %s", users[0].Name)
+	}
+}
+
+func TestCountFilter_EqualZero(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	// Add user with no accounts
+	noAcctUser := RelUser{Name: "Charlie NoAccounts", Email: "charlie@example.com"}
+	_, err := db.GetDB().NewInsert().Model(&noAcctUser).Returning("*").Exec(context.Background())
+	if err != nil {
+		t.Fatal("Failed to create user:", err)
+	}
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts": {Value: "0", Operator: metadata.OpCountEq},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(users) != 1 {
+		t.Errorf("Expected 1 user with 0 accounts, got %d", len(users))
+	}
+	if len(users) > 0 && users[0].Name != "Charlie NoAccounts" {
+		t.Errorf("Expected Charlie, got %s", users[0].Name)
+	}
+}
+
+func TestCountFilter_Security_UnauthorizedRelation_Ignored(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts": {Value: "1", Operator: metadata.OpCountGt},
+		},
+	}
+
+	// Auth configured but Accounts NOT authorized
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Other": false})
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Filter silently skipped — all users returned
+	if len(users) != 2 {
+		t.Errorf("Expected 2 users (filter skipped), got %d", len(users))
+	}
+}
+
+func TestCountFilter_Security_MultiLevel_RequiresFullPath(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts.Sites": {Value: "2", Operator: metadata.OpCountGte},
+		},
+	}
+
+	// Only "Accounts" authorized, NOT "Accounts.Sites" — filter must be blocked
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Accounts": false})
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Filter blocked — all users returned
+	if len(users) != 2 {
+		t.Errorf("Expected 2 users (filter blocked, Accounts.Sites not authorized), got %d", len(users))
+	}
+}
+
+func TestCountFilter_Security_OwnershipStillEnforced(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	// Alice has 2 accounts — but ownership should still restrict results
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts": {Value: "0", Operator: metadata.OpCountGt},
+		},
+	}
+
+	userMeta.OwnershipFields = []string{"Email"}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "alice@example.com", Scopes: []string{"user"}})
+	ctx = context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctx = context.WithValue(ctx, metadata.OwnershipUserIDKey, "alice@example.com")
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(users) != 1 {
+		t.Errorf("Expected 1 user (ownership enforced), got %d", len(users))
+	}
+	if len(users) > 0 && users[0].Email != "alice@example.com" {
+		t.Errorf("Expected Alice, got %s", users[0].Email)
+	}
+}
+
+func TestCountFilter_Security_CantBypassOwnership(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	// Bob tries to find users with 2+ accounts (only Alice qualifies)
+	// but ownership should prevent Bob from seeing Alice
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts": {Value: "1", Operator: metadata.OpCountGt},
+		},
+	}
+
+	userMeta.OwnershipFields = []string{"Email"}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "bob@example.com", Scopes: []string{"user"}})
+	ctx = context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
+	ctx = context.WithValue(ctx, metadata.OwnershipUserIDKey, "bob@example.com")
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Bob only has 1 account so count_gt=1 + ownership = empty result
+	if len(users) != 0 {
+		t.Errorf("Expected 0 users (ownership prevents seeing Alice), got %d", len(users))
+	}
+	for _, user := range users {
+		if user.Email != "bob@example.com" {
+			t.Errorf("Data leak: Bob saw %s", user.Email)
+		}
+	}
+}
+
+// ============================================================================
+// Issue #99: Include Counts Tests
+// ============================================================================
+
+func TestIncludeCounts_Basic(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	users, _, _, _, _ := seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+
+	items := make([]*RelUser, len(users))
+	for i := range users {
+		items[i] = &users[i]
+	}
+
+	counts, err := userWrapper.ComputeIncludeCounts(ctx, items, []string{"Accounts"})
+	if err != nil {
+		t.Fatal("ComputeIncludeCounts failed:", err)
+	}
+
+	accountCounts, ok := counts["Accounts"]
+	if !ok {
+		t.Fatal("Expected Accounts in counts")
+	}
+
+	aliceID := strconv.Itoa(users[0].ID)
+	bobID := strconv.Itoa(users[1].ID)
+
+	if accountCounts[aliceID] != 2 {
+		t.Errorf("Expected Alice to have 2 accounts, got %d", accountCounts[aliceID])
+	}
+	if accountCounts[bobID] != 1 {
+		t.Errorf("Expected Bob to have 1 account, got %d", accountCounts[bobID])
+	}
+}
+
+func TestIncludeCounts_Security_UnauthorizedRelation_Excluded(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	users, _, _, _, _ := seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	// Auth configured but Accounts NOT authorized
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Other": false})
+
+	items := make([]*RelUser, len(users))
+	for i := range users {
+		items[i] = &users[i]
+	}
+
+	counts, err := userWrapper.ComputeIncludeCounts(ctx, items, []string{"Accounts"})
+	if err != nil {
+		t.Fatal("ComputeIncludeCounts failed:", err)
+	}
+
+	// Counts should be nil/empty — Accounts not authorized
+	if len(counts) != 0 {
+		t.Errorf("Expected no counts (unauthorized relation), got %v", counts)
+	}
+}
+
+func TestIncludeCounts_Security_MultiLevel_RequiresFullPath(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	users, _, _, _, _ := seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	// Only "Accounts" authorized, NOT "Accounts.Sites"
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Accounts": false})
+
+	items := make([]*RelUser, len(users))
+	for i := range users {
+		items[i] = &users[i]
+	}
+
+	counts, err := userWrapper.ComputeIncludeCounts(ctx, items, []string{"Accounts", "Accounts.Sites"})
+	if err != nil {
+		t.Fatal("ComputeIncludeCounts failed:", err)
+	}
+
+	// "Accounts" should have counts, "Accounts.Sites" should NOT
+	if _, ok := counts["Accounts"]; !ok {
+		t.Error("Expected Accounts counts (authorized)")
+	}
+	if _, ok := counts["Accounts.Sites"]; ok {
+		t.Error("Accounts.Sites should NOT have counts (not explicitly authorized)")
+	}
+}
+
+func TestChildFieldFilter_Security_MultiLevel_RequiresFullPath(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts.Sites.Bills.Status": {Value: "Overdue", Operator: metadata.OpEq},
+		},
+	}
+
+	// Only "Accounts" authorized, NOT the full chain — filter must be blocked
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Accounts": false})
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Filter blocked — all users returned
+	if len(users) != 2 {
+		t.Errorf("Expected 2 users (filter blocked, Accounts.Sites.Bills not authorized), got %d", len(users))
+	}
+}
+
+func TestExistsFilter_Security_FalseWithUnauthorized_ReturnsAll(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	_, _, _, _, _ = seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+
+	// exists=false with unauthorized relation must NOT accidentally return empty set
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Accounts": {Value: "false", Operator: metadata.OpExists},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, metadata.AllowedIncludes{"Other": false})
+
+	users, _, _, _, err := userWrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	// Filter skipped — all users returned (not an empty set)
+	if len(users) != 2 {
+		t.Errorf("Expected 2 users (filter skipped, not empty set), got %d", len(users))
 	}
 }
 
@@ -4888,6 +5506,11 @@ func setupTenantTestDB(t *testing.T) (*datastore.SQLite, func()) {
 		t.Fatal("Failed to create test database:", err)
 	}
 
+	if err := datastore.Initialize(db); err != nil {
+		db.Cleanup()
+		t.Fatal("Failed to initialize datastore:", err)
+	}
+
 	ctx := context.Background()
 	models := []interface{}{
 		(*TestTenantOrg)(nil),
@@ -4907,6 +5530,7 @@ func setupTenantTestDB(t *testing.T) (*datastore.SQLite, func()) {
 		for _, model := range models {
 			db.GetDB().NewDropTable().Model(model).IfExists().Exec(ctx)
 		}
+		datastore.Cleanup()
 		db.Cleanup()
 	}
 
@@ -5679,5 +6303,416 @@ func TestTenant_ParentTenantFilter_SkipsParentWithNoTenantField(t *testing.T) {
 	}
 	if len(crossResults) != 0 {
 		t.Errorf("Expected 0 tasks (direct tenant filter still applies), got %d", len(crossResults))
+	}
+}
+
+// ============================================================================
+// Issue #99: Tenant Isolation for Relation Filters
+// Verify exists, count, and include_count respect tenant scoping
+// ============================================================================
+
+func seedTenantRelationData(t *testing.T, db *datastore.SQLite) (projects []TestTenantProject) {
+	t.Helper()
+	ctx := context.Background()
+
+	// org-a: P1 (3 tasks), P2 (0 tasks)
+	// org-b: P3 (2 tasks)
+	projects = []TestTenantProject{
+		{OrgID: "org-a", OwnerID: "alice", Name: "Alpha"},
+		{OrgID: "org-a", OwnerID: "alice", Name: "Beta"},
+		{OrgID: "org-b", OwnerID: "bob", Name: "Gamma"},
+	}
+	for i := range projects {
+		_, err := db.GetDB().NewInsert().Model(&projects[i]).Returning("*").Exec(ctx)
+		if err != nil {
+			t.Fatal("Failed to create project:", err)
+		}
+	}
+
+	tasks := []TestTenantTask{
+		{ProjectID: projects[0].ID, OrgID: "org-a", Title: "Task A1"},
+		{ProjectID: projects[0].ID, OrgID: "org-a", Title: "Task A2"},
+		{ProjectID: projects[0].ID, OrgID: "org-a", Title: "Task A3"},
+		{ProjectID: projects[2].ID, OrgID: "org-b", Title: "Task B1"},
+		{ProjectID: projects[2].ID, OrgID: "org-b", Title: "Task B2"},
+	}
+	for i := range tasks {
+		_, err := db.GetDB().NewInsert().Model(&tasks[i]).Returning("*").Exec(ctx)
+		if err != nil {
+			t.Fatal("Failed to create task:", err)
+		}
+	}
+
+	return projects
+}
+
+func TestTenant_ExistsFilter_ScopedByTenant(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	seedTenantRelationData(t, db)
+
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Tasks": {Value: "true", Operator: metadata.OpExists},
+		},
+	}
+
+	// org-a: P1 has tasks, P2 has none — expect 1 match
+	ctx := ctxWithMeta(projectMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = ctxWithTenant(ctx, "org-a")
+
+	projects, _, _, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(projects) != 1 {
+		t.Errorf("Expected 1 project with tasks in org-a, got %d", len(projects))
+	}
+	if len(projects) > 0 && projects[0].Name != "Alpha" {
+		t.Errorf("Expected Alpha, got %s", projects[0].Name)
+	}
+
+	// org-b: P3 has tasks — expect 1 match
+	ctx = ctxWithMeta(projectMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = ctxWithTenant(ctx, "org-b")
+
+	projects, _, _, _, err = wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(projects) != 1 {
+		t.Errorf("Expected 1 project with tasks in org-b, got %d", len(projects))
+	}
+	if len(projects) > 0 && projects[0].Name != "Gamma" {
+		t.Errorf("Expected Gamma, got %s", projects[0].Name)
+	}
+}
+
+func TestTenant_ExistsFilter_CrossTenant_NoLeakage(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	seedTenantRelationData(t, db)
+
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+
+	// exists=false: org-a has P2 with no tasks, org-b has no projects without tasks
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Tasks": {Value: "false", Operator: metadata.OpExists},
+		},
+	}
+
+	ctx := ctxWithMeta(projectMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = ctxWithTenant(ctx, "org-a")
+
+	projects, _, _, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(projects) != 1 {
+		t.Errorf("Expected 1 project without tasks in org-a, got %d", len(projects))
+	}
+	if len(projects) > 0 && projects[0].Name != "Beta" {
+		t.Errorf("Expected Beta, got %s", projects[0].Name)
+	}
+
+	// org-b has no projects without tasks
+	ctx = ctxWithMeta(projectMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = ctxWithTenant(ctx, "org-b")
+
+	projects, _, _, _, err = wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(projects) != 0 {
+		t.Errorf("Expected 0 projects without tasks in org-b, got %d", len(projects))
+	}
+}
+
+func TestTenant_CountFilter_ScopedByTenant(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	seedTenantRelationData(t, db)
+
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+
+	// org-a P1 has 3 tasks: count_gt=2 should match P1 only
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Tasks": {Value: "2", Operator: metadata.OpCountGt},
+		},
+	}
+
+	ctx := ctxWithMeta(projectMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = ctxWithTenant(ctx, "org-a")
+
+	projects, _, _, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(projects) != 1 {
+		t.Errorf("Expected 1 project with >2 tasks in org-a, got %d", len(projects))
+	}
+	if len(projects) > 0 && projects[0].Name != "Alpha" {
+		t.Errorf("Expected Alpha, got %s", projects[0].Name)
+	}
+
+	// org-b P3 has 2 tasks: count_gt=2 should NOT match
+	ctx = ctxWithMeta(projectMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = ctxWithTenant(ctx, "org-b")
+
+	projects, _, _, _, err = wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(projects) != 0 {
+		t.Errorf("Expected 0 projects with >2 tasks in org-b, got %d", len(projects))
+	}
+}
+
+func TestTenant_CountFilter_CrossTenant_NoLeakage(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	seedTenantRelationData(t, db)
+
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+
+	// count_eq=0: org-a has Beta (0 tasks), org-b has none with 0 tasks
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Tasks": {Value: "0", Operator: metadata.OpCountEq},
+		},
+	}
+
+	ctx := ctxWithMeta(projectMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = ctxWithTenant(ctx, "org-a")
+
+	projects, _, _, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(projects) != 1 {
+		t.Errorf("Expected 1 project with 0 tasks in org-a, got %d", len(projects))
+	}
+	if len(projects) > 0 && projects[0].Name != "Beta" {
+		t.Errorf("Expected Beta, got %s", projects[0].Name)
+	}
+
+	// org-b: all projects have tasks, count_eq=0 should match 0
+	ctx = ctxWithMeta(projectMeta)
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+	ctx = ctxWithTenant(ctx, "org-b")
+
+	projects, _, _, _, err = wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(projects) != 0 {
+		t.Errorf("Expected 0 projects with 0 tasks in org-b, got %d", len(projects))
+	}
+}
+
+func TestTenant_IncludeCounts_ScopedByTenant(t *testing.T) {
+	db, cleanup := setupTenantTestDB(t)
+	defer cleanup()
+
+	_, projectMeta, _ := createTenantTestMeta()
+	projects := seedTenantRelationData(t, db)
+
+	wrapper := &datastore.Wrapper[TestTenantProject]{Store: db}
+
+	// Get org-a's projects
+	ctx := ctxWithMeta(projectMeta)
+	ctx = ctxWithTenant(ctx, "org-a")
+
+	orgAProjects, _, _, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	counts, err := wrapper.ComputeIncludeCounts(ctx, orgAProjects, []string{"Tasks"})
+	if err != nil {
+		t.Fatal("ComputeIncludeCounts failed:", err)
+	}
+
+	taskCounts, ok := counts["Tasks"]
+	if !ok {
+		t.Fatal("Expected Tasks in counts")
+	}
+
+	// P1 (Alpha) should have 3 tasks
+	p1ID := strconv.Itoa(projects[0].ID)
+	if taskCounts[p1ID] != 3 {
+		t.Errorf("Expected Alpha to have 3 tasks, got %d", taskCounts[p1ID])
+	}
+
+	// P2 (Beta) has 0 tasks — omitted from counts map
+	p2ID := strconv.Itoa(projects[1].ID)
+	if taskCounts[p2ID] != 0 {
+		t.Errorf("Expected Beta to have 0 tasks (omitted), got %d", taskCounts[p2ID])
+	}
+
+	// Verify org-b's project count doesn't leak into org-a's results
+	p3ID := strconv.Itoa(projects[2].ID)
+	if taskCounts[p3ID] != 0 {
+		t.Errorf("Org-b's project should not appear in org-a's counts, got %d", taskCounts[p3ID])
+	}
+}
+
+// ============================================================================
+// Issue #99: Multi-Level Include Counts
+// ============================================================================
+
+func TestIncludeCounts_MultiLevel(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	users, _, _, _, _ := seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+
+	items := make([]*RelUser, len(users))
+	for i := range users {
+		items[i] = &users[i]
+	}
+
+	// Count sites per user via Accounts.Sites (2-level chain)
+	counts, err := userWrapper.ComputeIncludeCounts(ctx, items, []string{"Accounts.Sites"})
+	if err != nil {
+		t.Fatal("ComputeIncludeCounts failed:", err)
+	}
+
+	siteCounts, ok := counts["Accounts.Sites"]
+	if !ok {
+		t.Fatal("Expected Accounts.Sites in counts")
+	}
+
+	aliceID := strconv.Itoa(users[0].ID)
+	bobID := strconv.Itoa(users[1].ID)
+
+	// Alice: acct[0] has 2 sites + acct[1] has 1 site = 3 total
+	if siteCounts[aliceID] != 3 {
+		t.Errorf("Expected Alice to have 3 sites, got %d", siteCounts[aliceID])
+	}
+
+	// Bob: acct[2] has 1 site = 1 total
+	if siteCounts[bobID] != 1 {
+		t.Errorf("Expected Bob to have 1 site, got %d", siteCounts[bobID])
+	}
+}
+
+func TestIncludeCounts_MultiLevel_ThreeLevels(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	users, _, _, _, _ := seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+
+	items := make([]*RelUser, len(users))
+	for i := range users {
+		items[i] = &users[i]
+	}
+
+	// Count bills per user via Accounts.Sites.Bills (3-level chain)
+	counts, err := userWrapper.ComputeIncludeCounts(ctx, items, []string{"Accounts.Sites.Bills"})
+	if err != nil {
+		t.Fatal("ComputeIncludeCounts failed:", err)
+	}
+
+	billCounts, ok := counts["Accounts.Sites.Bills"]
+	if !ok {
+		t.Fatal("Expected Accounts.Sites.Bills in counts")
+	}
+
+	aliceID := strconv.Itoa(users[0].ID)
+	bobID := strconv.Itoa(users[1].ID)
+
+	// Alice: sites[0]=2 bills + sites[1]=1 bill + sites[2]=1 bill = 4 total
+	if billCounts[aliceID] != 4 {
+		t.Errorf("Expected Alice to have 4 bills, got %d", billCounts[aliceID])
+	}
+
+	// Bob: sites[3]=2 bills = 2 total
+	if billCounts[bobID] != 2 {
+		t.Errorf("Expected Bob to have 2 bills, got %d", billCounts[bobID])
+	}
+}
+
+func TestIncludeCounts_MultiLevel_Mixed(t *testing.T) {
+	db, cleanup := setupRelationFilterTestDB(t)
+	defer cleanup()
+
+	userMeta, _, _, _, _ := createRelationFilterTestMeta()
+	users, _, _, _, _ := seedRelationFilterTestData(t, db)
+
+	userWrapper := &datastore.Wrapper[RelUser]{Store: db}
+	ctx := context.WithValue(context.Background(), metadata.MetadataKey, userMeta)
+
+	items := make([]*RelUser, len(users))
+	for i := range users {
+		items[i] = &users[i]
+	}
+
+	// Request both single-level and multi-level counts together
+	counts, err := userWrapper.ComputeIncludeCounts(ctx, items, []string{"Accounts", "Accounts.Sites"})
+	if err != nil {
+		t.Fatal("ComputeIncludeCounts failed:", err)
+	}
+
+	aliceID := strconv.Itoa(users[0].ID)
+	bobID := strconv.Itoa(users[1].ID)
+
+	// Verify single-level: Accounts
+	accountCounts, ok := counts["Accounts"]
+	if !ok {
+		t.Fatal("Expected Accounts in counts")
+	}
+	if accountCounts[aliceID] != 2 {
+		t.Errorf("Expected Alice to have 2 accounts, got %d", accountCounts[aliceID])
+	}
+	if accountCounts[bobID] != 1 {
+		t.Errorf("Expected Bob to have 1 account, got %d", accountCounts[bobID])
+	}
+
+	// Verify multi-level: Accounts.Sites
+	siteCounts, ok := counts["Accounts.Sites"]
+	if !ok {
+		t.Fatal("Expected Accounts.Sites in counts")
+	}
+	if siteCounts[aliceID] != 3 {
+		t.Errorf("Expected Alice to have 3 sites, got %d", siteCounts[aliceID])
+	}
+	if siteCounts[bobID] != 1 {
+		t.Errorf("Expected Bob to have 1 site, got %d", siteCounts[bobID])
 	}
 }

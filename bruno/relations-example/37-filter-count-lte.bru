@@ -1,0 +1,36 @@
+meta {
+  name: Filter Count LTE - Posts with at most 1 comment
+  type: http
+  seq: 37
+}
+
+get {
+  url: {{baseUrl}}/posts?filter[Comments][count_lte]=1
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:admin:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 2
+}
+
+tests {
+  test("Posts with 0 or 1 comments returned", function() {
+    const titles = res.body.data.map(p => p.title).sort();
+    expect(titles).to.include("Bob's First Post");
+    expect(titles).to.include("Empty Post");
+    expect(titles).to.not.include("Alice's First Post");
+  });
+}
+
+docs {
+  Admin filters posts where comment count <= 1.
+  Bob's post (1 comment) and Empty Post (0 comments) match.
+  Alice's post (2 comments) is excluded.
+}

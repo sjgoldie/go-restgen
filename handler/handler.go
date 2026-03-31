@@ -371,6 +371,16 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 			response.Sums = sums
 		}
 
+		// Include counts if any were requested
+		if opts != nil && len(opts.IncludeCounts) > 0 {
+			counts, err := svc.ComputeIncludeCounts(ctx, items, opts.IncludeCounts)
+			if err != nil {
+				slog.WarnContext(ctx, "failed to compute include counts", "error", err)
+			} else if len(counts) > 0 {
+				response.Counts = counts
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(response); err != nil {

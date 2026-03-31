@@ -298,6 +298,9 @@ router.WithAudit(func(ac metadata.AuditContext[T]) any {
 |-----------|---------|-------------|
 | Filter | `?filter[Status]=active` | Exact match |
 | Filter ops | `?filter[Age][gt]=18` | Operators: eq, neq, gt, gte, lt, lte, like, in, nin, bt, nbt |
+| Relation exists | `?filter[Comments][exists]=true` | Filter by child existence (true/false) |
+| Relation count | `?filter[Comments][count_gt]=5` | Filter by child count (count_eq, count_neq, count_gt, count_gte, count_lt, count_lte) |
+| Include count | `?include_count=Comments` | Return per-item child counts in `counts` object |
 | Sort | `?sort=Name,-CreatedAt` | `-` prefix for descending |
 | Limit | `?limit=10` | Max results per page |
 | After | `?after=<cursor>` | Next page (cursor from `pagination.next_cursor`) |
@@ -307,11 +310,13 @@ router.WithAudit(func(ac metadata.AuditContext[T]) any {
 | Include | `?include=Posts.Comments` | Load relations (dot notation for nested) |
 | Sum | `?sum=Price,Stock` | Returns in `sums` object in response body |
 
-**Response envelope (GetAll):** `{"data": [...], "pagination": {...}, "sums": {...}}`.
+**Response envelope (GetAll):** `{"data": [...], "pagination": {...}, "sums": {...}, "counts": {...}}`.
 Cursor mode: `has_more`, `next_cursor`, `prev_cursor`, `total_count`. Offset mode: `limit`, `offset`, `total_count`.
 Batch responses: `{"data": [...]}`. Single-item responses: raw object (no envelope).
 
 **Nested includes:** child direction needs `WithRelationName` at each level. Parent direction (e.g., `?include=Author`) auto-derived from `rel:belongs-to` tags. Auth is cumulative AND, ownership is cumulative OR.
+
+**Relation filters and counts:** `filter[Relation][exists]` and `filter[Relation][count_*]` use correlated subqueries and require the relation to be in `AllowedIncludes`. `include_count` returns `counts: {"Relation": {"pk": count}}` in the response. Unauthorized relations are silently skipped.
 
 ## Error Handling
 

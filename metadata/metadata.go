@@ -256,15 +256,16 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 
 // QueryOptions holds parsed query parameters for filtering, sorting, and pagination
 type QueryOptions struct {
-	Filters    map[string]FilterValue // field -> value/operator
-	Sort       []SortField            // ordered list of sort fields
-	Limit      int                    // 0 means use default
-	Offset     int                    // 0 means start from beginning
-	After      string                 // cursor for forward pagination (next page)
-	Before     string                 // cursor for backward pagination (previous page)
-	CountTotal bool                   // whether to return total count
-	Include    []string               // relation names to include via ?include=
-	Sums       []string               // field names to compute sum aggregates via ?sum=
+	Filters       map[string]FilterValue // field -> value/operator
+	Sort          []SortField            // ordered list of sort fields
+	Limit         int                    // 0 means use default
+	Offset        int                    // 0 means start from beginning
+	After         string                 // cursor for forward pagination (next page)
+	Before        string                 // cursor for backward pagination (previous page)
+	CountTotal    bool                   // whether to return total count
+	Include       []string               // relation names to include via ?include=
+	Sums          []string               // field names to compute sum aggregates via ?sum=
+	IncludeCounts []string               // relation names to include counts via ?include_count=
 }
 
 // AllowedIncludes maps relation names to whether ownership filtering should be applied.
@@ -300,6 +301,15 @@ const (
 	OpNin  = "nin"  // Not in list
 	OpBt   = "bt"   // Between (inclusive)
 	OpNbt  = "nbt"  // Not between
+
+	// Relation-level operators (applied to child relations, not fields)
+	OpExists   = "exists"    // Existence filter: ?filter[Relation][exists]=true/false
+	OpCountEq  = "count_eq"  // Count equals: ?filter[Relation][count_eq]=5
+	OpCountNeq = "count_neq" // Count not equals
+	OpCountGt  = "count_gt"  // Count greater than
+	OpCountGte = "count_gte" // Count greater than or equal
+	OpCountLt  = "count_lt"  // Count less than
+	OpCountLte = "count_lte" // Count less than or equal
 )
 
 // FilterValue represents a filter with value and operator
@@ -434,6 +444,16 @@ func ParseQueryOptions(query url.Values) *QueryOptions {
 			field = strings.TrimSpace(field)
 			if field != "" {
 				opts.Sums = append(opts.Sums, field)
+			}
+		}
+	}
+
+	// Parse include_count: include_count=Relation1,Relation2
+	if includeCountStr := query.Get("include_count"); includeCountStr != "" {
+		for _, rel := range strings.Split(includeCountStr, ",") {
+			rel = strings.TrimSpace(rel)
+			if rel != "" {
+				opts.IncludeCounts = append(opts.IncludeCounts, rel)
 			}
 		}
 	}

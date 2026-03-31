@@ -1,0 +1,32 @@
+meta {
+  name: Filter Count GT - Posts with more than 1 comment
+  type: http
+  seq: 29
+}
+
+get {
+  url: {{baseUrl}}/posts?filter[Comments][count_gt]=1
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:admin:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 1
+}
+
+tests {
+  test("Only Alice's post has more than 1 comment", function() {
+    expect(res.body.data[0].title).to.equal("Alice's First Post");
+  });
+}
+
+docs {
+  Admin filters posts where comment count > 1.
+  Alice's post has 2 comments. Bob's has 1. Empty has 0.
+}

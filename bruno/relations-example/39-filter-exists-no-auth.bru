@@ -1,0 +1,20 @@
+meta {
+  name: Security - Exists Filter without Auth Returns 401
+  type: http
+  seq: 39
+}
+
+get {
+  url: {{baseUrl}}/posts?filter[Comments][exists]=true
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  Posts endpoint requires auth (AllWithOwnershipUnless).
+  Unauthenticated requests get 401 before any relation filter is evaluated.
+}

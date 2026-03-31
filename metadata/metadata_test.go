@@ -883,6 +883,135 @@ func TestParseQueryOptions_Sum(t *testing.T) {
 	}
 }
 
+func TestParseQueryOptions_RelationOperators(t *testing.T) {
+	tests := []struct {
+		name          string
+		query         url.Values
+		expectedField string
+		expectedValue string
+		expectedOp    string
+	}{
+		{
+			name:          "exists true",
+			query:         url.Values{"filter[Orders][exists]": {"true"}},
+			expectedField: "Orders",
+			expectedValue: "true",
+			expectedOp:    OpExists,
+		},
+		{
+			name:          "exists false",
+			query:         url.Values{"filter[Orders][exists]": {"false"}},
+			expectedField: "Orders",
+			expectedValue: "false",
+			expectedOp:    OpExists,
+		},
+		{
+			name:          "nested exists",
+			query:         url.Values{"filter[Orders.Items][exists]": {"true"}},
+			expectedField: "Orders.Items",
+			expectedValue: "true",
+			expectedOp:    OpExists,
+		},
+		{
+			name:          "count_gt",
+			query:         url.Values{"filter[Orders][count_gt]": {"5"}},
+			expectedField: "Orders",
+			expectedValue: "5",
+			expectedOp:    OpCountGt,
+		},
+		{
+			name:          "count_eq",
+			query:         url.Values{"filter[Orders][count_eq]": {"0"}},
+			expectedField: "Orders",
+			expectedValue: "0",
+			expectedOp:    OpCountEq,
+		},
+		{
+			name:          "count_lte nested",
+			query:         url.Values{"filter[Orders.Items][count_lte]": {"10"}},
+			expectedField: "Orders.Items",
+			expectedValue: "10",
+			expectedOp:    OpCountLte,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := ParseQueryOptions(tt.query)
+
+			if len(opts.Filters) != 1 {
+				t.Fatalf("Expected 1 filter, got %d", len(opts.Filters))
+			}
+
+			filter, ok := opts.Filters[tt.expectedField]
+			if !ok {
+				t.Fatalf("Expected filter for field %q", tt.expectedField)
+			}
+			if filter.Value != tt.expectedValue {
+				t.Errorf("Expected value %q, got %q", tt.expectedValue, filter.Value)
+			}
+			if filter.Operator != tt.expectedOp {
+				t.Errorf("Expected operator %q, got %q", tt.expectedOp, filter.Operator)
+			}
+		})
+	}
+}
+
+func TestParseQueryOptions_IncludeCount(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    url.Values
+		expected []string
+	}{
+		{
+			name:     "single relation",
+			query:    url.Values{"include_count": {"Orders"}},
+			expected: []string{"Orders"},
+		},
+		{
+			name:     "multiple relations",
+			query:    url.Values{"include_count": {"Orders,Comments"}},
+			expected: []string{"Orders", "Comments"},
+		},
+		{
+			name:     "nested chain",
+			query:    url.Values{"include_count": {"Orders.Items"}},
+			expected: []string{"Orders.Items"},
+		},
+		{
+			name:     "with spaces",
+			query:    url.Values{"include_count": {"Orders, Comments"}},
+			expected: []string{"Orders", "Comments"},
+		},
+		{
+			name:     "empty ignored",
+			query:    url.Values{"include_count": {"Orders,,Comments"}},
+			expected: []string{"Orders", "Comments"},
+		},
+		{
+			name:     "not present",
+			query:    url.Values{},
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := ParseQueryOptions(tt.query)
+
+			if len(opts.IncludeCounts) != len(tt.expected) {
+				t.Fatalf("IncludeCounts: expected %d, got %d", len(tt.expected), len(opts.IncludeCounts))
+			}
+
+			for i, exp := range tt.expected {
+				if opts.IncludeCounts[i] != exp {
+					t.Errorf("IncludeCounts[%d]: expected %q, got %q", i, exp, opts.IncludeCounts[i])
+				}
+			}
+		})
+	}
+}
+
 func TestTypeMetadata_Clone_SummableFields(t *testing.T) {
 	original := &TypeMetadata{
 		TypeID:         "test_id",

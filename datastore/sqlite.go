@@ -57,6 +57,10 @@ func (s *SQLite) GetTimeout() time.Duration {
 	return 5 * time.Second
 }
 
+func (s *SQLite) IlikeOp() string {
+	return "LIKE"
+}
+
 func (s *SQLite) Cleanup() {
 	if s.ownsConnection {
 		if s.db != nil {

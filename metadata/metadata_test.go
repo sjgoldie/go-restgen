@@ -591,6 +591,13 @@ func TestParseQueryOptions_Filters(t *testing.T) {
 			expectedValue: "%john%",
 			expectedOp:    OpLike,
 		},
+		{
+			name:          "filter with ilike operator",
+			query:         url.Values{"filter[name][ilike]": {"%john%"}},
+			expectedField: "name",
+			expectedValue: "%john%",
+			expectedOp:    OpIlike,
+		},
 	}
 
 	for _, tt := range tests {

@@ -290,17 +290,18 @@ func AllowedIncludesFromContext(ctx context.Context) AllowedIncludes {
 
 // Filter operators
 const (
-	OpEq   = "eq"   // Equals (default)
-	OpNeq  = "neq"  // Not equals
-	OpGt   = "gt"   // Greater than
-	OpGte  = "gte"  // Greater than or equal
-	OpLt   = "lt"   // Less than
-	OpLte  = "lte"  // Less than or equal
-	OpLike = "like" // SQL LIKE pattern
-	OpIn   = "in"   // In list
-	OpNin  = "nin"  // Not in list
-	OpBt   = "bt"   // Between (inclusive)
-	OpNbt  = "nbt"  // Not between
+	OpEq    = "eq"    // Equals (default)
+	OpNeq   = "neq"   // Not equals
+	OpGt    = "gt"    // Greater than
+	OpGte   = "gte"   // Greater than or equal
+	OpLt    = "lt"    // Less than
+	OpLte   = "lte"   // Less than or equal
+	OpLike  = "like"  // SQL LIKE pattern (case-sensitive on PostgreSQL)
+	OpIlike = "ilike" // Case-insensitive LIKE pattern
+	OpIn    = "in"    // In list
+	OpNin   = "nin"   // Not in list
+	OpBt    = "bt"    // Between (inclusive)
+	OpNbt   = "nbt"   // Not between
 
 	// Relation-level operators (applied to child relations, not fields)
 	OpExists   = "exists"    // Existence filter: ?filter[Relation][exists]=true/false

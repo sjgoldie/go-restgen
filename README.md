@@ -918,7 +918,8 @@ GET /users?filter[Status]=active&filter[Role]=admin
 | `gte` | Greater than or equal | `filter[Age][gte]=18` |
 | `lt` | Less than | `filter[Age][lt]=65` |
 | `lte` | Less than or equal | `filter[Age][lte]=65` |
-| `like` | SQL LIKE pattern | `filter[Name][like]=John%` |
+| `like` | SQL LIKE pattern (case-sensitive on PostgreSQL) | `filter[Name][like]=John%` |
+| `ilike` | Case-insensitive LIKE pattern | `filter[Name][ilike]=john%` |
 | `in` | In list | `filter[Status][in]=active,pending` |
 | `nin` | Not in list | `filter[Status][nin]=deleted,archived` |
 | `bt` | Between (inclusive) | `filter[Age][bt]=18,65` |

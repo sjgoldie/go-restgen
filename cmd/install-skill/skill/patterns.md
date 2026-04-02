@@ -297,7 +297,7 @@ router.WithAudit(func(ac metadata.AuditContext[T]) any {
 | Parameter | Example | Description |
 |-----------|---------|-------------|
 | Filter | `?filter[Status]=active` | Exact match |
-| Filter ops | `?filter[Age][gt]=18` | Operators: eq, neq, gt, gte, lt, lte, like, in, nin, bt, nbt |
+| Filter ops | `?filter[Age][gt]=18` | Operators: eq, neq, gt, gte, lt, lte, like, ilike, in, nin, bt, nbt |
 | Relation exists | `?filter[Comments][exists]=true` | Filter by child existence (true/false) |
 | Relation count | `?filter[Comments][count_gt]=5` | Filter by child count (count_eq, count_neq, count_gt, count_gte, count_lt, count_lte) |
 | Include count | `?include_count=Comments` | Return per-item child counts in `counts` object |

@@ -54,6 +54,10 @@ func (p *PostgreSQL) GetTimeout() time.Duration {
 	return 30 * time.Second
 }
 
+func (p *PostgreSQL) IlikeOp() string {
+	return "ILIKE"
+}
+
 func (p *PostgreSQL) Cleanup() {
 	if p.ownsConnection {
 		if p.db != nil {

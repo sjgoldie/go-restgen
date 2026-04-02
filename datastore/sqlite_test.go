@@ -91,6 +91,18 @@ func TestSQLite_GetTimeout(t *testing.T) {
 	}
 }
 
+func TestSQLite_IlikeOp(t *testing.T) {
+	db, err := datastore.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal("Failed to create SQLite database:", err)
+	}
+	defer db.Cleanup()
+
+	if db.IlikeOp() != "LIKE" {
+		t.Errorf("Expected SQLite IlikeOp() = \"LIKE\", got %q", db.IlikeOp())
+	}
+}
+
 func TestSQLite_Cleanup(t *testing.T) {
 	tests := []struct {
 		name string

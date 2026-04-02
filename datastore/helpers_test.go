@@ -301,6 +301,7 @@ func TestApplyFilter_WithTableName(t *testing.T) {
 		{"lt", "amount", metadata.OpLt, []interface{}{100}, 2},
 		{"lte", "amount", metadata.OpLte, []interface{}{100}, 3},
 		{"like", "name", metadata.OpLike, []interface{}{"a%"}, 1},
+		{"ilike", "name", metadata.OpIlike, []interface{}{"A%"}, 1},
 		{"in", "category", metadata.OpIn, []interface{}{"A", "B"}, 3},
 		{"nin", "category", metadata.OpNin, []interface{}{"A"}, 2},
 		{"bt", "amount", metadata.OpBt, []interface{}{50, 100}, 3},
@@ -311,7 +312,7 @@ func TestApplyFilter_WithTableName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			query := db.GetDB().NewSelect().Table("filter_items")
-			result := applyFilter(query, "filter_items", tt.col, tt.operator, tt.vals)
+			result := applyFilter(query, "filter_items", tt.col, tt.operator, tt.vals, db.IlikeOp())
 
 			count, err := result.Count(ctx)
 			if err != nil {
@@ -454,7 +455,7 @@ func TestBuildExistsChain(t *testing.T) {
 	t.Run("single level with inner filter", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta}
 		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
-			return applyFilter(q, "exists_children", "status", metadata.OpEq, []interface{}{"inactive"})
+			return applyFilter(q, "exists_children", "status", metadata.OpEq, []interface{}{"inactive"}, "LIKE")
 		})
 
 		var results []existsTestParent
@@ -498,7 +499,7 @@ func TestBuildExistsChain(t *testing.T) {
 	t.Run("two level chain with inner filter", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta, grandchildMeta}
 		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
-			return applyFilter(q, "exists_grandchildren", "value", metadata.OpEq, []interface{}{"deep"})
+			return applyFilter(q, "exists_grandchildren", "value", metadata.OpEq, []interface{}{"deep"}, "LIKE")
 		})
 
 		var results []existsTestParent
@@ -517,7 +518,7 @@ func TestBuildExistsChain(t *testing.T) {
 	t.Run("two level chain with non-matching filter", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta, grandchildMeta}
 		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
-			return applyFilter(q, "exists_grandchildren", "value", metadata.OpEq, []interface{}{"nonexistent"})
+			return applyFilter(q, "exists_grandchildren", "value", metadata.OpEq, []interface{}{"nonexistent"}, "LIKE")
 		})
 
 		var results []existsTestParent
@@ -557,7 +558,7 @@ func TestBuildExistsChain(t *testing.T) {
 	t.Run("inner filter with in operator", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta}
 		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
-			return applyFilter(q, "exists_children", "status", metadata.OpIn, []interface{}{"active", "inactive"})
+			return applyFilter(q, "exists_children", "status", metadata.OpIn, []interface{}{"active", "inactive"}, "LIKE")
 		})
 
 		var results []existsTestParent
@@ -592,7 +593,7 @@ func TestBuildExistsChain_CrossIsolation(t *testing.T) {
 		// A broken FK correlation (missing child.fk = parent.pk) would return both.
 		chain := []*metadata.TypeMetadata{childMeta}
 		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
-			return applyFilter(q, "exists_children", "status", metadata.OpEq, []interface{}{"inactive"})
+			return applyFilter(q, "exists_children", "status", metadata.OpEq, []interface{}{"inactive"}, "LIKE")
 		})
 
 		var results []existsTestParent
@@ -660,7 +661,7 @@ func TestBuildExistsChain_CrossIsolation(t *testing.T) {
 		// even though parent 1 has children (just not ones with grandchildren).
 		chain := []*metadata.TypeMetadata{childMeta, grandchildMeta}
 		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
-			return applyFilter(q, "exists_grandchildren", "value", metadata.OpEq, []interface{}{"deep"})
+			return applyFilter(q, "exists_grandchildren", "value", metadata.OpEq, []interface{}{"deep"}, "LIKE")
 		})
 
 		var results []existsTestParent
@@ -1303,7 +1304,7 @@ func TestBuildExistsChain_TenantIsolation(t *testing.T) {
 		// alice has a child with tenant_id=A → excluded.
 		chain := []*metadata.TypeMetadata{childMeta}
 		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
-			return applyFilter(q, "tenant_children", "tenant_id", metadata.OpEq, []interface{}{"B"})
+			return applyFilter(q, "tenant_children", "tenant_id", metadata.OpEq, []interface{}{"B"}, "LIKE")
 		})
 
 		var results []tenantParent
@@ -1344,7 +1345,7 @@ func TestBuildExistsChain_TenantIsolation(t *testing.T) {
 		// Real tenant enforcement needs conditions at EVERY chain level.
 		chain := []*metadata.TypeMetadata{childMeta}
 		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
-			return applyFilter(q, "tenant_children", "tenant_id", metadata.OpEq, []interface{}{"A"})
+			return applyFilter(q, "tenant_children", "tenant_id", metadata.OpEq, []interface{}{"A"}, "LIKE")
 		})
 
 		var results []tenantParent
@@ -1380,7 +1381,7 @@ func TestBuildExistsChain_TenantIsolation(t *testing.T) {
 		// alice's child has a grandchild but with tenant_id=A → excluded.
 		chain := []*metadata.TypeMetadata{childMeta, grandchildMeta}
 		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
-			return applyFilter(q, "tenant_grandchildren", "tenant_id", metadata.OpEq, []interface{}{"B"})
+			return applyFilter(q, "tenant_grandchildren", "tenant_id", metadata.OpEq, []interface{}{"B"}, "LIKE")
 		})
 
 		var results []tenantParent
@@ -1416,8 +1417,8 @@ func TestBuildExistsChain_TenantIsolation(t *testing.T) {
 		// beth's child is active but tenant_id=A → must be excluded.
 		chain := []*metadata.TypeMetadata{childMeta}
 		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
-			q = applyFilter(q, "tenant_children", "status", metadata.OpEq, []interface{}{"active"})
-			q = applyFilter(q, "tenant_children", "tenant_id", metadata.OpEq, []interface{}{"B"})
+			q = applyFilter(q, "tenant_children", "status", metadata.OpEq, []interface{}{"active"}, "LIKE")
+			q = applyFilter(q, "tenant_children", "tenant_id", metadata.OpEq, []interface{}{"B"}, "LIKE")
 			return q
 		})
 

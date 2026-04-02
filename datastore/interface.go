@@ -12,5 +12,6 @@ import (
 type Store interface {
 	GetDB() *bun.DB
 	GetTimeout() time.Duration
+	IlikeOp() string
 	Cleanup()
 }

@@ -1,0 +1,18 @@
+meta {
+  name: Filter ILIKE - Case-insensitive name starts with e
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/products?filter[Name][ilike]=e%25
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.data: length 1
+  res.body.data[0].name: eq Eggplant
+}

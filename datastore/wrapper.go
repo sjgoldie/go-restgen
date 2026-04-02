@@ -24,7 +24,7 @@ var (
 	singleValueOps = map[string]bool{
 		metadata.OpEq: true, "": true,
 		metadata.OpNeq: true, metadata.OpGt: true, metadata.OpGte: true,
-		metadata.OpLt: true, metadata.OpLte: true, metadata.OpLike: true,
+		metadata.OpLt: true, metadata.OpLte: true, metadata.OpLike: true, metadata.OpIlike: true,
 	}
 	rangeOps  = map[string]bool{metadata.OpBt: true, metadata.OpNbt: true}
 	filterOps = map[string]string{
@@ -1062,7 +1062,7 @@ func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQue
 // Supports relation paths like "Account.Status" or "Account.User.Email"
 // Supports relation-level operators: exists, count_eq, count_neq, count_gt, count_gte, count_lt, count_lte
 //
-// Single-value operators (eq, neq, gt, gte, lt, lte, like): use first value if multiple provided
+// Single-value operators (eq, neq, gt, gte, lt, lte, like, ilike): use first value if multiple provided
 // Multi-value operators (in, nin): use all values
 // Range operators (bt, nbt): require exactly 2 values; if fewer provided, zero value is used for missing
 func (w *Wrapper[T]) applyQueryFilters(ctx context.Context, query *bun.SelectQuery, opts *metadata.QueryOptions, meta *metadata.TypeMetadata) *bun.SelectQuery {
@@ -1108,7 +1108,7 @@ func (w *Wrapper[T]) applyQueryFilters(ctx context.Context, query *bun.SelectQue
 		}
 
 		vals := prepareFilterValues(ctx, meta.ModelType, field, filter)
-		query = applyFilter(query, "", colName, filter.Operator, vals)
+		query = applyFilter(query, "", colName, filter.Operator, vals, w.Store.IlikeOp())
 	}
 	return query
 }
@@ -1136,7 +1136,7 @@ func prepareFilterValues(ctx context.Context, modelType reflect.Type, field stri
 }
 
 // applyFilter applies a filter to a query. Pass "" for tableName to use ?TableAlias (base query).
-func applyFilter(query *bun.SelectQuery, tableName, colName, operator string, vals []interface{}) *bun.SelectQuery {
+func applyFilter(query *bun.SelectQuery, tableName, colName, operator string, vals []interface{}, ilikeOp string) *bun.SelectQuery {
 	if len(vals) == 0 {
 		return query
 	}
@@ -1153,6 +1153,8 @@ func applyFilter(query *bun.SelectQuery, tableName, colName, operator string, va
 	}
 
 	switch operator {
+	case metadata.OpIlike:
+		return query.Where(tblCol+" "+ilikeOp+" ?", append(args, vals[0])...)
 	case metadata.OpIn:
 		return query.Where(tblCol+" IN (?)", append(args, bun.List(vals))...)
 	case metadata.OpNin:
@@ -2090,7 +2092,7 @@ func (w *Wrapper[T]) applyParentFieldFilter(ctx context.Context, query *bun.Sele
 
 	query = w.buildParentJoins(query, meta, joinChain)
 	vals := prepareFilterValues(ctx, targetMeta.ModelType, path.field, filter)
-	return applyFilter(query, targetMeta.TableName, colName, filter.Operator, vals)
+	return applyFilter(query, targetMeta.TableName, colName, filter.Operator, vals, w.Store.IlikeOp())
 }
 
 // resolveParentChain walks up ParentMeta to resolve a relation path
@@ -2181,7 +2183,7 @@ func (w *Wrapper[T]) applyChildFieldFilter(ctx context.Context, query *bun.Selec
 	}
 
 	existsSubq := w.buildExistsChain(meta, childChain, func(q *bun.SelectQuery) *bun.SelectQuery {
-		return applyFilter(q, targetMeta.TableName, colName, filter.Operator, vals)
+		return applyFilter(q, targetMeta.TableName, colName, filter.Operator, vals, w.Store.IlikeOp())
 	})
 
 	return query.Where("EXISTS (?)", existsSubq)

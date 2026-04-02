@@ -251,7 +251,7 @@ go run main.go
 ```
 
 **Tests cover (36 tests):**
-- All filter operators (eq, neq, gt, gte, lt, lte, like, in, nin, bt, nbt)
+- All filter operators (eq, neq, gt, gte, lt, lte, like, ilike, in, nin, bt, nbt)
 - Combined filters with sort and pagination
 - Boolean and string edge cases
 - Sum aggregation (single, multiple, with filters, with count)

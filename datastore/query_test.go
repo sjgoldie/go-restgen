@@ -194,6 +194,32 @@ func TestQuery_Filter_Like(t *testing.T) {
 	}
 }
 
+func TestQuery_Filter_Ilike(t *testing.T) {
+	db, cleanup := setupQueryTestDB(t)
+	defer cleanup()
+
+	wrapper := &datastore.Wrapper[TestQueryProduct]{Store: db}
+	ctx := ctxWithQueryMeta(testQueryProductMeta)
+	seedQueryProducts(t, wrapper, ctx)
+
+	// Filter by name ILIKE %AN% — should match case-insensitively
+	opts := &metadata.QueryOptions{
+		Filters: map[string]metadata.FilterValue{
+			"Name": {Value: "%AN%", Operator: metadata.OpIlike},
+		},
+	}
+	ctx = context.WithValue(ctx, metadata.QueryOptionsKey, opts)
+
+	results, _, _, _, err := wrapper.GetAll(ctx)
+	if err != nil {
+		t.Fatal("GetAll failed:", err)
+	}
+
+	if len(results) != 2 {
+		t.Errorf("Expected 2 products with 'AN' ilike in name (Banana, Eggplant), got %d", len(results))
+	}
+}
+
 func TestQuery_Filter_NotAllowed(t *testing.T) {
 	db, cleanup := setupQueryTestDB(t)
 	defer cleanup()

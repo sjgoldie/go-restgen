@@ -1081,6 +1081,12 @@ func TestHandler_GetAll_FilterOperators(t *testing.T) {
 			expectedCount: 1,
 			checkNames:    []string{"Xander"},
 		},
+		{
+			name:          "filter with ilike operator",
+			queryString:   "filter[Name][ilike]=%25ANDER",
+			expectedCount: 1,
+			checkNames:    []string{"Xander"},
+		},
 	}
 
 	for _, tt := range tests {

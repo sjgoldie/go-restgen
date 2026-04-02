@@ -83,6 +83,18 @@ func TestPostgreSQL_GetTimeout(t *testing.T) {
 	}
 }
 
+func TestPostgreSQL_IlikeOp(t *testing.T) {
+	db, err := datastore.NewPostgres(testDSN)
+	if err != nil {
+		t.Fatal("Failed to create PostgreSQL instance:", err)
+	}
+	defer db.Cleanup()
+
+	if db.IlikeOp() != "ILIKE" {
+		t.Errorf("Expected PostgreSQL IlikeOp() = \"ILIKE\", got %q", db.IlikeOp())
+	}
+}
+
 func TestPostgreSQL_Cleanup(t *testing.T) {
 	tests := []struct {
 		name string

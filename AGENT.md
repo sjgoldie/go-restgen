@@ -530,7 +530,7 @@ Built-in support on GetAll endpoints:
 | Parameter | Example | Description |
 |-----------|---------|-------------|
 | Filter | `?filter[status]=active` | Exact match |
-| Filter ops | `?filter[age][gt]=18` | Operators: eq, neq, gt, gte, lt, lte, like, in, nin, bt, nbt |
+| Filter ops | `?filter[age][gt]=18` | Operators: eq, neq, gt, gte, lt, lte, like, ilike, in, nin, bt, nbt |
 | Child field filter | `?filter[Orders.Status][eq]=active` | Filter by child/grandchild field value (uses EXISTS subquery). Dot notation for nested chains. |
 | Exists filter | `?filter[Orders][exists]=true` | Filter by existence of child relations. `true` = has children, `false` = has none. |
 | Count filter | `?filter[Orders][count_gt]=5` | Filter by child relation count. Operators: count_eq, count_neq, count_gt, count_gte, count_lt, count_lte |
@@ -560,6 +560,7 @@ Batch responses use `{"data": [...]}` envelope.
 Single-item responses (Get, Create, Update, Patch, Delete) return the raw object (no envelope).
 
 **Filter operator details:**
+- `ilike` - Case-insensitive LIKE: `?filter[Name][ilike]=john%`
 - `in` - In list: `?filter[Status][in]=active,pending`
 - `nin` - Not in list: `?filter[Status][nin]=deleted,archived`
 - `bt` - Between (inclusive): `?filter[Age][bt]=18,65`

@@ -10,7 +10,7 @@ require (
 	github.com/uptrace/bun/dialect/pgdialect v1.2.17
 	github.com/uptrace/bun/dialect/sqlitedialect v1.2.17
 	github.com/uptrace/bun/driver/pgdriver v1.2.17
-	github.com/uptrace/bun/driver/sqliteshim v1.2.17
+	github.com/uptrace/bun/driver/sqliteshim v1.2.18
 	go.opentelemetry.io/otel v1.40.0
 	go.opentelemetry.io/otel/metric v1.40.0
 )

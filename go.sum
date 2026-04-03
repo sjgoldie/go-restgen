@@ -47,8 +47,8 @@ github.com/uptrace/bun/dialect/sqlitedialect v1.2.17 h1:ZipEoNr+wQJQleGy2poKSSoa
 github.com/uptrace/bun/dialect/sqlitedialect v1.2.17/go.mod h1:phXmrxxeYqUhMU09FgazbfNxq9LlArdqjZqHc1ILy9U=
 github.com/uptrace/bun/driver/pgdriver v1.2.17 h1:mKpkdAd31tT5tIJYdLENoFYjgU8mXHE1DFgqsx+Shas=
 github.com/uptrace/bun/driver/pgdriver v1.2.17/go.mod h1:NUq7hv9dndVNFTKYzb+WRt4UORL0AglQ65Ezz7fcr+A=
-github.com/uptrace/bun/driver/sqliteshim v1.2.17 h1:0Xa4FZp93D1LCCaMCiPjFsO36b4aQ1vFdXYD7Zk/WM4=
-github.com/uptrace/bun/driver/sqliteshim v1.2.17/go.mod h1:MqvqMCAAKNn6M0HF9YK/Z6xrnCP6sih5OZ37AxdAlHw=
+github.com/uptrace/bun/driver/sqliteshim v1.2.18 h1:fDCXp4L46A23OuUikDbL14SRmm3y+7XO4fkFe1bs2A4=
+github.com/uptrace/bun/driver/sqliteshim v1.2.18/go.mod h1:MqvqMCAAKNn6M0HF9YK/Z6xrnCP6sih5OZ37AxdAlHw=
 github.com/vmihailenco/msgpack/v5 v5.4.1 h1:cQriyiUvjTwOHg8QZaPihLWeRAAVoCpE00IUPn0Bjt8=
 github.com/vmihailenco/msgpack/v5 v5.4.1/go.mod h1:GaZTsDaehaPpQVyxrf5mtQlH+pc21PIudVV/E3rRQok=
 github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAhO7/IwNM9g=

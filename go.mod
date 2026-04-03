@@ -6,9 +6,9 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
 	github.com/shopspring/decimal v1.4.0
-	github.com/uptrace/bun v1.2.17
+	github.com/uptrace/bun v1.2.18
 	github.com/uptrace/bun/dialect/pgdialect v1.2.17
-	github.com/uptrace/bun/dialect/sqlitedialect v1.2.17
+	github.com/uptrace/bun/dialect/sqlitedialect v1.2.18
 	github.com/uptrace/bun/driver/pgdriver v1.2.17
 	github.com/uptrace/bun/driver/sqliteshim v1.2.17
 	go.opentelemetry.io/otel v1.40.0

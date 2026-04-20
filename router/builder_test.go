@@ -25,27 +25,8 @@ import (
 	"github.com/sjgoldie/go-restgen/service"
 )
 
-func TestMain(m *testing.M) {
-	// Initialize datastore for all tests
-	db, err := datastore.NewSQLite(":memory:")
-	if err != nil {
-		panic("failed to create test database: " + err.Error())
-	}
-
-	if err := datastore.Initialize(db); err != nil {
-		db.Cleanup()
-		panic("failed to initialize datastore: " + err.Error())
-	}
-
-	// Run tests
-	code := m.Run()
-
-	// Cleanup
-	datastore.Cleanup()
-	db.Cleanup()
-
-	os.Exit(code)
-}
+// TestMain lives in main_internal_test.go (package router) so it can install
+// a switchable Store that lets RLS unit tests swap in a sqlmock backend.
 
 // Test models with proper relationships
 type TestUser struct {

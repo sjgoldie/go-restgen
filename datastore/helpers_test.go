@@ -1449,3 +1449,75 @@ func TestBuildExistsChain_TenantIsolation(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// Issue #118: RLS wrapper helper tests
+// =============================================================================
+
+func TestGetDB_ReturnsPoolByDefault(t *testing.T) {
+	db, cleanup := setupHelperTestDB(t)
+	defer cleanup()
+
+	wrapper := &Wrapper[testParentType]{Store: db}
+
+	ctx := context.Background()
+	result := wrapper.getDB(ctx)
+
+	// Without RLS tx in context, should return the pool
+	if result != db.GetDB() {
+		t.Error("expected pool connection when no RLS tx in context")
+	}
+}
+
+func TestGetDB_ReturnsRLSTxFromContext(t *testing.T) {
+	db, cleanup := setupHelperTestDB(t)
+	defer cleanup()
+
+	wrapper := &Wrapper[testParentType]{Store: db}
+
+	ctx := context.Background()
+	tx, err := db.GetDB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rlsCtx := context.WithValue(ctx, metadata.RLSTxKey, tx)
+	result := wrapper.getDB(rlsCtx)
+
+	// With RLS tx in context, should return the tx, not the pool
+	if result == db.GetDB() {
+		t.Error("expected RLS tx from context, got pool connection")
+	}
+}
+
+func TestRunInTx_UsesRLSTxFromContext(t *testing.T) {
+	db, cleanup := setupHelperTestDB(t)
+	defer cleanup()
+
+	wrapper := &Wrapper[testParentType]{Store: db}
+
+	ctx := context.Background()
+	tx, err := db.GetDB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rlsCtx := context.WithValue(ctx, metadata.RLSTxKey, tx)
+
+	var receivedTx bun.Tx
+	err = wrapper.runInTx(rlsCtx, func(_ context.Context, innerTx bun.Tx) error {
+		receivedTx = innerTx
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// When RLS tx is in context, runInTx should pass it directly to fn
+	// instead of starting a new transaction
+	if receivedTx != tx {
+		t.Error("expected runInTx to use RLS tx from context, got a different transaction")
+	}
+}

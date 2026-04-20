@@ -112,6 +112,7 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 	var pkField string
 	var joinOn *JoinOnConfig
 	var tenantField string
+	var useRLS bool
 	var isTenantTable bool
 	var maxBodySize int64
 	var maxUploadSize int64
@@ -166,6 +167,7 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			joinOn = &v
 		case TenantConfig:
 			tenantField = v.Field
+			useRLS = v.RLS
 		case TenantTableConfig:
 			isTenantTable = true
 		case MaxBodySizeConfig:
@@ -182,12 +184,12 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, endpoints, sses, relationName, singleRoute, isFileResource, pkField, joinOn, tenantField, isTenantTable, maxBodySize, maxUploadSize)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, endpoints, sses, relationName, singleRoute, isFileResource, pkField, joinOn, tenantField, useRLS, isTenantTable, maxBodySize, maxUploadSize)
 }
 
 // prepareMetadata assembles type metadata and auth configuration before route registration.
 // This extracts the setup phase from registerRoutesWithBuilder to reduce cyclomatic complexity.
-func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool, maxBodySize int64, maxUploadSize int64) (string, *metadataSetup) {
+func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, useRLS bool, isTenantTable bool, maxBodySize int64, maxUploadSize int64) (string, *metadataSetup) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -286,10 +288,13 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	switch {
 	case isTenantTable:
 		meta.IsTenantTable = true
+		meta.UseRLS = useRLS
 	case tenantField != "":
 		meta.TenantField = tenantField
+		meta.UseRLS = useRLS
 	case b.parentMeta != nil && b.parentMeta.TenantField != "":
 		meta.TenantField = b.parentMeta.TenantField
+		meta.UseRLS = b.parentMeta.UseRLS
 	}
 
 	// Merge query configs (last wins for each setting)
@@ -375,8 +380,8 @@ func registerSingleRoutes[T any](r chi.Router, b *Builder, meta *metadata.TypeMe
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, isTenantTable bool, maxBodySize int64, maxUploadSize int64) {
-	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, isTenantTable, maxBodySize, maxUploadSize)
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, useRLS bool, isTenantTable bool, maxBodySize int64, maxUploadSize int64) {
+	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, useRLS, isTenantTable, maxBodySize, maxUploadSize)
 	meta := setup.meta
 	authMap := setup.authMap
 	metadataMiddleware := setup.metadataMiddleware
@@ -622,9 +627,11 @@ func createMetadataMiddleware(meta *metadata.TypeMetadata) func(http.Handler) ht
 
 // wrapHandler wraps a handler with auth middleware if configured, otherwise blocks unauthorized access
 // The authConfig's ChildAuth field is used for ?include= authorization
+// When RLS is enabled on the route, the RLS middleware is also applied (auth runs first,
+// then RLS wraps the request in a transaction with set_config('app.tenant_id', ...)).
 func wrapHandler(h http.Handler, authConfig *AuthConfig) http.Handler {
 	if authConfig != nil {
-		return wrapWithAuth(h, authConfig)
+		return wrapWithAuth(wrapWithRLS(h), authConfig)
 	}
 	return blockUnauthorized(h)
 }

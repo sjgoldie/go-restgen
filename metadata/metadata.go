@@ -118,6 +118,13 @@ type parentTenantKeyType string
 // Value is []*TypeMetadata - list of parent types in the chain that require tenant checks
 const ParentTenantKey parentTenantKeyType = "restgen_parent_tenant"
 
+// rlsTxKeyType is the context key type for the RLS transaction
+type rlsTxKeyType string
+
+// RLSTxKey is the context key for storing the RLS transaction.
+// When set, the datastore wrapper uses this transaction instead of the connection pool.
+const RLSTxKey rlsTxKeyType = "restgen_rls_tx"
+
 // PaginationMode controls whether cursor-based or offset-based pagination is used.
 // Zero value means no pagination mode configured.
 type PaginationMode int
@@ -156,6 +163,7 @@ type TypeMetadata struct {
 	// Multi-tenant scoping
 	TenantField   string // Go field name holding tenant ID (e.g., "OrgID"). Set by WithTenantScope, inherited by children.
 	IsTenantTable bool   // If true, this IS the tenant entity — filter by PK instead of TenantField.
+	UseRLS        bool   // If true, wrap requests in a transaction with SET LOCAL app.tenant_id (PostgreSQL RLS).
 
 	// Child routes for relation loading via ?include=
 	ChildMeta map[string]*TypeMetadata // relation name -> child type metadata
@@ -219,6 +227,7 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 		MaxUploadSize:   m.MaxUploadSize,
 		TenantField:     m.TenantField,
 		IsTenantTable:   m.IsTenantTable,
+		UseRLS:          m.UseRLS,
 	}
 
 	// Deep copy slices

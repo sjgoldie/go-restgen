@@ -7,7 +7,7 @@ Time    : {{ $dep.VersionTime }}
 Licence : {{ $dep.LicenceType }}
 
 {{ $dep | licenceText }}
-{{ end }}
+{{- end }}
 {{- end -}}
 
 {{ "=" | line }}
@@ -21,4 +21,4 @@ Third party libraries used by go-restgen
 Indirect dependencies
 
 {{ template "depInfo" .Indirect }}
-{{ end }}
+{{- end -}}

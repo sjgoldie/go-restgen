@@ -147,8 +147,9 @@ router.RegisterRoutes[Model](builder, "/path",
     router.WithBatchLimit(100),          // optional: limit items per batch
 
     // Multi-tenant isolation
-    router.WithTenantScope("OrgID"),  // auto-filter + auto-set tenant field from AuthInfo.TenantID
-    router.IsTenantTable(),           // marks route as the tenant entity (PK = tenant ID)
+    router.WithTenantScope("OrgID"),        // auto-filter + auto-set tenant field from AuthInfo.TenantID
+    router.WithTenantScope("OrgID", true),  // also enable PostgreSQL Row-Level Security (set_config app.tenant_id)
+    router.IsTenantTable(),                 // marks route as the tenant entity (PK = tenant ID)
 
     // Custom actions
     router.WithAction("publish", publishFn, router.AuthConfig{Scopes: []string{"user"}}),
@@ -286,6 +287,18 @@ authInfo := &router.AuthInfo{
 ```
 
 Behaviour: CREATE auto-sets tenant field, GET/LIST auto-filters, UPDATE re-enforces tenant field, cross-tenant returns 404, missing TenantID returns 401. Children inherit from parent.
+
+### PostgreSQL Row-Level Security (RLS)
+
+For PostgreSQL deployments, pass `true` as the second argument to `WithTenantScope` to enable defense-in-depth via RLS policies:
+
+```go
+router.WithTenantScope("OrgID", true)
+```
+
+When enabled, each request runs in a transaction with `SELECT set_config('app.tenant_id', '<id>', true)` so PostgreSQL RLS policies can scope queries. Application-level filtering still applies — RLS is purely additive. Configure RLS policies on your tables yourself (e.g., `CREATE POLICY tenant_isolation ON projects USING (org_id = current_setting('app.tenant_id'))`). The RLS middleware uses PostgreSQL-specific SQL — pointing it at SQLite will cause requests to fail with 500. Children inherit the parent's RLS setting.
+
+**Audit + RLS**: Audit inserts run in the same RLS transaction as the CRUD operation, so RLS policies on your audit table apply to the audit insert. Either leave audit tables without RLS (typical for global audit logs), or ensure your auditor builds records that satisfy the audit table's policies (e.g., set the tenant column to match `current_setting('app.tenant_id')`). Misconfigured RLS on the audit table will fail the audit insert and roll back the whole transaction.
 
 ## Pattern: Custom Handlers
 

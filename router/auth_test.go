@@ -2365,6 +2365,79 @@ func TestTenantAuth_WithOwnership_BothEnforced(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Issue #118: PostgreSQL Row-Level Security (RLS) Tests
+// =============================================================================
+
+func TestTenantRLS_ConfigDefaults(t *testing.T) {
+	t.Run("UseRLS defaults to false", func(t *testing.T) {
+		config := router.WithTenantScope("OrgID")
+		if config.RLS {
+			t.Error("expected RLS=false by default")
+		}
+	})
+
+	t.Run("UseRLS can be set to true", func(t *testing.T) {
+		config := router.WithTenantScope("OrgID", true)
+		if !config.RLS {
+			t.Error("expected RLS=true when explicitly set")
+		}
+	})
+
+	t.Run("UseRLS can be explicitly false", func(t *testing.T) {
+		config := router.WithTenantScope("OrgID", false)
+		if config.RLS {
+			t.Error("expected RLS=false when explicitly set to false")
+		}
+	})
+}
+
+func TestTenantRLS_MiddlewareWrapsRequestInTransaction(t *testing.T) {
+	setupTenantTest(t)
+
+	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "org-a", []string{"user"})
+	b := router.NewBuilder(r)
+
+	router.RegisterRoutes[TenantTestProject](b, "/projects",
+		router.WithTenantScope("OrgID", true),
+		router.IsAuthenticated(),
+	)
+
+	req := httptest.NewRequest("GET", "/projects", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// When UseRLS=true, the RLS middleware should wrap requests in a transaction
+	// with SET LOCAL app.tenant_id. SET LOCAL is PostgreSQL-specific, so on SQLite
+	// the request should fail with 500. This proves the middleware actually
+	// attempts the RLS setup (vs. silently passing through).
+	if w.Code == http.StatusOK {
+		t.Error("expected 500 when UseRLS=true on SQLite (SET LOCAL fails), got 200 — middleware not wrapping in RLS transaction")
+	}
+}
+
+func TestTenantRLS_MiddlewareNotAppliedWhenRLSFalse(t *testing.T) {
+	setupTenantTest(t)
+
+	r := addTenantAuthMiddleware(chi.NewRouter(), "alice", "org-a", []string{"user"})
+	b := router.NewBuilder(r)
+
+	// UseRLS is false — middleware should be a no-op
+	router.RegisterRoutes[TenantTestProject](b, "/projects",
+		router.WithTenantScope("OrgID"),
+		router.IsAuthenticated(),
+	)
+
+	req := httptest.NewRequest("GET", "/projects", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// Without UseRLS, the request should succeed normally on SQLite
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 when UseRLS=false, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestAuth_PatchRoute_AllPublic(t *testing.T) {
 	r := setupAuthTest(t, func(b *router.Builder) {
 		router.RegisterRoutes[AuthTestUser](b, "/users", router.AllPublic())

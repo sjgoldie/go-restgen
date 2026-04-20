@@ -74,7 +74,8 @@ router.RegisterRoutes[Model](builder, "/path",
     router.AsFileResource(),
 
     // Multi-tenant isolation
-    router.WithTenantScope("OrgID"),
+    router.WithTenantScope("OrgID"),        // app-level filtering
+    router.WithTenantScope("OrgID", true),  // app-level + PostgreSQL RLS (set_config app.tenant_id)
     router.IsTenantTable(),
 
     // Actions (POST /resource/{id}/{name})
@@ -363,6 +364,14 @@ router.RegisterRoutes[Project](b, "/projects",
 ```
 
 Auth middleware must set `TenantID` on `AuthInfo`.
+
+For PostgreSQL deployments, pass `true` as the second arg to enable Row-Level Security (RLS) as defense-in-depth. The middleware wraps requests in a transaction with `SELECT set_config('app.tenant_id', '<id>', true)`. You configure RLS policies on your tables (e.g., `CREATE POLICY tenant_isolation ON projects USING (org_id = current_setting('app.tenant_id'))`). Application-level filtering still applies — RLS is additive. SQLite doesn't support `set_config`, so RLS-enabled routes will fail on SQLite.
+
+```go
+router.WithTenantScope("OrgID", true)  // app filtering + PostgreSQL RLS
+```
+
+Audit inserts share the RLS transaction, so RLS policies on the audit table apply to audit records. Either leave audit tables without RLS, or ensure auditor records satisfy the policies — misconfigured RLS on the audit table fails the audit insert and rolls back the whole transaction.
 
 ## Database Setup
 

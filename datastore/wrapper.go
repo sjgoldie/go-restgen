@@ -57,6 +57,27 @@ type preFetchResult[T any] struct {
 	existingItems []*T
 }
 
+// getDB returns the RLS transaction from context if available, otherwise the connection pool.
+// When RLS middleware wraps a request in a transaction with SET LOCAL app.tenant_id,
+// the transaction is stored in context. This ensures all queries in the request
+// execute within that transaction and see the RLS-scoped data.
+func (w *Wrapper[T]) getDB(ctx context.Context) bun.IDB {
+	if tx, ok := ctx.Value(metadata.RLSTxKey).(bun.Tx); ok {
+		return tx
+	}
+	return w.Store.GetDB()
+}
+
+// runInTx runs fn in a transaction. If an RLS transaction is already in context,
+// fn runs directly on that transaction (avoiding a nested transaction).
+// Otherwise, a new transaction is started via the connection pool.
+func (w *Wrapper[T]) runInTx(ctx context.Context, fn func(ctx context.Context, tx bun.Tx) error) error {
+	if tx, ok := ctx.Value(metadata.RLSTxKey).(bun.Tx); ok {
+		return fn(ctx, tx)
+	}
+	return w.Store.GetDB().RunInTx(ctx, nil, fn)
+}
+
 // defaultParentJoinCol returns the parent join column, defaulting to "id" if empty.
 func defaultParentJoinCol(col string) string {
 	if col == "" {
@@ -92,7 +113,7 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64,
 	defer cancel()
 
 	items := []*T{}
-	query := w.Store.GetDB().NewSelect().Model(&items)
+	query := w.getDB(ctx).NewSelect().Model(&items)
 
 	// Get metadata from context
 	meta, err := metadata.FromContext(ctx)
@@ -265,7 +286,7 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 
 	// If audit is configured, wrap in transaction
 	if meta.Auditor != nil {
-		err = w.Store.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		err = w.runInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
 			// Insert the item
 			_, err := tx.NewInsert().Model(&item).Returning("*").Exec(ctx)
 			if err != nil {
@@ -276,7 +297,7 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 		})
 	} else {
 		// No audit, just insert directly
-		_, err = w.Store.GetDB().NewInsert().Model(&item).Returning("*").Exec(ctx)
+		_, err = w.getDB(ctx).NewInsert().Model(&item).Returning("*").Exec(ctx)
 	}
 
 	if err != nil {
@@ -332,7 +353,7 @@ func (w *Wrapper[T]) updateWithOp(ctx context.Context, id string, item T, op met
 
 	// If audit is configured, wrap in transaction
 	if meta.Auditor != nil {
-		err = w.Store.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		err = w.runInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
 			// Update the item
 			err := tx.NewUpdate().Model(&item).WherePK().Returning("*").Scan(ctx)
 			if err != nil {
@@ -343,7 +364,7 @@ func (w *Wrapper[T]) updateWithOp(ctx context.Context, id string, item T, op met
 		})
 	} else {
 		// No audit, just update directly
-		err = w.Store.GetDB().NewUpdate().Model(&item).WherePK().Returning("*").Scan(ctx)
+		err = w.getDB(ctx).NewUpdate().Model(&item).WherePK().Returning("*").Scan(ctx)
 	}
 
 	if err != nil {
@@ -385,7 +406,7 @@ func (w *Wrapper[T]) Delete(ctx context.Context, id string) error {
 
 	// If audit is configured, wrap in transaction
 	if meta.Auditor != nil {
-		err = w.Store.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		err = w.runInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
 			// Delete the item using ?TablePKs to support any PK type
 			var txErr error
 			result, txErr = tx.NewDelete().Model(&item).Where("?TablePKs = ?", id).Exec(ctx)
@@ -397,7 +418,7 @@ func (w *Wrapper[T]) Delete(ctx context.Context, id string) error {
 		})
 	} else {
 		// No audit, just delete directly using ?TablePKs to support any PK type
-		result, err = w.Store.GetDB().NewDelete().Model(&item).Where("?TablePKs = ?", id).Exec(ctx)
+		result, err = w.getDB(ctx).NewDelete().Model(&item).Where("?TablePKs = ?", id).Exec(ctx)
 	}
 
 	if err != nil {
@@ -429,7 +450,7 @@ func (w *Wrapper[T]) getWithMeta(ctx context.Context, meta *metadata.TypeMetadat
 
 	// Create new instance of the type from metadata
 	item := reflect.New(meta.ModelType).Interface()
-	query := w.Store.GetDB().NewSelect().Model(item)
+	query := w.getDB(ctx).NewSelect().Model(item)
 
 	// Apply parent filters and JOINs from metadata
 	query, err := w.applyParentFiltersWithMeta(ctx, query, meta)
@@ -963,7 +984,7 @@ func (w *Wrapper[T]) computeAggregates(ctx context.Context, query *bun.SelectQue
 	var sums map[string]float64
 
 	// Build aggregation query - clone the base query to preserve WHERE conditions
-	aggQuery := w.Store.GetDB().NewSelect().
+	aggQuery := w.getDB(ctx).NewSelect().
 		TableExpr("(?) AS subq", query.Clone())
 
 	// Track which fields to actually sum (valid ones)
@@ -1851,7 +1872,7 @@ func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 
 	results := make([]*T, 0, len(items))
 
-	err = w.Store.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	err = w.runInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
 		for i := range items {
 			item := &items[i]
 
@@ -1941,7 +1962,7 @@ func (w *Wrapper[T]) batchUpdateWithOp(ctx context.Context, items []T, op metada
 
 	results := make([]*T, 0, len(items))
 
-	err = w.Store.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	err = w.runInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
 		for i := range items {
 			item := &items[i]
 
@@ -1986,7 +2007,7 @@ func (w *Wrapper[T]) BatchDelete(ctx context.Context, items []T) error {
 		return err
 	}
 
-	err = w.Store.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	err = w.runInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
 		for i := range items {
 			item := &items[i]
 
@@ -2360,7 +2381,7 @@ func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, baseMeta *metadata
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
-	db := w.Store.GetDB()
+	db := w.getDB(ctx)
 
 	firstChild := chain[0]
 	leaf := chain[len(chain)-1]

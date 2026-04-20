@@ -748,7 +748,7 @@ go-restgen supports automatic multi-tenant data isolation, ensuring each tenant'
 
 Multi-tenancy is configured per-route using two options:
 
-- **`WithTenantScope(field)`** — Scopes all queries by the tenant ID stored in the named field. Auto-sets the field on create and update. Child routes inherit automatically.
+- **`WithTenantScope(field, useRLS...)`** — Scopes all queries by the tenant ID stored in the named field. Auto-sets the field on create and update. Child routes inherit automatically. Pass `true` as the optional second argument to enable PostgreSQL Row-Level Security (see [PostgreSQL Row-Level Security](#postgresql-row-level-security-rls)).
 - **`IsTenantTable()`** — Marks the route as the tenant entity itself (e.g., Organization). The model's primary key IS the tenant ID, so queries use `WHERE id = tenantID`.
 
 The tenant ID comes from `AuthInfo.TenantID`, which you populate in your auth middleware.
@@ -854,6 +854,41 @@ Tenant scoping works with all other go-restgen features:
 - **Query parameters** — Filters, sorts, and pagination apply within tenant scope
 
 See the [tenant example](./examples/tenant) for a complete working example with organizations, projects, tasks, and comprehensive cross-tenant isolation tests.
+
+### PostgreSQL Row-Level Security (RLS)
+
+For applications running on PostgreSQL, `WithTenantScope` accepts an optional second argument that enables defense-in-depth at the database level via Row-Level Security policies.
+
+```go
+// Application-level filtering only (default)
+router.WithTenantScope("OrgID")
+
+// Application-level filtering + PostgreSQL RLS
+router.WithTenantScope("OrgID", true)
+```
+
+When RLS is enabled, each request is wrapped in a transaction with `SELECT set_config('app.tenant_id', '<id>', true)` so PostgreSQL RLS policies can scope queries to the tenant. The transaction commits on 2xx/3xx responses and rolls back on 4xx/5xx.
+
+**Important:**
+- Application-level tenant filtering still applies — RLS is purely additive.
+- You must configure RLS policies on your tables yourself. Example:
+  ```sql
+  ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY tenant_isolation ON projects
+      USING (org_id = current_setting('app.tenant_id'));
+  ```
+- RLS uses PostgreSQL-specific SQL (`set_config`). Pointing it at SQLite will cause requests to fail. Only enable on PostgreSQL deployments.
+- Child routes inherit the parent's RLS setting along with the tenant scope.
+
+#### Audit and RLS
+
+When `WithAudit` is configured, the audit insert runs inside the same RLS transaction as the CRUD operation. This means any RLS policies on your audit table will apply to the audit insert. There are three scenarios:
+
+1. **Audit table has no RLS** — works normally. Recommended for global audit logs.
+2. **Audit table has matching per-tenant RLS** — works as defense-in-depth. The audit record's tenant column must match `current_setting('app.tenant_id')`, otherwise the insert fails. This *prevents* writing audit records to the wrong tenant.
+3. **Audit table has RLS policies that the audit record doesn't satisfy** — the audit insert fails, which rolls back the entire transaction (including the CRUD operation). Configure your audit table's policies to match how your auditor function builds records.
+
+The atomicity guarantee (CRUD + audit succeed or fail together) is preserved either way.
 
 ## Query Parameters: Filtering, Sorting & Pagination
 

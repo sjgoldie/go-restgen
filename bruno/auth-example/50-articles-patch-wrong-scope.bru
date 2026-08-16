@@ -1,0 +1,33 @@
+meta {
+  name: PATCH /articles with wrong scope (should fail)
+  type: http
+  seq: 50
+}
+
+patch {
+  url: {{baseUrl}}/articles/{{articleId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "title": "Hacked Article"
+  }
+}
+
+assert {
+  res.status: eq 403
+}
+
+docs {
+  # PATCH Article With Wrong Scope
+
+  Alice only has 'user' scope, not 'publisher', so PATCH should return 403 —
+  the same treatment PUT gets in request 28. This confirms adding MethodPatch
+  to the AuthConfig enforces the scope rather than opening the method up.
+}

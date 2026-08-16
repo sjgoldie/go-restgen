@@ -1,74 +1,70 @@
-version: 2
-
-linters-settings:
-  dupl:
-    threshold: 100
-  goconst:
-    min-len: 2
-    min-occurrences: 2
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - experimental
-      - opinionated
-      - performance
-      - style
-    disabled-checks:
-      - dupImport
-      - ifElseChain
-      - octalLiteral
-      - whyNoLint
-  gocyclo:
-    min-complexity: 15
-  goimports:
-    local-prefixes: github.com/sjgoldie/go-restgen
-  golint:
-    min-confidence: 0
-  govet:
-    check-shadowing: true
-  maligned:
-    suggest-new: true
-  misspell:
-    locale: US
-
-linters:
-  disable-all: true
-  enable:
-    - bodyclose
-    - dupl
-    - errcheck
-    - goconst
-    - gocritic
-    - gocyclo
-    - gosec
-    - govet
-    - ineffassign
-    # - lll  # Disabled - line length limits are too restrictive
-    - misspell
-    - nakedret
-    - staticcheck  # Includes gosimple and stylecheck in newer versions
-    - unconvert
-    - unparam
-    - unused
-    - whitespace
-
-issues:
-  exclude-rules:
-    # Only exclude govet shadow checking in tests (err variable reuse is common pattern)
-    - path: _test\.go
-      linters:
-        - govet
-      text: "shadow"
+version: "2"
 
 run:
   timeout: 5m
   tests: true
-  skip-dirs:
-    - vendor
-  skip-files:
-    - ".*\\.pb\\.go$"
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - gosec
+    - govet
+    - ineffassign
+    - nakedret
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
+    # Not yet enabled: dupl, goconst, gocritic, gocyclo, misspell.
+    # None of these were actually running before — this file declared version 2
+    # while using v1 schema keys, so golangci-lint v2 silently ignored most of
+    # it. Enabling them surfaces ~140 pre-existing findings that need real
+    # refactoring (and, for misspell, a decision on UK vs US spelling). Their
+    # settings are retained below so they can be switched back on one at a time.
+  settings:
+    dupl:
+      threshold: 100
+    goconst:
+      min-len: 2
+      min-occurrences: 2
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+      disabled-checks:
+        - dupImport
+        - ifElseChain
+        - octalLiteral
+        - whyNoLint
+    gocyclo:
+      min-complexity: 15
+    misspell:
+      locale: UK
+  exclusions:
+    rules:
+      # err variable reuse is a common and readable pattern in tests
+      - path: _test\.go
+        linters:
+          - govet
+        text: "shadow"
+      # Table-driven test data repeats short literals by design; extracting
+      # them into constants makes the cases harder to read, not easier.
+      - path: _test\.go
+        linters:
+          - goconst
+    paths:
+      - vendor
+      - .*\.pb\.go$
 
 output:
-  format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
+  formats:
+    text:
+      path: stdout
+      print-issued-lines: true
+      print-linter-name: true

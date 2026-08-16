@@ -3,16 +3,32 @@ updates:
   # Go modules
   - package-ecosystem: "gomod"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     labels:
       - "dependencies"
       - "go"
+    # These module families must move in lockstep — go.mod pins every bun
+    # module at the same version, and otel/otel-metric/otel-trace at the same
+    # version. Bumping one without its siblings produces a mismatched family
+    # that compiles but fails at runtime.
+    groups:
+      bun:
+        patterns:
+          - "github.com/uptrace/bun"
+          - "github.com/uptrace/bun/*"
+      opentelemetry:
+        patterns:
+          - "go.opentelemetry.io/otel"
+          - "go.opentelemetry.io/otel/*"
+          - "go.opentelemetry.io/auto/sdk"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5

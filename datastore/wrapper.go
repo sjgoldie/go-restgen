@@ -88,7 +88,7 @@ func defaultParentJoinCol(col string) string {
 
 // derefType unwraps a pointer type to its element type.
 func derefType(t reflect.Type) reflect.Type {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		return t.Elem()
 	}
 	return t
@@ -511,7 +511,7 @@ func (w *Wrapper[T]) setForeignKey(item *T, foreignKeyCol string, parentItem int
 
 	// Extract the PK from the parent item
 	parentValue := reflect.ValueOf(parentItem)
-	if parentValue.Kind() == reflect.Ptr {
+	if parentValue.Kind() == reflect.Pointer {
 		parentValue = parentValue.Elem()
 	}
 	parentIDField := parentValue.FieldByName(parentPKField)

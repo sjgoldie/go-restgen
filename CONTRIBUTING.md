@@ -6,9 +6,9 @@ Thank you for your interest in contributing to go-restgen! This document provide
 
 ### Prerequisites
 
-- Go 1.24 or higher
+- Go 1.26.6 or higher
 - Git
-- Node.js 18+ (for Bruno CLI)
+- Node.js 24+ (for Bruno CLI)
 
 ### Quick Setup
 

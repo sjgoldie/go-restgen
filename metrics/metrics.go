@@ -22,6 +22,7 @@ package metrics
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -35,10 +36,15 @@ const (
 	instrumentationName = "github.com/sjgoldie/go-restgen/metrics"
 )
 
-var (
-	requestDuration metric.Float64Histogram
-	requestCount    metric.Int64Counter
-)
+// instruments holds the metric handles as a single immutable value so they can
+// be swapped atomically. Initialize may be called while requests are in flight,
+// and the handles are read on every request, so they must not be mutated in place.
+type instruments struct {
+	duration metric.Float64Histogram
+	count    metric.Int64Counter
+}
+
+var current atomic.Pointer[instruments]
 
 // Initialize sets up the metrics instruments using the provided meter provider.
 // If provider is nil, uses the global meter provider.
@@ -50,8 +56,7 @@ func Initialize(provider metric.MeterProvider) error {
 
 	meter := provider.Meter(instrumentationName)
 
-	var err error
-	requestDuration, err = meter.Float64Histogram(
+	duration, err := meter.Float64Histogram(
 		"restgen.request.duration",
 		metric.WithDescription("Request duration in milliseconds"),
 		metric.WithUnit("ms"),
@@ -60,13 +65,17 @@ func Initialize(provider metric.MeterProvider) error {
 		return err
 	}
 
-	requestCount, err = meter.Int64Counter(
+	count, err := meter.Int64Counter(
 		"restgen.request.count",
 		metric.WithDescription("Total number of requests"),
 	)
 	if err != nil {
 		return err
 	}
+
+	// Publish both handles in one atomic swap so readers never observe a
+	// half-updated pair, and never observe a nil handle after a failed call.
+	current.Store(&instruments{duration: duration, count: count})
 
 	return nil
 }
@@ -79,7 +88,7 @@ func Initialize(provider metric.MeterProvider) error {
 // otherwise defaults to the URL path.
 func Middleware() func(http.Handler) http.Handler {
 	// Ensure instruments are initialized (uses global provider if Initialize not called)
-	if requestDuration == nil || requestCount == nil {
+	if current.Load() == nil {
 		_ = Initialize(nil)
 	}
 
@@ -109,10 +118,14 @@ func Middleware() func(http.Handler) http.Handler {
 				attribute.Int("status", wrapped.statusCode),
 			}
 
-			// Record metrics
-			ctx := r.Context()
-			requestDuration.Record(ctx, duration, metric.WithAttributes(attrs...))
-			requestCount.Add(ctx, 1, metric.WithAttributes(attrs...))
+			// Record metrics. Load once so both observations use the same
+			// handles even if Initialize runs concurrently. Nil means
+			// initialization failed; skip rather than panic.
+			if inst := current.Load(); inst != nil {
+				ctx := r.Context()
+				inst.duration.Record(ctx, duration, metric.WithAttributes(attrs...))
+				inst.count.Add(ctx, 1, metric.WithAttributes(attrs...))
+			}
 		})
 	}
 }
@@ -152,19 +165,28 @@ func StatusCode(w http.ResponseWriter) int {
 // GetRequestDuration returns the duration histogram for custom recording.
 // Returns nil if Initialize has not been called.
 func GetRequestDuration() metric.Float64Histogram {
-	return requestDuration
+	inst := current.Load()
+	if inst == nil {
+		return nil
+	}
+	return inst.duration
 }
 
 // GetRequestCount returns the count counter for custom recording.
 // Returns nil if Initialize has not been called.
 func GetRequestCount() metric.Int64Counter {
-	return requestCount
+	inst := current.Load()
+	if inst == nil {
+		return nil
+	}
+	return inst.count
 }
 
 // RecordCustom records a custom metric observation with the standard attributes.
 // Useful for recording metrics from custom handlers or actions.
 func RecordCustom(ctx context.Context, resource, method string, status int, durationMs float64) {
-	if requestDuration == nil || requestCount == nil {
+	inst := current.Load()
+	if inst == nil {
 		return
 	}
 
@@ -174,6 +196,6 @@ func RecordCustom(ctx context.Context, resource, method string, status int, dura
 		attribute.Int("status", status),
 	}
 
-	requestDuration.Record(ctx, durationMs, metric.WithAttributes(attrs...))
-	requestCount.Add(ctx, 1, metric.WithAttributes(attrs...))
+	inst.duration.Record(ctx, durationMs, metric.WithAttributes(attrs...))
+	inst.count.Add(ctx, 1, metric.WithAttributes(attrs...))
 }

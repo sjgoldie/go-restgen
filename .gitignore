@@ -23,6 +23,8 @@ examples/batch/batch
 examples/actions/actions
 examples/tenant/tenant
 examples/custom_join/custom_join
+examples/query/query
+examples/anything/anything
 /simple
 /nested_routes
 /auth
@@ -37,6 +39,8 @@ examples/custom_join/custom_join
 /actions
 /tenant
 /custom_join
+/query
+/anything
 
 # File upload directories
 examples/files_proxy/uploads/

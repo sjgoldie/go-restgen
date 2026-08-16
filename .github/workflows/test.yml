@@ -5,28 +5,29 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+  workflow_dispatch:
 
 jobs:
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Install dependencies
         run: go mod download
 
       - name: Run unit tests with coverage
         run: |
-          go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore -race -coverprofile=coverage.out -covermode=atomic
+          go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore ./metrics ./internal/... -race -coverprofile=coverage.out -covermode=atomic
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           file: ./coverage.out
           flags: unittests
@@ -46,17 +47,17 @@ jobs:
     name: Simple Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/simple
@@ -78,7 +79,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno
@@ -88,17 +89,17 @@ jobs:
     name: Nested Routes Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/nested_routes
@@ -120,7 +121,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno
@@ -130,17 +131,17 @@ jobs:
     name: Auth Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/auth
@@ -162,7 +163,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno
@@ -172,17 +173,17 @@ jobs:
     name: Validator Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/validator
@@ -204,7 +205,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno
@@ -214,17 +215,17 @@ jobs:
     name: Audit Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/audit
@@ -246,7 +247,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno
@@ -256,17 +257,17 @@ jobs:
     name: Relations Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/relations
@@ -288,7 +289,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno
@@ -298,17 +299,17 @@ jobs:
     name: Files Proxy Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/files_proxy
@@ -330,7 +331,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno
@@ -340,17 +341,17 @@ jobs:
     name: Files Signed Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/files_signed
@@ -372,7 +373,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno
@@ -382,17 +383,17 @@ jobs:
     name: Batch Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/batch
@@ -414,7 +415,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno
@@ -424,17 +425,17 @@ jobs:
     name: Actions Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/actions
@@ -456,7 +457,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno
@@ -466,17 +467,17 @@ jobs:
     name: UUID Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/uuid_pk
@@ -498,7 +499,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno
@@ -508,17 +509,17 @@ jobs:
     name: Custom Handlers Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/custom
@@ -540,7 +541,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno
@@ -550,17 +551,17 @@ jobs:
     name: Custom Join Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/custom_join
@@ -582,7 +583,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno
@@ -592,17 +593,17 @@ jobs:
     name: Query Example Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build Server
         working-directory: examples/query
@@ -624,7 +625,7 @@ jobs:
           exit 1
 
       - name: Install Bruno CLI
-        run: npm install -g @usebruno/cli
+        run: npm install -g @usebruno/cli@4.0.0
 
       - name: Run Tests
         working-directory: bruno

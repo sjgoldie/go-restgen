@@ -198,7 +198,7 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 	// Get type information
 	var t T
 	tType := reflect.TypeOf(t)
-	if tType.Kind() == reflect.Ptr {
+	if tType.Kind() == reflect.Pointer {
 		tType = tType.Elem()
 	}
 	typeName := tType.Name()

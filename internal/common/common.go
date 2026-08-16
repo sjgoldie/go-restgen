@@ -44,7 +44,7 @@ func SetFieldFromString(item any, fieldName, value string) error {
 // Returns an empty string if the field is not found.
 func GetFieldAsString(item any, fieldName string) string {
 	v := reflect.ValueOf(item)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	field := v.FieldByName(fieldName)

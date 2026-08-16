@@ -12,36 +12,48 @@ jobs:
   gosec:
     name: Security Scan (gosec)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
 
       - name: Run Gosec Security Scanner
-        run: gosec -exclude-generated ./metadata/... ./datastore/... ./router/... ./service/... ./handler/... ./errors/... ./filestore/...
+        run: gosec -exclude-generated -fmt sarif -out gosec.sarif ./metadata/... ./datastore/... ./router/... ./service/... ./handler/... ./errors/... ./filestore/... ./metrics/... ./internal/... ./cmd/...
+
+      # always() so findings still reach the Security tab on the runs where
+      # gosec fails the build — the report is most useful exactly then.
+      - name: Upload gosec results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: gosec.sarif
+          category: gosec
 
   govulncheck:
     name: Vulnerability Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.6'
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
 
       - name: Run govulncheck
-        run: govulncheck ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
+        run: govulncheck ./metadata ./datastore ./router ./service ./handler ./errors ./filestore ./metrics ./internal/... ./cmd/...
 
   gitleaks:
     name: Secret Scanning (gitleaks)
@@ -50,11 +62,11 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # Full history for scanning all commits
 
       - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

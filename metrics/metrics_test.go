@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"go.opentelemetry.io/otel/metric/noop"
@@ -17,10 +18,10 @@ func TestInitialize(t *testing.T) {
 	}
 
 	// Verify instruments are set
-	if requestDuration == nil {
+	if GetRequestDuration() == nil {
 		t.Error("requestDuration not initialized")
 	}
-	if requestCount == nil {
+	if GetRequestCount() == nil {
 		t.Error("requestCount not initialized")
 	}
 }
@@ -144,8 +145,7 @@ func TestRecordCustom(t *testing.T) {
 
 func TestRecordCustomBeforeInitialize(t *testing.T) {
 	// Reset state
-	requestDuration = nil
-	requestCount = nil
+	current.Store(nil)
 
 	// Should not panic even without initialization
 	RecordCustom(context.Background(), "TestResource", "POST", 201, 42.5)
@@ -206,8 +206,7 @@ func (m *minimalResponseWriter) WriteHeader(int)             {}
 
 func TestMiddlewareAutoInitializes(t *testing.T) {
 	// Reset state
-	requestDuration = nil
-	requestCount = nil
+	current.Store(nil)
 
 	// Middleware should auto-initialize
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -222,7 +221,103 @@ func TestMiddlewareAutoInitializes(t *testing.T) {
 	wrapped.ServeHTTP(rec, req)
 
 	// Should have initialized
-	if requestDuration == nil || requestCount == nil {
+	if GetRequestDuration() == nil || GetRequestCount() == nil {
 		t.Error("Middleware did not auto-initialize instruments")
 	}
+}
+
+// TestMiddlewareDefaultsToOK verifies the recorded status when the handler never
+// calls WriteHeader explicitly.
+func TestMiddlewareDefaultsToOK(t *testing.T) {
+	_ = Initialize(noop.NewMeterProvider())
+
+	var captured int
+	wrapped := Middleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		captured = StatusCode(w)
+	}))
+
+	wrapped.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/test", nil))
+
+	if captured != http.StatusOK {
+		t.Errorf("StatusCode = %d, want %d", captured, http.StatusOK)
+	}
+}
+
+// TestInitializeRaceWithTraffic exercises Initialize running concurrently with
+// in-flight requests. The instruments are package-level state read on every
+// request, so an unsynchronised write here is a data race. Run with -race.
+func TestInitializeRaceWithTraffic(t *testing.T) {
+	wrapped := Middleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				if err := Initialize(noop.NewMeterProvider()); err != nil {
+					t.Errorf("Initialize returned error: %v", err)
+					return
+				}
+			}
+		}
+	}()
+
+	for range 50 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 20 {
+				req := httptest.NewRequest("GET", "/articles", nil)
+				wrapped.ServeHTTP(httptest.NewRecorder(), req)
+			}
+		}()
+	}
+
+	close(stop)
+	wg.Wait()
+}
+
+// TestRecordCustomRaceWithInitialize covers the same shared state via the
+// exported RecordCustom path rather than the middleware.
+func TestRecordCustomRaceWithInitialize(t *testing.T) {
+	if err := Initialize(noop.NewMeterProvider()); err != nil {
+		t.Fatalf("Initialize returned error: %v", err)
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = Initialize(noop.NewMeterProvider())
+			}
+		}
+	}()
+
+	for range 25 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 20 {
+				RecordCustom(context.Background(), "Article", "GET", http.StatusOK, 1.5)
+			}
+		}()
+	}
+
+	close(stop)
+	wg.Wait()
 }

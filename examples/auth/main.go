@@ -280,7 +280,7 @@ func main() {
 	router.RegisterRoutes[Article](b, "/articles",
 		router.PublicReadOnly(),
 		router.AuthConfig{
-			Methods: []string{router.MethodPost, router.MethodPut, router.MethodDelete},
+			Methods: []string{router.MethodPost, router.MethodPut, router.MethodPatch, router.MethodDelete},
 			Scopes:  []string{"publisher"},
 		},
 	)

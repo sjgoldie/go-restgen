@@ -1,0 +1,37 @@
+meta {
+  name: PATCH /articles with publisher scope
+  type: http
+  seq: 49
+}
+
+patch {
+  url: {{baseUrl}}/articles/{{articleId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:charlie:user,publisher
+}
+
+body:json {
+  {
+    "title": "Patched Article"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{articleId}}
+  res.body.title: eq Patched Article
+}
+
+docs {
+  # PATCH Article With Publisher Scope
+
+  Articles require 'publisher' scope for writes. Charlie has it, so PATCH
+  should succeed alongside POST, PUT and DELETE.
+
+  Regression test: MethodPatch was previously missing from the Article
+  AuthConfig, so PATCH was rejected for every caller regardless of scope.
+}

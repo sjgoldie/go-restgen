@@ -2,12 +2,16 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
+
+	"github.com/sjgoldie/go-restgen/metadata"
 )
 
 func TestInitialize(t *testing.T) {
@@ -320,4 +324,126 @@ func TestRecordCustomRaceWithInitialize(t *testing.T) {
 
 	close(stop)
 	wg.Wait()
+}
+
+var (
+	errHistogram = errors.New("histogram unavailable")
+	errCounter   = errors.New("counter unavailable")
+)
+
+// failingMeter returns an error from one of the instrument constructors so the
+// error paths in Initialize can be exercised.
+type failingMeter struct {
+	metric.Meter
+	failCounter bool
+}
+
+func (m failingMeter) Float64Histogram(name string, opts ...metric.Float64HistogramOption) (metric.Float64Histogram, error) {
+	if m.failCounter {
+		return m.Meter.Float64Histogram(name, opts...)
+	}
+	return nil, errHistogram
+}
+
+func (m failingMeter) Int64Counter(name string, opts ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	if m.failCounter {
+		return nil, errCounter
+	}
+	return m.Meter.Int64Counter(name, opts...)
+}
+
+type failingProvider struct {
+	metric.MeterProvider
+	failCounter bool
+}
+
+func (p failingProvider) Meter(name string, opts ...metric.MeterOption) metric.Meter {
+	return failingMeter{Meter: p.MeterProvider.Meter(name, opts...), failCounter: p.failCounter}
+}
+
+func TestInitializeReturnsHistogramError(t *testing.T) {
+	provider := failingProvider{MeterProvider: noop.NewMeterProvider()}
+
+	if err := Initialize(provider); !errors.Is(err, errHistogram) {
+		t.Errorf("Initialize error = %v, want %v", err, errHistogram)
+	}
+}
+
+func TestInitializeReturnsCounterError(t *testing.T) {
+	provider := failingProvider{MeterProvider: noop.NewMeterProvider(), failCounter: true}
+
+	if err := Initialize(provider); !errors.Is(err, errCounter) {
+		t.Errorf("Initialize error = %v, want %v", err, errCounter)
+	}
+}
+
+// TestFailedInitializeLeavesPreviousInstruments verifies a failed Initialize
+// does not clobber working instruments with a half-built pair.
+func TestFailedInitializeLeavesPreviousInstruments(t *testing.T) {
+	if err := Initialize(noop.NewMeterProvider()); err != nil {
+		t.Fatalf("Initialize returned error: %v", err)
+	}
+
+	if err := Initialize(failingProvider{MeterProvider: noop.NewMeterProvider()}); err == nil {
+		t.Fatal("expected Initialize to fail")
+	}
+
+	if GetRequestDuration() == nil || GetRequestCount() == nil {
+		t.Error("a failed Initialize discarded the previously working instruments")
+	}
+}
+
+// TestGettersReturnNilBeforeInitialize covers the uninitialised branch of both
+// accessors.
+func TestGettersReturnNilBeforeInitialize(t *testing.T) {
+	current.Store(nil)
+
+	if GetRequestDuration() != nil {
+		t.Error("GetRequestDuration should be nil before Initialize")
+	}
+	if GetRequestCount() != nil {
+		t.Error("GetRequestCount should be nil before Initialize")
+	}
+}
+
+// TestMiddlewareUsesTypeNameFromMetadata covers the branch where the resource
+// attribute comes from go-restgen metadata rather than falling back to the path.
+func TestMiddlewareUsesTypeNameFromMetadata(t *testing.T) {
+	if err := Initialize(noop.NewMeterProvider()); err != nil {
+		t.Fatalf("Initialize returned error: %v", err)
+	}
+
+	handler := Middleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	meta := &metadata.TypeMetadata{TypeName: "Article"}
+	req := httptest.NewRequest("GET", "/articles", nil)
+	req = req.WithContext(context.WithValue(req.Context(), metadata.MetadataKey, meta))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+// TestMiddlewareSkipsRecordingWhenUninitialised covers the nil-instrument guard
+// in the request path. Before that guard existed this panicked.
+func TestMiddlewareSkipsRecordingWhenUninitialised(t *testing.T) {
+	handler := Middleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Drop the instruments after the middleware was built, simulating an
+	// Initialize that failed before any traffic arrived.
+	current.Store(nil)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/articles", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
 }

@@ -320,6 +320,11 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 				WriteError(w, http.StatusGatewayTimeout, ErrCodeRequestTimeout, http.StatusText(http.StatusGatewayTimeout))
 				return
 			}
+			if errors.Is(err, apperrors.ErrInvalidCursor) {
+				slog.DebugContext(ctx, "rejected invalid cursor", "error", err)
+				WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
+				return
+			}
 			if errors.Is(err, apperrors.ErrUnavailable) {
 				w.Header().Set("Retry-After", "5")
 				WriteError(w, http.StatusServiceUnavailable, ErrCodeServiceUnavailable, http.StatusText(http.StatusServiceUnavailable))
@@ -346,10 +351,10 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 			if cursorInfo.PrevCursor != "" {
 				pagination.PrevCursor = &cursorInfo.PrevCursor
 			}
-			if opts != nil && opts.CountTotal && totalCount > 0 {
+			if opts != nil && opts.CountTotal {
 				pagination.TotalCount = &totalCount
 			}
-		} else if opts != nil && (opts.Limit > 0 || opts.Offset > 0 || (opts.CountTotal && totalCount > 0)) {
+		} else if opts != nil && (opts.Limit > 0 || opts.Offset > 0 || opts.CountTotal) {
 			// Offset-based pagination
 			pagination = &PaginationInfo{}
 			if opts.Limit > 0 {
@@ -360,7 +365,8 @@ func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 				offset := opts.Offset
 				pagination.Offset = &offset
 			}
-			if opts.CountTotal && totalCount > 0 {
+			if opts.CountTotal {
+				// Always reported when requested, so a client can tell 0 from "not asked"
 				pagination.TotalCount = &totalCount
 			}
 		}
@@ -572,8 +578,9 @@ func Update[T any](updateFunc CustomUpdateFunc[T]) http.HandlerFunc {
 
 		// Set ID from path onto the struct (overwrite any ID from JSON)
 		// This ensures the path ID takes precedence and is required for Bun's WherePK()
-		// Skip for single routes with no URL param - custom function handles ID
-		if rc.id != "" {
+		// Skip for single routes: there the path ID identifies the parent, and the
+		// ByParentRelation functions resolve and set the child's own PK.
+		if rc.id != "" && !rc.meta.IsSingleRoute {
 			if err := common.SetFieldFromString(&item, rc.meta.PKField, rc.id); err != nil {
 				slog.ErrorContext(rc.ctx, "failed to set ID field", "error", err)
 				WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
@@ -629,7 +636,8 @@ func Patch[T any](patchFunc CustomPatchFunc[T], getFunc CustomGetFunc[T]) http.H
 			return
 		}
 
-		if rc.id != "" {
+		// Single routes: the path ID is the parent's, so leave the child's PK as fetched
+		if rc.id != "" && !rc.meta.IsSingleRoute {
 			if err := common.SetFieldFromString(&patched, rc.meta.PKField, rc.id); err != nil {
 				slog.ErrorContext(rc.ctx, "failed to set ID field", "error", err)
 				WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
@@ -690,7 +698,7 @@ func BatchPatch[T any](patchFunc CustomBatchPatchFunc[T]) http.HandlerFunc {
 			return
 		}
 
-		merged := make([]T, 0, len(rawItems))
+		ids := make([]string, 0, len(rawItems))
 		for _, raw := range rawItems {
 			var partial T
 			if err := json.Unmarshal(raw, &partial); err != nil {
@@ -703,19 +711,23 @@ func BatchPatch[T any](patchFunc CustomBatchPatchFunc[T]) http.HandlerFunc {
 				WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
 				return
 			}
+			ids = append(ids, id)
+		}
 
-			existing, err := base.svc.Get(base.ctx, id)
-			if err != nil {
-				handleOperationError(base.ctx, w, err, "batch patch fetch")
-				return
-			}
+		// One query for every existing row rather than one per item
+		existingItems, err := base.svc.GetMany(base.ctx, ids)
+		if err != nil {
+			handleOperationError(base.ctx, w, err, "batch patch fetch")
+			return
+		}
 
-			patched := *existing
+		merged := make([]T, 0, len(rawItems))
+		for i, raw := range rawItems {
+			patched := *existingItems[i]
 			if err := json.Unmarshal(raw, &patched); err != nil {
 				handleBodyReadError(base.ctx, w, err, "failed to apply patch")
 				return
 			}
-
 			merged = append(merged, patched)
 		}
 

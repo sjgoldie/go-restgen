@@ -1,6 +1,11 @@
 package router
 
-import "github.com/sjgoldie/go-restgen/metadata"
+import (
+	"context"
+	"log/slog"
+
+	"github.com/sjgoldie/go-restgen/metadata"
+)
 
 // AuthInfo is re-exported from metadata package for convenience
 type AuthInfo = metadata.AuthInfo
@@ -70,6 +75,12 @@ func mergeAuthConfigs(configs []AuthConfig) map[string]*AuthConfig {
 	result := make(map[string]*AuthConfig)
 	for _, cfg := range configs {
 		methods := expandMethods(cfg.Methods)
+		if len(methods) == 0 {
+			slog.WarnContext(context.Background(), "AuthConfig has no Methods and is ignored; set Methods (for example router.MethodAll) or use a helper such as router.AllScoped",
+				"scopes", cfg.Scopes,
+				"ownership", cfg.Ownership != nil)
+			continue
+		}
 		for _, method := range methods {
 			configCopy := cfg
 			result[method] = &configCopy

@@ -14,36 +14,43 @@ type PostgreSQL struct {
 	sqlDB          *sql.DB
 	db             *bun.DB
 	ownsConnection bool
+	timeout        time.Duration
 }
 
 // NewPostgres creates a new PostgreSQL datastore.
 // The datastore owns the connection and Cleanup() will close it.
-func NewPostgres(dsn string) (*PostgreSQL, error) {
+// Pass WithTimeout to override the default per-query timeout.
+func NewPostgres(dsn string, opts ...Option) (*PostgreSQL, error) {
 	connector := pgdriver.NewConnector(pgdriver.WithDSN(dsn))
 	sqlDB := sql.OpenDB(connector)
 
 	db := bun.NewDB(sqlDB, pgdialect.New())
+	cfg := applyOptions(DefaultPostgresTimeout, opts)
 
 	return &PostgreSQL{
 		sqlDB:          sqlDB,
 		db:             db,
 		ownsConnection: true,
+		timeout:        cfg.timeout,
 	}, nil
 }
 
 // NewPostgresWithDB creates a PostgreSQL datastore from an existing *sql.DB.
 // Use this when you need to manage the database connection externally,
 // such as with Vault rotating credentials or custom connection pooling.
+// Pass WithTimeout to override the default per-query timeout.
 //
 // IMPORTANT: The caller retains ownership of the *sql.DB connection.
 // Cleanup() is a no-op for a datastore created this way; it closes neither
 // the bun.DB wrapper nor the underlying *sql.DB. Close the *sql.DB yourself
 // when done.
-func NewPostgresWithDB(sqlDB *sql.DB) *PostgreSQL {
+func NewPostgresWithDB(sqlDB *sql.DB, opts ...Option) *PostgreSQL {
+	cfg := applyOptions(DefaultPostgresTimeout, opts)
 	return &PostgreSQL{
 		sqlDB:          sqlDB,
 		db:             bun.NewDB(sqlDB, pgdialect.New()),
 		ownsConnection: false,
+		timeout:        cfg.timeout,
 	}
 }
 
@@ -52,7 +59,7 @@ func (p *PostgreSQL) GetDB() *bun.DB {
 }
 
 func (p *PostgreSQL) GetTimeout() time.Duration {
-	return 30 * time.Second
+	return p.timeout
 }
 
 func (p *PostgreSQL) IlikeOp() string {

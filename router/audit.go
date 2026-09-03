@@ -13,7 +13,9 @@ type AuditConfig[T any] struct {
 // within the same database transaction.
 //
 // Return nil from the audit function to skip audit for a particular operation.
-// If the audit insert fails, the entire transaction (including the main operation) is rolled back.
+// Return a single model, or a []any of models to insert several rows (for
+// example an audit row and a version row) in slice order; nil elements are skipped.
+// If any insert fails, the entire transaction (including the main operation) is rolled back.
 //
 // Example:
 //

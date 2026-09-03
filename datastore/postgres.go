@@ -36,8 +36,9 @@ func NewPostgres(dsn string) (*PostgreSQL, error) {
 // such as with Vault rotating credentials or custom connection pooling.
 //
 // IMPORTANT: The caller retains ownership of the *sql.DB connection.
-// Cleanup() will close the bun.DB wrapper but will NOT close the underlying
-// *sql.DB - you must close it yourself when done.
+// Cleanup() is a no-op for a datastore created this way; it closes neither
+// the bun.DB wrapper nor the underlying *sql.DB. Close the *sql.DB yourself
+// when done.
 func NewPostgresWithDB(sqlDB *sql.DB) *PostgreSQL {
 	return &PostgreSQL{
 		sqlDB:          sqlDB,

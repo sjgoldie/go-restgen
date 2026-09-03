@@ -284,7 +284,7 @@ func StandardGetAll[T any](ctx context.Context, svc *service.Common[T], meta *me
 //   - filter[field]=value or filter[field][op]=value (ops: eq, neq, gt, gte, lt, lte, like)
 //   - sort=field1,-field2 (prefix with - for descending)
 //   - limit=N, offset=N for pagination
-//   - count=true to include X-Total-Count header
+//   - count=true to include total_count in the response body's pagination object
 func GetAll[T any](getAllFunc CustomGetAllFunc[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()

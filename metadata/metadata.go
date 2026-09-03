@@ -49,10 +49,34 @@ type AuditContext[T any] struct {
 	Ctx       context.Context // Contains AuthInfo, parentIDs, etc.
 }
 
-// AuditFunc is a function that creates an audit record for a mutation operation
-// Return nil to skip audit for this operation
-// The returned audit record (any bun model) will be inserted in the same transaction
+// AuditFunc is a function that creates audit records for a mutation operation.
+// Return nil to skip audit for this operation.
+// Return a single bun model, or a []any of bun models, to be inserted in the
+// same transaction as the operation. A []any is inserted in slice order and nil
+// elements (including typed nil pointers) are skipped, so a route can write an
+// audit row and, when applicable, a version row from one function.
 type AuditFunc[T any] func(AuditContext[T]) any
+
+// AfterCommitContext provides context for after-commit hooks.
+// For Create: Old is nil, New contains the created item (with ID populated)
+// For Update/Patch: Old contains the previous state, New contains the updated item
+// For Delete: Old contains the deleted item, New is nil
+//
+// Ctx is derived from the request context: all request values (AuthInfo, tenant,
+// parent IDs, metadata) are preserved, request cancellation and deadlines are
+// removed, and the committed transaction is no longer present. When the route
+// uses RLS, Ctx carries a fresh tenant-scoped transaction for the hook's duration.
+type AfterCommitContext[T any] struct {
+	Operation Operation
+	New       *T              // The item after operation (nil for delete)
+	Old       *T              // The item before operation (nil for create)
+	Ctx       context.Context // Derived request context, safe for datastore calls
+}
+
+// AfterCommitFunc is a function that runs after a mutation has been durably committed.
+// It runs synchronously, once per item, only when the write succeeded.
+// A returned error is logged; it cannot affect the already-committed operation or the response.
+type AfterCommitFunc[T any] func(AfterCommitContext[T]) error
 
 // AuthInfo contains authentication and authorization information.
 // Developers populate this in their auth middleware and add to context.
@@ -187,6 +211,9 @@ type TypeMetadata struct {
 	// Audit
 	Auditor any // AuditFunc[T] stored as any for type erasure
 
+	// After-commit hook
+	AfterCommit any // AfterCommitFunc[T] stored as any for type erasure
+
 	// File resource
 	IsFileResource bool // Whether this type is a file resource (uses multipart upload)
 
@@ -221,6 +248,7 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 		Pagination:      m.Pagination,
 		Validator:       m.Validator,
 		Auditor:         m.Auditor,
+		AfterCommit:     m.AfterCommit,
 		IsFileResource:  m.IsFileResource,
 		BatchLimit:      m.BatchLimit,
 		MaxBodySize:     m.MaxBodySize,

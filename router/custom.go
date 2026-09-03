@@ -16,8 +16,8 @@ type CustomGetConfig[T any] struct {
 //
 //	router.RegisterRoutes[User](b, "/me",
 //	    router.IsAuthenticated(),
-//	    router.WithCustomGet(func(ctx context.Context, svc *service.Service[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string, relations []string) (*User, error) {
-//	        return svc.Get(ctx, auth.UserID, relations)
+//	    router.WithCustomGet(func(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) (*User, error) {
+//	        return svc.Get(ctx, auth.UserID)
 //	    }),
 //	)
 func WithCustomGet[T any](fn handler.CustomGetFunc[T]) CustomGetConfig[T] {

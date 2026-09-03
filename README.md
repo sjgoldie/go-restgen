@@ -651,7 +651,7 @@ router.RegisterRoutes[Post](b, "/posts", router.AuthConfig{
 
 ### Multiple Owner Fields (OR Logic)
 
-Allow access if user owns via any of the specified fields:
+Allow access if user owns via any of the specified fields. On create, only the first field in `Fields` is auto-populated from `AuthInfo.UserID`; the others are left as sent by the client (or empty), so set them in a validator or custom create handler if they must also default to the caller:
 
 ```go
 type Post struct {
@@ -889,6 +889,12 @@ When `WithAudit` is configured, the audit insert runs inside the same RLS transa
 3. **Audit table has RLS policies that the audit record doesn't satisfy** — the audit insert fails, which rolls back the entire transaction (including the CRUD operation). Configure your audit table's policies to match how your auditor function builds records.
 
 The atomicity guarantee (CRUD + audit succeed or fail together) is preserved either way.
+
+#### After-Commit Hooks and RLS
+
+When `WithAfterCommit` is configured on an RLS route, the hook runs after the request transaction commits, inside a fresh transaction scoped to the same tenant with the same `set_config('app.tenant_id', ...)` call the request used. Every datastore or service call made with `ac.Ctx` is therefore subject to your RLS policies exactly as it is during the request. If that transaction cannot be opened the hook is skipped and the failure logged; it is never run unscoped. The hook's transaction commits when the hook returns `nil` and rolls back if it returns an error or panics.
+
+If you manage your own transaction under `metadata.RLSTxKey`, wrap the context with `datastore.WithAfterCommitQueue` before running datastore operations and call `datastore.RunAfterCommit` once you have committed. Hooks scheduled on a transaction without a queue are skipped with an error log rather than run before commit.
 
 ## Query Parameters: Filtering, Sorting & Pagination
 
@@ -1427,6 +1433,26 @@ The audit function receives an `AuditContext[T]` with:
 - **Rollback**: If audit insert fails, the main operation is rolled back
 - **Skip Audit**: Return `nil` from the audit function to skip audit for that operation
 - **Flexible**: You define the audit model - can include user info, timestamps, JSON snapshots, etc.
+- **Multiple rows**: Return `[]any` to insert several models in slice order, all in the same transaction
+
+### Multiple Records per Operation
+
+Return `[]any` when one operation needs more than one row written with it, such as an audit row plus a version snapshot. Rows are inserted in slice order. `nil` elements, including typed nil pointers, are skipped, so a conditionally built row can be included unconditionally. If any insert fails, everything rolls back together.
+
+```go
+router.WithAudit(func(ac metadata.AuditContext[Document]) any {
+    var version *DocumentVersion
+    if ac.Operation != metadata.OpDelete {
+        version = &DocumentVersion{DocumentID: ac.New.ID, Body: ac.New.Body}
+    }
+    return []any{
+        &DocumentAuditLog{DocumentID: docID(ac), Operation: string(ac.Operation)},
+        version, // nil on delete, skipped
+    }
+})
+```
+
+A pointer to a typed slice, such as `&[]*JobAuditLog{...}`, is also accepted and is inserted as one multi-row insert, as Bun has always allowed. A bare slice is not a valid Bun model and fails the transaction, so use `[]any` for mixed rows and `&[]*T{}` for many rows of one type.
 
 ### Conditional Auditing
 
@@ -1472,6 +1498,45 @@ router.WithAudit(func(ac metadata.AuditContext[Job]) any {
 ```
 
 See the [audit example](./examples/audit) for a complete working example.
+
+## After-Commit Hooks
+
+`WithAfterCommit` runs a function after a Create, Update, Patch, or Delete has been durably committed. Use it for side effects that must only ever observe committed data: starting a workflow, publishing an event, invalidating a cache. A custom handler cannot do this reliably on an RLS route, because the request transaction commits after the handler returns.
+
+```go
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllScoped("user"),
+    router.WithAfterCommit(func(ac metadata.AfterCommitContext[Order]) error {
+        if ac.Operation == metadata.OpUpdate && ac.Old.Status != ac.New.Status {
+            return workflows.Start(ac.Ctx, "order-status-changed", ac.New.ID)
+        }
+        return nil
+    }),
+)
+```
+
+### AfterCommitContext
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Operation` | `metadata.Operation` | One of `OpCreate`, `OpUpdate`, `OpPatch`, `OpDelete` |
+| `New` | `*T` | The item after operation (nil for delete) |
+| `Old` | `*T` | The item before operation (nil for create) |
+| `Ctx` | `context.Context` | Derived request context, safe for datastore and service calls |
+
+### How It Works
+
+- **After commit, always**: the hook runs once per item, only after a successful write. Batch operations call it once per item after the whole batch commits.
+- **Without RLS** it runs as soon as the datastore write has committed, before the response is written.
+- **With RLS** (`WithTenantScope(field, true)`) the framework owns the request transaction, so the hook runs after that transaction commits, which is after the response has been written. See [After-Commit Hooks and RLS](#after-commit-hooks-and-rls) for the tenant scoping the hook receives.
+- **Synchronous**: it runs in the request goroutine. A returned error or a panic is logged and cannot affect the committed operation or the response. Spawn a goroutine inside the hook if you want fire-and-forget.
+- **Context**: `Ctx` keeps every request value (auth, tenant, parent IDs, metadata) but drops request cancellation, so a client disconnect after commit does not abort the hook. Calls made with `Ctx` see the committed state, including from `service.New[T]()`.
+
+### Delivery Guarantee
+
+At-most-once. If the process dies between the commit and the hook, the hook is lost. When the side effect must happen, write an outbox row from `WithAudit` in the same transaction and have a worker deliver it; the after-commit hook can then simply nudge that worker.
+
+See the [audit example](./examples/audit) for a hook that records what it observed after each commit.
 
 ## Custom Handlers
 
@@ -2393,6 +2458,7 @@ You can add support for other databases by implementing the `datastore.Store` in
 type Store interface {
     GetDB() *bun.DB
     GetTimeout() time.Duration
+    IlikeOp() string // SQL operator for case-insensitive LIKE ("ILIKE" on PostgreSQL, "LIKE" on SQLite)
     Cleanup()
 }
 ```
@@ -2411,6 +2477,10 @@ func (s *MySQL) GetDB() *bun.DB {
 
 func (s *MySQL) GetTimeout() time.Duration {
     return 5 * time.Second
+}
+
+func (s *MySQL) IlikeOp() string {
+    return "LIKE" // MySQL LIKE is case-insensitive under the default collations
 }
 
 func (s *MySQL) Cleanup() {
@@ -2627,7 +2697,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 go tool cover -func=/tmp/coverage.out
 ```
 
-For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 300 API tests across 16 example applications.
+For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 301 API tests across 16 example applications.
 
 You can override the default port (8080) using the `PORT` environment variable:
 

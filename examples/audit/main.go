@@ -4,11 +4,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,8 +19,10 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/sjgoldie/go-restgen/datastore"
+	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/router"
+	"github.com/sjgoldie/go-restgen/service"
 )
 
 // Job model - the main resource we're tracking
@@ -87,6 +92,50 @@ func jobAuditor(ac metadata.AuditContext[Job]) any {
 	}
 }
 
+// JobNotification records what the after-commit hook observed for one committed mutation.
+// In a real application this is where you would start a workflow or publish an event.
+type JobNotification struct {
+	JobID              int    `json:"job_id"`
+	Operation          string `json:"operation"`
+	VisibleAfterCommit bool   `json:"visible_after_commit"`
+}
+
+var (
+	notificationsMu sync.Mutex
+	notifications   []JobNotification
+)
+
+// jobAfterCommit runs once the job mutation and its audit record are committed.
+// It reads the job back through the service layer with the hook context to show
+// that committed state is what the hook sees: the job is present after create
+// and update, and gone after delete.
+func jobAfterCommit(ac metadata.AfterCommitContext[Job]) error {
+	jobID := 0
+	if ac.New != nil {
+		jobID = ac.New.ID
+	} else if ac.Old != nil {
+		jobID = ac.Old.ID
+	}
+
+	svc, err := service.New[Job]()
+	if err != nil {
+		return err
+	}
+	_, err = svc.Get(ac.Ctx, strconv.Itoa(jobID))
+	if err != nil && !errors.Is(err, apperrors.ErrNotFound) {
+		return err
+	}
+
+	notificationsMu.Lock()
+	defer notificationsMu.Unlock()
+	notifications = append(notifications, JobNotification{
+		JobID:              jobID,
+		Operation:          string(ac.Operation),
+		VisibleAfterCommit: err == nil,
+	})
+	return nil
+}
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelWarn,
@@ -138,7 +187,16 @@ func main() {
 		json.NewEncoder(w).Encode(logs)
 	})
 
-	// Register Job routes with audit
+	// Custom endpoint to view what the after-commit hook observed
+	r.Get("/notifications", func(w http.ResponseWriter, r *http.Request) {
+		notificationsMu.Lock()
+		snapshot := append([]JobNotification{}, notifications...)
+		notificationsMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(snapshot)
+	})
+
+	// Register Job routes with audit and an after-commit hook
 	b := router.NewBuilder(r)
 	router.RegisterRoutes[Job](b, "/jobs",
 		router.AllPublic(),
@@ -146,15 +204,17 @@ func main() {
 		router.WithSorts("Title", "Priority", "CreatedAt"),
 		router.WithPagination(20, 100),
 		router.WithAudit(jobAuditor),
+		router.WithAfterCommit(jobAfterCommit),
 	)
 
 	fmt.Println("Server starting on :8080")
 	fmt.Println("Using SQLite in-memory database")
-	fmt.Println("\nThis example demonstrates audit functionality:")
+	fmt.Println("\nThis example demonstrates audit and after-commit functionality:")
 	fmt.Println("  - All Create, Update, and Delete operations are audited")
 	fmt.Println("  - Audit records include old and new state as JSON")
 	fmt.Println("  - Audit runs in the same transaction as the main operation")
 	fmt.Println("  - If audit insert fails, the main operation is rolled back")
+	fmt.Println("  - An after-commit hook runs once the mutation and audit are committed")
 	fmt.Println("\nAvailable endpoints:")
 	fmt.Println("  POST   http://localhost:8080/jobs           - Create a job (audited)")
 	fmt.Println("  GET    http://localhost:8080/jobs           - List all jobs")
@@ -162,6 +222,7 @@ func main() {
 	fmt.Println("  PUT    http://localhost:8080/jobs/{id}      - Update a job (audited)")
 	fmt.Println("  DELETE http://localhost:8080/jobs/{id}      - Delete a job (audited)")
 	fmt.Println("  GET    http://localhost:8080/audit-logs     - View audit log")
+	fmt.Println("  GET    http://localhost:8080/notifications  - View after-commit hook observations")
 	fmt.Println("\nExamples:")
 	fmt.Println("  # Create a job")
 	fmt.Println("  curl -X POST http://localhost:8080/jobs -H 'Content-Type: application/json' \\")

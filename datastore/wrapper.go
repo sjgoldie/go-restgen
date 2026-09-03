@@ -772,7 +772,8 @@ func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bu
 }
 
 // setOwnershipField sets the ownership field on an item if enforced in context
-// Uses metadata from context to determine which field to set
+// Uses metadata from context to determine which field to set. When several
+// ownership fields are configured only the first, OwnershipFields[0], is set.
 // Always sets the field when ownership is configured, regardless of bypass scopes
 // (Bypass scopes only affect filtering on reads, not field population on creates)
 func (w *Wrapper[T]) setOwnershipField(ctx context.Context, item *T) error {

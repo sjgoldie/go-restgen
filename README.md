@@ -651,7 +651,7 @@ router.RegisterRoutes[Post](b, "/posts", router.AuthConfig{
 
 ### Multiple Owner Fields (OR Logic)
 
-Allow access if user owns via any of the specified fields:
+Allow access if user owns via any of the specified fields. On create, only the first field in `Fields` is auto-populated from `AuthInfo.UserID`; the others are left as sent by the client (or empty), so set them in a validator or custom create handler if they must also default to the caller:
 
 ```go
 type Post struct {
@@ -2458,6 +2458,7 @@ You can add support for other databases by implementing the `datastore.Store` in
 type Store interface {
     GetDB() *bun.DB
     GetTimeout() time.Duration
+    IlikeOp() string // SQL operator for case-insensitive LIKE ("ILIKE" on PostgreSQL, "LIKE" on SQLite)
     Cleanup()
 }
 ```
@@ -2476,6 +2477,10 @@ func (s *MySQL) GetDB() *bun.DB {
 
 func (s *MySQL) GetTimeout() time.Duration {
     return 5 * time.Second
+}
+
+func (s *MySQL) IlikeOp() string {
+    return "LIKE" // MySQL LIKE is case-insensitive under the default collations
 }
 
 func (s *MySQL) Cleanup() {

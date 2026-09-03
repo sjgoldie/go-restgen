@@ -279,6 +279,11 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 		return nil, err
 	}
 
+	// On the tenant entity itself, the PK must be the caller's own tenant
+	if err := w.enforceTenantTablePK(ctx, meta, &item); err != nil {
+		return nil, err
+	}
+
 	// Run custom validation (after ownership and tenant are set so validator sees final state)
 	if err := w.runValidation(ctx, meta, metadata.OpCreate, nil, &item); err != nil {
 		return nil, err
@@ -347,6 +352,9 @@ func (w *Wrapper[T]) updateWithOp(ctx context.Context, id string, item T, op met
 	if err := w.setTenantField(ctx, &item); err != nil {
 		return nil, err
 	}
+
+	// Re-enforce ownership fields on update (prevents reassigning or orphaning the row)
+	w.reassertOwnership(ctx, meta, existing, &item)
 
 	// Run custom validation with old and new values
 	if err := w.runValidation(ctx, meta, op, existing, &item); err != nil {
@@ -665,8 +673,8 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 			}
 		}
 
-		// WHERE parent_table.id = ?
-		query = query.Where("?.? = ?", bun.Ident(join.parentTable), bun.Ident("id"), parentID)
+		// WHERE parent_table.<pk> = ? (the parent's real PK column, not literally "id")
+		query = query.Where("?.? = ?", bun.Ident(join.parentTable), bun.Ident(w.pkColumn(join.parentMeta)), parentID)
 
 		// Issue #28 fix: Apply ownership filter for this parent if needed
 		if slices.Contains(parentsNeedingOwnership, join.parentMeta) && ownershipUserID != "" {
@@ -723,39 +731,31 @@ func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bu
 		return nil, fmt.Errorf("ownership enforced but user ID missing from context")
 	}
 
-	// If no metadata or no ownership fields configured for this type, skip filter
-	if meta == nil || len(meta.OwnershipFields) == 0 {
+	// Ownership fields and bypass scopes for this request's method (or the type-wide config)
+	ownershipFields, bypassScopes := ownershipScope(ctx, meta)
+	if len(ownershipFields) == 0 {
 		return query, nil
 	}
 
-	// Check if user has bypass scope
-	// Compare user's scopes (from AuthInfo in context) with bypass scopes from metadata
-	if authInfo, ok := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo); ok && authInfo != nil && len(meta.BypassScopes) > 0 {
-		// Check if user has any bypass scope
-		for _, bypassScope := range meta.BypassScopes {
-			for _, userScope := range authInfo.Scopes {
-				if userScope == bypassScope {
-					// User has bypass scope, don't apply ownership filter
-					return query, nil
-				}
-			}
-		}
+	// User has a bypass scope, don't apply ownership filter
+	if hasBypassScope(ctx, bypassScopes) {
+		return query, nil
 	}
 
 	itemType := derefType(meta.ModelType)
 
 	// Build OR conditions: WHERE (field1 = ? OR field2 = ? OR ...)
 	// Use ?TableAlias to properly qualify columns when JOINs are present
-	if len(meta.OwnershipFields) == 1 {
+	if len(ownershipFields) == 1 {
 		// Single field - simple WHERE clause
-		colName, err := ColumnName(itemType, meta.OwnershipFields[0])
+		colName, err := ColumnName(itemType, ownershipFields[0])
 		if err != nil {
 			return nil, fmt.Errorf("failed to get column name for ownership field: %w", err)
 		}
 		query = query.Where("?TableAlias.? = ?", bun.Ident(colName), userID)
 	} else {
 		// Multiple fields - OR logic
-		for i, fieldName := range meta.OwnershipFields {
+		for i, fieldName := range ownershipFields {
 			colName, err := ColumnName(itemType, fieldName)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get column name for ownership field: %w", err)
@@ -791,7 +791,11 @@ func (w *Wrapper[T]) setOwnershipField(ctx context.Context, item *T) error {
 
 	// Get metadata from context
 	meta, err := metadata.FromContext(ctx)
-	if err != nil || len(meta.OwnershipFields) == 0 {
+	if err != nil {
+		return nil
+	}
+	ownershipFields, _ := ownershipScope(ctx, meta)
+	if len(ownershipFields) == 0 {
 		// No ownership configured for this type
 		return nil
 	}
@@ -800,14 +804,14 @@ func (w *Wrapper[T]) setOwnershipField(ctx context.Context, item *T) error {
 	// Bypass scopes only affect read filtering, not field population on create
 	// This ensures admins still "own" resources they create by default
 	itemValue := reflect.ValueOf(item).Elem()
-	field := itemValue.FieldByName(meta.OwnershipFields[0])
+	field := itemValue.FieldByName(ownershipFields[0])
 	if !field.IsValid() || !field.CanSet() {
-		return fmt.Errorf("cannot set ownership field %s", meta.OwnershipFields[0])
+		return fmt.Errorf("cannot set ownership field %s", ownershipFields[0])
 	}
 
 	// Set as string (ownership fields should be string type)
 	if field.Kind() != reflect.String {
-		return fmt.Errorf("ownership field %s must be string type, got %s", meta.OwnershipFields[0], field.Kind())
+		return fmt.Errorf("ownership field %s must be string type, got %s", ownershipFields[0], field.Kind())
 	}
 
 	field.SetString(userID)
@@ -837,7 +841,7 @@ func (w *Wrapper[T]) applyTenantFilter(ctx context.Context, query *bun.SelectQue
 
 	if meta.IsTenantTable {
 		// IsTenantTable: the PK IS the tenant ID
-		query = query.Where("?TableAlias.? = ?", bun.Ident("id"), tenantID)
+		query = query.Where("?TableAlias.? = ?", bun.Ident(w.pkColumn(meta)), tenantID)
 	} else {
 		// WithTenantScope: filter by the named tenant field
 		colName, err := ColumnName(derefType(meta.ModelType), meta.TenantField)
@@ -1356,7 +1360,7 @@ func (w *Wrapper[T]) applyCursorWhere(query *bun.SelectQuery, opts *metadata.Que
 	}
 
 	if len(cursor.Values) != len(sortCols) {
-		return nil, fmt.Errorf("invalid cursor: expected %d sort values, got %d", len(sortCols), len(cursor.Values))
+		return nil, fmt.Errorf("%w: expected %d sort values, got %d", apperrors.ErrInvalidCursor, len(sortCols), len(cursor.Values))
 	}
 
 	pkCol, err := ColumnName(meta.ModelType, meta.PKField)
@@ -1922,6 +1926,11 @@ func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 				return err
 			}
 
+			// On the tenant entity itself, the PK must be the caller's own tenant
+			if err := w.enforceTenantTablePK(ctx, meta, item); err != nil {
+				return err
+			}
+
 			// Run validation
 			if err := w.runValidation(ctx, meta, metadata.OpCreate, nil, item); err != nil {
 				return err
@@ -1980,24 +1989,27 @@ func (w *Wrapper[T]) batchUpdateWithOp(ctx context.Context, items []T, op metada
 		return nil, err
 	}
 
-	// Pre-fetch all existing items and validate before starting transaction
-	preFetch, err := w.preFetchItems(ctx, meta, items, op)
-	if err != nil {
-		return nil, err
-	}
-
-	// Re-enforce tenant field on all items (prevents cross-tenant moves)
-	for i := range items {
-		if err := w.setTenantField(ctx, &items[i]); err != nil {
-			return nil, err
-		}
-	}
-
 	results := make([]*T, 0, len(items))
+	var preFetch *preFetchResult[T]
 
 	err = w.runInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
+		// Fetch and validate inside the transaction, in one query for the whole
+		// batch, so nothing can change between the check and the write.
+		txCtx := context.WithValue(ctx, metadata.RLSTxKey, tx)
+		var err error
+		preFetch, err = w.preFetchItems(txCtx, meta, items, op)
+		if err != nil {
+			return err
+		}
+
 		for i := range items {
 			item := &items[i]
+
+			// Re-enforce tenant and ownership fields (prevents cross-tenant moves and owner reassignment)
+			if err := w.setTenantField(ctx, item); err != nil {
+				return err
+			}
+			w.reassertOwnership(ctx, meta, preFetch.existingItems[i], item)
 
 			// Update the item
 			err := tx.NewUpdate().Model(item).WherePK().Returning("*").Scan(ctx)
@@ -2038,13 +2050,17 @@ func (w *Wrapper[T]) BatchDelete(ctx context.Context, items []T) error {
 		return err
 	}
 
-	// Pre-fetch all existing items and validate before starting transaction
-	preFetch, err := w.preFetchItems(ctx, meta, items, metadata.OpDelete)
-	if err != nil {
-		return err
-	}
+	var preFetch *preFetchResult[T]
 
 	err = w.runInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
+		// Fetch and validate inside the transaction, in one query for the whole batch
+		txCtx := context.WithValue(ctx, metadata.RLSTxKey, tx)
+		var err error
+		preFetch, err = w.preFetchItems(txCtx, meta, items, metadata.OpDelete)
+		if err != nil {
+			return err
+		}
+
 		for i := range items {
 			item := &items[i]
 
@@ -2081,13 +2097,14 @@ func (w *Wrapper[T]) BatchDelete(ctx context.Context, items []T) error {
 	return nil
 }
 
-// preFetchItems validates and fetches existing items before a batch operation.
-// This validates existence, ownership, and parent chain for each item.
-// For update operations, pass the new item to validation; for delete, pass nil.
+// preFetchItems fetches the existing rows for a batch in one query and runs
+// validation for each item. Existence, ownership, tenant, and parent chain are
+// all enforced by the fetch: any row that is missing or not visible to the
+// caller yields ErrNotFound. Update and patch pass the new item to validators;
+// delete passes nil.
 func (w *Wrapper[T]) preFetchItems(ctx context.Context, meta *metadata.TypeMetadata, items []T, op metadata.Operation) (*preFetchResult[T], error) {
 	result := &preFetchResult[T]{
-		ids:           make([]string, len(items)),
-		existingItems: make([]*T, len(items)),
+		ids: make([]string, len(items)),
 	}
 
 	for i := range items {
@@ -2096,19 +2113,20 @@ func (w *Wrapper[T]) preFetchItems(ctx context.Context, meta *metadata.TypeMetad
 			return nil, fmt.Errorf("item at index %d missing ID", i)
 		}
 		result.ids[i] = id
+	}
 
-		existing, err := w.Get(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		result.existingItems[i] = existing
+	existing, err := w.fetchByIDs(ctx, meta, result.ids)
+	if err != nil {
+		return nil, err
+	}
+	result.existingItems = existing
 
-		// Run validation: for update pass new item, for delete pass nil
+	for i := range items {
 		var newItem *T
-		if op == metadata.OpUpdate {
+		if op == metadata.OpUpdate || op == metadata.OpPatch {
 			newItem = &items[i]
 		}
-		if err := w.runValidation(ctx, meta, op, existing, newItem); err != nil {
+		if err := w.runValidation(ctx, meta, op, existing[i], newItem); err != nil {
 			return nil, err
 		}
 	}
@@ -2248,7 +2266,8 @@ func (w *Wrapper[T]) applyChildFieldFilter(ctx context.Context, query *bun.Selec
 		return query
 	}
 
-	existsSubq := w.buildExistsChain(meta, childChain, func(q *bun.SelectQuery) *bun.SelectQuery {
+	applyOwnership := metadata.AllowedIncludesFromContext(ctx)[strings.Join(path.relations, ".")]
+	existsSubq := w.buildExistsChain(ctx, meta, childChain, applyOwnership, func(q *bun.SelectQuery) *bun.SelectQuery {
 		return applyFilter(q, targetMeta.TableName, colName, filter.Operator, vals, w.Store.IlikeOp())
 	})
 
@@ -2288,9 +2307,12 @@ func (w *Wrapper[T]) applyRelationFilter(ctx context.Context, query *bun.SelectQ
 		return query
 	}
 
+	// Same ownership scoping ?include= applies, so a caller cannot learn about rows they cannot list
+	applyOwnership := allowedIncludes[field]
+
 	switch filter.Operator {
 	case metadata.OpExists:
-		existsSubq := w.buildExistsChain(meta, childChain, nil)
+		existsSubq := w.buildExistsChain(ctx, meta, childChain, applyOwnership, nil)
 		if existsSubq == nil {
 			return query
 		}
@@ -2310,7 +2332,7 @@ func (w *Wrapper[T]) applyRelationFilter(ctx context.Context, query *bun.SelectQ
 			slog.DebugContext(ctx, "count filter value is not an integer", "field", field, "value", filter.Value)
 			return query
 		}
-		countSubq := w.buildCountChain(meta, childChain)
+		countSubq := w.buildCountChain(ctx, meta, childChain, applyOwnership)
 		if countSubq == nil {
 			return query
 		}
@@ -2321,7 +2343,8 @@ func (w *Wrapper[T]) applyRelationFilter(ctx context.Context, query *bun.SelectQ
 // buildCountChain builds a correlated COUNT(*) subquery for a child relation chain.
 // For single-level chains, returns a direct COUNT. For multi-level chains, uses nested
 // subqueries to resolve intermediate IDs before counting at the leaf level.
-func (w *Wrapper[T]) buildCountChain(baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata) *bun.SelectQuery {
+// Every level is scoped to rows the caller may see (ownership when applyOwnership, tenant always).
+func (w *Wrapper[T]) buildCountChain(ctx context.Context, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, applyOwnership bool) *bun.SelectQuery {
 	if len(chain) == 0 {
 		return nil
 	}
@@ -2332,10 +2355,11 @@ func (w *Wrapper[T]) buildCountChain(baseMeta *metadata.TypeMetadata, chain []*m
 	leaf := chain[len(chain)-1]
 
 	if len(chain) == 1 {
-		return db.NewSelect().
+		q := db.NewSelect().
 			Table(leaf.TableName).
 			ColumnExpr("COUNT(*)").
 			Where("?.? = ?.?", bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol), bun.Ident(baseAlias), bun.Ident(defaultParentJoinCol(leaf.ParentJoinCol)))
+		return w.applyChildScopeFilters(ctx, q, leaf, leaf.TableName, applyOwnership)
 	}
 
 	// Multi-level: build nested subqueries from base outward, count at leaf
@@ -2358,12 +2382,14 @@ func (w *Wrapper[T]) buildCountChain(baseMeta *metadata.TypeMetadata, chain []*m
 				ColumnExpr("?.?", bun.Ident(child.TableName), bun.Ident(selectCol)).
 				Where("?.? IN (?)", bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), subq)
 		}
+		subq = w.applyChildScopeFilters(ctx, subq, child, child.TableName, applyOwnership)
 	}
 
-	return db.NewSelect().
+	q := db.NewSelect().
 		Table(leaf.TableName).
 		ColumnExpr("COUNT(*)").
 		Where("?.? IN (?)", bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol), subq)
+	return w.applyChildScopeFilters(ctx, q, leaf, leaf.TableName, applyOwnership)
 }
 
 // ComputeIncludeCounts computes per-item child relation counts for the given items.
@@ -2403,7 +2429,8 @@ func (w *Wrapper[T]) ComputeIncludeCounts(ctx context.Context, items []*T, inclu
 			continue
 		}
 
-		counts, err := w.queryRelationCounts(ctx, meta, childChain, pks)
+		// Same ownership scoping ?include= applies, so counts cannot reveal rows the caller cannot list
+		counts, err := w.queryRelationCounts(ctx, meta, childChain, pks, allowedIncludes[relPath])
 		if err != nil {
 			slog.WarnContext(ctx, "failed to compute include count", "relation", relPath, "error", err)
 			continue
@@ -2422,7 +2449,8 @@ func (w *Wrapper[T]) ComputeIncludeCounts(ctx context.Context, items []*T, inclu
 
 // queryRelationCounts runs a grouped count query for a child relation chain.
 // Returns a map of parent PK (as string) → count of matching child records.
-func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, pks []interface{}) (map[string]int, error) {
+// Every level is scoped to rows the caller may see (ownership when applyOwnership, tenant always).
+func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, pks []interface{}, applyOwnership bool) (map[string]int, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -2440,6 +2468,10 @@ func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, baseMeta *metadata
 		child := chain[i]
 		parent := chain[i-1]
 		query = query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(parent.TableName), bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
+	}
+
+	for _, level := range chain {
+		query = w.applyChildScopeFilters(ctx, query, level, level.TableName, applyOwnership)
 	}
 
 	// WHERE first_child.fk IN (pks)
@@ -2470,7 +2502,8 @@ func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, baseMeta *metadata
 // buildExistsChain builds nested EXISTS subqueries using Bun's query builder.
 // Each level correlates to its parent via FK = parent PK.
 // The optional innerFilter applies additional conditions to the deepest level's subquery.
-func (w *Wrapper[T]) buildExistsChain(baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, innerFilter func(q *bun.SelectQuery) *bun.SelectQuery) *bun.SelectQuery {
+// Every level is scoped to rows the caller may see (ownership when applyOwnership, tenant always).
+func (w *Wrapper[T]) buildExistsChain(ctx context.Context, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, applyOwnership bool, innerFilter func(q *bun.SelectQuery) *bun.SelectQuery) *bun.SelectQuery {
 	if len(chain) == 0 {
 		return nil
 	}
@@ -2491,6 +2524,7 @@ func (w *Wrapper[T]) buildExistsChain(baseMeta *metadata.TypeMetadata, chain []*
 			Table(child.TableName).
 			ColumnExpr("1").
 			Where("?.? = ?.?", bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parents[i]), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
+		subq = w.applyChildScopeFilters(ctx, subq, child, child.TableName, applyOwnership)
 
 		if i == len(chain)-1 && innerFilter != nil {
 			subq = innerFilter(subq)

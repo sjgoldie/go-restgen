@@ -37,6 +37,13 @@ func (s *Common[T]) Get(ctx context.Context, id string) (*T, error) {
 	return s.store.Get(ctx, id)
 }
 
+// GetMany retrieves the items for the given IDs in one query, in the order given.
+// The same parent, ownership, and tenant scoping as Get applies; any ID that is
+// missing or not visible to the caller yields ErrNotFound.
+func (s *Common[T]) GetMany(ctx context.Context, ids []string) ([]*T, error) {
+	return s.store.GetMany(ctx, ids)
+}
+
 // Create creates a new item of type T
 func (s *Common[T]) Create(ctx context.Context, item T) (*T, error) {
 	return s.store.Create(ctx, item)

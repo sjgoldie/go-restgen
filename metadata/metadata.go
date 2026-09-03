@@ -116,6 +116,35 @@ type ownershipFieldsKeyType string
 // OwnershipFieldsKey is the context key for the ownership fields
 const OwnershipFieldsKey ownershipFieldsKeyType = "restgen_ownership_fields"
 
+// OwnershipScope is the ownership policy in force for the current request's
+// HTTP method: the model fields that identify an owner and the scopes that
+// bypass ownership filtering. The auth middleware stores the method's own
+// OwnershipConfig here so the datastore can honour per-method ownership.
+type OwnershipScope struct {
+	Fields       []string
+	BypassScopes []string
+}
+
+// ownershipScopeKeyType is the context key type for the ownership scope
+type ownershipScopeKeyType string
+
+// OwnershipScopeKey is the context key for the current method's *OwnershipScope
+const OwnershipScopeKey ownershipScopeKeyType = "restgen_ownership_scope"
+
+// ResourceName is a mutable holder that an outer middleware can seed in context
+// so go-restgen's metadata middleware, which runs later, can report the
+// registered type name outward. Context values only flow inward, so this is how
+// the metrics middleware learns the resource name after the handler returns.
+type ResourceName struct {
+	Name string
+}
+
+// resourceNameKeyType is the context key type for the resource name holder
+type resourceNameKeyType string
+
+// ResourceNameKey is the context key for a *ResourceName holder
+const ResourceNameKey resourceNameKeyType = "restgen_resource_name"
+
 // parentOwnershipKeyType is the context key type for parent ownership metadata
 type parentOwnershipKeyType string
 
@@ -193,6 +222,7 @@ type TypeMetadata struct {
 	ChildMeta map[string]*TypeMetadata // relation name -> child type metadata
 
 	// Single route configuration (for belongs-to relations like /posts/{id}/author)
+	IsSingleRoute bool   // True for AsSingleRoute registrations, where the path ID identifies the parent, not this item
 	RelationName  string // Field name on parent for relation loading (e.g., "Author")
 	ParentFKField string // Field name on parent that holds this object's ID (e.g., "AuthorID")
 
@@ -240,6 +270,7 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 		ForeignKeyCol:   m.ForeignKeyCol,
 		ParentJoinCol:   m.ParentJoinCol,
 		ParentJoinField: m.ParentJoinField,
+		IsSingleRoute:   m.IsSingleRoute,
 		RelationName:    m.RelationName,
 		ParentFKField:   m.ParentFKField,
 		DefaultSort:     m.DefaultSort,

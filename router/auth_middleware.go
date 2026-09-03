@@ -278,6 +278,12 @@ func applyOwnershipContext(ctx context.Context, authInfo *AuthInfo, ownership *O
 	ctx = context.WithValue(ctx, metadata.OwnershipEnforcedKey, true)
 	ctx = context.WithValue(ctx, metadata.OwnershipUserIDKey, authInfo.UserID)
 	ctx = context.WithValue(ctx, metadata.OwnershipFieldsKey, ownership.Fields)
+	// The datastore reads this to honour the current method's ownership config
+	// rather than the type-wide last-registered one.
+	ctx = context.WithValue(ctx, metadata.OwnershipScopeKey, &metadata.OwnershipScope{
+		Fields:       ownership.Fields,
+		BypassScopes: ownership.BypassScopes,
+	})
 
 	return ctx
 }

@@ -11,6 +11,7 @@ var (
 	ErrUnavailable      = errors.New("service temporarily unavailable")
 	ErrMetadataNotFound = errors.New("metadata not found in context")
 	ErrValidation       = errors.New("validation failed")
+	ErrInvalidCursor    = errors.New("invalid cursor")
 )
 
 // ValidationError wraps a validation error with a custom message

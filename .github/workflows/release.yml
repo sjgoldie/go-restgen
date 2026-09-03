@@ -25,16 +25,12 @@ jobs:
       - name: Run tests
         run: go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore ./metrics ./internal/... -race -coverprofile=coverage.out
 
-      - name: Generate changelog
-        id: changelog
-        run: |
-          echo "## What's Changed" > CHANGELOG.md
-          git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"* %s (%h)" >> CHANGELOG.md
-
+      # Notes come from the merged PR titles since the previous tag, so a
+      # branch's intermediate commits cannot appear as if they shipped.
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
-          body_path: CHANGELOG.md
+          generate_release_notes: true
           draft: false
           prerelease: false
         env:

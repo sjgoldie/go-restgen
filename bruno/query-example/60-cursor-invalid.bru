@@ -11,6 +11,6 @@ get {
 }
 
 assert {
-  res.status: eq 500
-  res.body.error: eq internal_error
+  res.status: eq 400
+  res.body.error: eq bad_request
 }

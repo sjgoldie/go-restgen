@@ -26,10 +26,12 @@ tests {
     expect(res.body.data.every(p => p.owner_id === "alice")).to.be.true;
   });
 
-  test("Counts only include Alice's posts", function() {
+  test("Counts only include comments Alice can see", function() {
     const counts = res.body.counts.Comments;
     const alicePostId = String(bru.getVar("alicePostId"));
-    expect(counts[alicePostId]).to.equal(2);
+    // Her post has two comments: her own and one the admin added.
+    // Comments are ownership-scoped, so she counts only her own.
+    expect(counts[alicePostId]).to.equal(1);
 
     const bobPostId = String(bru.getVar("bobPostId"));
     expect(counts[bobPostId]).to.be.undefined;
@@ -37,7 +39,8 @@ tests {
 }
 
 docs {
-  Alice requests include_count=Comments. Ownership enforced:
-  Only her posts are returned, and counts only cover her posts.
-  Bob's post and its counts are not leaked.
+  Alice requests include_count=Comments. Ownership enforced at both levels:
+  Only her posts are returned, and each count covers only the comments she
+  could list with ?include=Comments. The admin's comment on her post and
+  Bob's post are not leaked through the count.
 }

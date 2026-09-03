@@ -131,6 +131,8 @@ Use `WithAfterCommit` for side effects that must only see committed data (start 
 - **UUID PKs**: use `uuid.UUID` type with `bun:"id,pk,type:uuid"`
 - **Routes blocked by default**: must explicitly configure auth
 - **Path IDs take precedence**: JSON body IDs and FKs are ignored
+- **Query timeout**: `datastore.NewPostgres(dsn, datastore.WithTimeout(10*time.Second))` (also on `NewSQLite` and the `WithDB` variants); defaults 30s PostgreSQL, 5s SQLite
+- **Ownership is per method and re-enforced on update**: each `AuthConfig`'s ownership applies to its own methods; PUT/PATCH cannot change owner fields without a bypass scope
 
 ## All Route Registration Options
 

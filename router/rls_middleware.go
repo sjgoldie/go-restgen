@@ -17,7 +17,12 @@ import (
 //
 // On commit/rollback: the transaction commits if the handler returns 2xx/3xx,
 // rolls back on 4xx/5xx. This is consistent with HTTP semantics — error
-// responses imply the request should not have side effects.
+// responses imply the request should not have side effects. If the handler
+// panics the transaction is rolled back before the panic propagates to any
+// outer recoverer, so the connection is never left held.
+//
+// After a successful commit, after-commit hooks queued by the datastore during
+// the request (see WithAfterCommit) are run. Hooks are discarded on rollback.
 //
 // If UseRLS is false or no tenant ID is set, this middleware is a pass-through.
 func wrapWithRLS(next http.Handler) http.Handler {
@@ -43,16 +48,9 @@ func wrapWithRLS(next http.Handler) http.Handler {
 			return
 		}
 
-		tx, err := store.GetDB().BeginTx(ctx, nil)
+		tx, err := datastore.BeginTenantTx(ctx, store.GetDB(), tenantID)
 		if err != nil {
-			slog.ErrorContext(ctx, "RLS middleware: failed to begin transaction", "error", err)
-			handler.WriteError(w, http.StatusInternalServerError, handler.ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
-			return
-		}
-
-		if _, err := tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', ?, true)", tenantID); err != nil {
-			_ = tx.Rollback()
-			slog.ErrorContext(ctx, "RLS middleware: failed to set tenant ID", "error", err, "tenant_id", tenantID)
+			slog.ErrorContext(ctx, "RLS middleware: failed to begin tenant transaction", "error", err, "tenant_id", tenantID)
 			handler.WriteError(w, http.StatusInternalServerError, handler.ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
 			return
 		}
@@ -60,7 +58,22 @@ func wrapWithRLS(next http.Handler) http.Handler {
 		rw := &rlsStatusRecorder{ResponseWriter: w, status: http.StatusOK}
 
 		ctx = context.WithValue(ctx, metadata.RLSTxKey, tx)
+		ctx = datastore.WithAfterCommitQueue(ctx)
+
+		handlerReturned := false
+		defer func() {
+			if handlerReturned {
+				return
+			}
+			// The handler panicked. Release the transaction, then let the panic
+			// continue to the outer recoverer.
+			if err := tx.Rollback(); err != nil {
+				slog.ErrorContext(ctx, "RLS middleware: rollback after panic failed", "error", err)
+			}
+		}()
+
 		next.ServeHTTP(rw, r.WithContext(ctx))
+		handlerReturned = true
 
 		if rw.status >= 400 {
 			if err := tx.Rollback(); err != nil {
@@ -71,7 +84,10 @@ func wrapWithRLS(next http.Handler) http.Handler {
 
 		if err := tx.Commit(); err != nil {
 			slog.ErrorContext(ctx, "RLS middleware: commit failed", "error", err)
+			return
 		}
+
+		datastore.RunAfterCommit(ctx)
 	})
 }
 
@@ -96,4 +112,19 @@ func (r *rlsStatusRecorder) Write(b []byte) (int, error) {
 		r.wroteHeader = true
 	}
 	return r.ResponseWriter.Write(b)
+}
+
+// Flush implements http.Flusher by delegating to the underlying ResponseWriter,
+// so SSE handlers on RLS routes stream events instead of buffering them.
+// Flushing before WriteHeader implicitly sends a 200, matching net/http.
+func (r *rlsStatusRecorder) Flush() {
+	r.wroteHeader = true
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap returns the underlying ResponseWriter for http.ResponseController compatibility.
+func (r *rlsStatusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
 }

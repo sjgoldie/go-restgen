@@ -1,5 +1,5 @@
 ---
-description: go-restgen REST API framework patterns — model definitions, route registration, auth, nesting, custom endpoints, SSE, file uploads, tenancy, and query configuration.
+description: go-restgen REST API framework patterns — model definitions, route registration, auth, nesting, custom endpoints, SSE, file uploads, tenancy, validation, audit, after-commit hooks, and query configuration.
 globs: "**/*.go"
 alwaysApply: true
 ---
@@ -112,6 +112,16 @@ router.WithSSE("events", sseFn, router.AuthConfig{...})
 router.RegisterRootSSE(b, "/events/system", sseFn, router.AllPublic())
 ```
 
+## Mutation Hooks
+
+```go
+router.WithValidator(validatorFn)     // before write, return error => 400
+router.WithAudit(auditFn)             // inside the write transaction, return a model to insert
+router.WithAfterCommit(afterCommitFn) // after the write has committed, once per item
+```
+
+Use `WithAfterCommit` for side effects that must only see committed data (start a workflow, publish an event). Never do that from a custom handler on an RLS route: the request transaction commits after the handler returns. On RLS routes the hook's `ac.Ctx` carries a fresh tenant-scoped transaction, so datastore and service calls from it are policy-scoped. Errors are logged, not returned to the client.
+
 ## Key Conventions
 
 - **PK field**: named `ID` by default, override with `router.WithAlternatePK("MyPK")`
@@ -188,9 +198,10 @@ router.RegisterRoutes[Model](builder, "/path",
     router.WithCustomBatchDelete(customBatchDeleteFn),
     router.WithBatchLimit(100),
 
-    // Validation and audit
+    // Validation, audit, and after-commit side effects
     router.WithValidator(validatorFn),
     router.WithAudit(auditFn),
+    router.WithAfterCommit(afterCommitFn),
 
     // File uploads (model must embed filestore.FileFields)
     router.AsFileResource(),
@@ -396,7 +407,7 @@ type CustomBatchDeleteFunc[T any] func(
 ) error
 ```
 
-### Validator and Audit
+### Validator, Audit, and After-Commit
 
 ```go
 // Validator — return error to reject with 400
@@ -412,6 +423,14 @@ router.WithValidator(func(vc metadata.ValidationContext[T]) error {
 router.WithAudit(func(ac metadata.AuditContext[T]) any {
     // ac.Operation, ac.New, ac.Old, ac.Ctx (same as validator)
     return &AuditLog{...}
+})
+
+// After-commit — side effects that must only see committed data (workflows, events).
+// Runs once per item after the write commits; on RLS routes it gets a fresh
+// tenant-scoped transaction in ac.Ctx. Errors are logged, never returned to the client.
+router.WithAfterCommit(func(ac metadata.AfterCommitContext[T]) error {
+    // ac.Operation, ac.New, ac.Old, ac.Ctx (cancellation removed, values kept)
+    return workflows.Start(ac.Ctx, "thing-changed", ac.New.ID)
 })
 ```
 

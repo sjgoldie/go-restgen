@@ -235,10 +235,11 @@ cd examples/audit
 go run main.go
 ```
 
-**Tests cover (8 tests):**
+**Tests cover (9 tests):**
 - Audit records created for all mutations
 - Old and new state captured
 - Audit runs in same transaction
+- After-commit hook observes committed state (present after create/update, gone after delete)
 
 ### Query Example Tests
 
@@ -361,7 +362,7 @@ go run main.go
 
 ## Test Coverage
 
-**Total: 300 end-to-end API tests** across 16 example applications.
+**Total: 301 end-to-end API tests** across 16 example applications.
 
 These Bruno tests provide **end-to-end API coverage** for the example applications. They complement the unit tests by:
 

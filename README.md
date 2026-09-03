@@ -890,6 +890,12 @@ When `WithAudit` is configured, the audit insert runs inside the same RLS transa
 
 The atomicity guarantee (CRUD + audit succeed or fail together) is preserved either way.
 
+#### After-Commit Hooks and RLS
+
+When `WithAfterCommit` is configured on an RLS route, the hook runs after the request transaction commits, inside a fresh transaction scoped to the same tenant with the same `set_config('app.tenant_id', ...)` call the request used. Every datastore or service call made with `ac.Ctx` is therefore subject to your RLS policies exactly as it is during the request. If that transaction cannot be opened the hook is skipped and the failure logged; it is never run unscoped. The hook's transaction commits when the hook returns `nil` and rolls back if it returns an error or panics.
+
+If you manage your own transaction under `metadata.RLSTxKey`, wrap the context with `datastore.WithAfterCommitQueue` before running datastore operations and call `datastore.RunAfterCommit` once you have committed. Hooks scheduled on a transaction without a queue are skipped with an error log rather than run before commit.
+
 ## Query Parameters: Filtering, Sorting & Pagination
 
 go-restgen supports query parameters for filtering, sorting, and paginating results on `GET /resource` (list) endpoints.
@@ -1472,6 +1478,45 @@ router.WithAudit(func(ac metadata.AuditContext[Job]) any {
 ```
 
 See the [audit example](./examples/audit) for a complete working example.
+
+## After-Commit Hooks
+
+`WithAfterCommit` runs a function after a Create, Update, Patch, or Delete has been durably committed. Use it for side effects that must only ever observe committed data: starting a workflow, publishing an event, invalidating a cache. A custom handler cannot do this reliably on an RLS route, because the request transaction commits after the handler returns.
+
+```go
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllScoped("user"),
+    router.WithAfterCommit(func(ac metadata.AfterCommitContext[Order]) error {
+        if ac.Operation == metadata.OpUpdate && ac.Old.Status != ac.New.Status {
+            return workflows.Start(ac.Ctx, "order-status-changed", ac.New.ID)
+        }
+        return nil
+    }),
+)
+```
+
+### AfterCommitContext
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Operation` | `metadata.Operation` | One of `OpCreate`, `OpUpdate`, `OpPatch`, `OpDelete` |
+| `New` | `*T` | The item after operation (nil for delete) |
+| `Old` | `*T` | The item before operation (nil for create) |
+| `Ctx` | `context.Context` | Derived request context, safe for datastore and service calls |
+
+### How It Works
+
+- **After commit, always**: the hook runs once per item, only after a successful write. Batch operations call it once per item after the whole batch commits.
+- **Without RLS** it runs as soon as the datastore write has committed, before the response is written.
+- **With RLS** (`WithTenantScope(field, true)`) the framework owns the request transaction, so the hook runs after that transaction commits, which is after the response has been written. See [After-Commit Hooks and RLS](#after-commit-hooks-and-rls) for the tenant scoping the hook receives.
+- **Synchronous**: it runs in the request goroutine. A returned error or a panic is logged and cannot affect the committed operation or the response. Spawn a goroutine inside the hook if you want fire-and-forget.
+- **Context**: `Ctx` keeps every request value (auth, tenant, parent IDs, metadata) but drops request cancellation, so a client disconnect after commit does not abort the hook. Calls made with `Ctx` see the committed state, including from `service.New[T]()`.
+
+### Delivery Guarantee
+
+At-most-once. If the process dies between the commit and the hook, the hook is lost. When the side effect must happen, write an outbox row from `WithAudit` in the same transaction and have a worker deliver it; the after-commit hook can then simply nudge that worker.
+
+See the [audit example](./examples/audit) for a hook that records what it observed after each commit.
 
 ## Custom Handlers
 
@@ -2627,7 +2672,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 go tool cover -func=/tmp/coverage.out
 ```
 
-For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 300 API tests across 16 example applications.
+For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 301 API tests across 16 example applications.
 
 You can override the default port (8080) using the `PORT` environment variable:
 

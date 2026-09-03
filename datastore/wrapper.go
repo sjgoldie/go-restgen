@@ -307,6 +307,8 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 		return nil, w.translateError(err)
 	}
 
+	w.afterCommit(ctx, meta, metadata.OpCreate, nil, &item)
+
 	return &item, nil
 }
 
@@ -374,6 +376,8 @@ func (w *Wrapper[T]) updateWithOp(ctx context.Context, id string, item T, op met
 		return nil, w.translateError(err)
 	}
 
+	w.afterCommit(ctx, meta, op, existing, &item)
+
 	return &item, nil
 }
 
@@ -436,6 +440,8 @@ func (w *Wrapper[T]) Delete(ctx context.Context, id string) error {
 	if rowsAffected == 0 {
 		return apperrors.ErrNotFound
 	}
+
+	w.afterCommit(ctx, meta, metadata.OpDelete, existing, nil)
 
 	return nil
 }
@@ -1921,6 +1927,10 @@ func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 		return nil, err
 	}
 
+	for _, created := range results {
+		w.afterCommit(ctx, meta, metadata.OpCreate, nil, created)
+	}
+
 	return results, nil
 }
 
@@ -1986,6 +1996,10 @@ func (w *Wrapper[T]) batchUpdateWithOp(ctx context.Context, items []T, op metada
 		return nil, err
 	}
 
+	for i, updated := range results {
+		w.afterCommit(ctx, meta, op, preFetch.existingItems[i], updated)
+	}
+
 	return results, nil
 }
 
@@ -2033,7 +2047,15 @@ func (w *Wrapper[T]) BatchDelete(ctx context.Context, items []T) error {
 		return nil
 	})
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	for _, deleted := range preFetch.existingItems {
+		w.afterCommit(ctx, meta, metadata.OpDelete, deleted, nil)
+	}
+
+	return nil
 }
 
 // preFetchItems validates and fetches existing items before a batch operation.

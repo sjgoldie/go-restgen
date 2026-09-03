@@ -84,8 +84,10 @@ func Initialize(provider metric.MeterProvider) error {
 // Records restgen.request.duration (histogram) and restgen.request.count (counter)
 // with attributes: resource, method, status.
 //
-// The resource attribute comes from go-restgen metadata context when available,
-// otherwise defaults to the URL path.
+// The resource attribute is the registered go-restgen type name for routes the
+// framework serves, and the URL path otherwise. Context values only flow inward,
+// so this middleware seeds a metadata.ResourceName holder that go-restgen's
+// metadata middleware fills in on the way down.
 func Middleware() func(http.Handler) http.Handler {
 	// Ensure instruments are initialized (uses global provider if Initialize not called)
 	if current.Load() == nil {
@@ -99,17 +101,17 @@ func Middleware() func(http.Handler) http.Handler {
 			// Wrap response writer to capture status code
 			wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
+			// Seed the holder the metadata middleware reports the type name into
+			holder := &metadata.ResourceName{}
+			r = r.WithContext(context.WithValue(r.Context(), metadata.ResourceNameKey, holder))
+
 			// Process request
 			next.ServeHTTP(wrapped, r)
 
 			// Calculate duration
 			duration := float64(time.Since(start).Milliseconds())
 
-			// Get resource name from metadata context if available
-			resource := r.URL.Path
-			if meta, err := metadata.FromContext(r.Context()); err == nil && meta != nil {
-				resource = meta.TypeName
-			}
+			resource := resourceName(r, holder)
 
 			// Build attributes
 			attrs := []attribute.KeyValue{
@@ -128,6 +130,15 @@ func Middleware() func(http.Handler) http.Handler {
 			}
 		})
 	}
+}
+
+// resourceName returns the type name the metadata middleware reported, or the
+// URL path for requests go-restgen did not route.
+func resourceName(r *http.Request, holder *metadata.ResourceName) string {
+	if holder != nil && holder.Name != "" {
+		return holder.Name
+	}
+	return r.URL.Path
 }
 
 // responseWriter wraps http.ResponseWriter to capture the status code

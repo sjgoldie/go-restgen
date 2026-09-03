@@ -429,7 +429,7 @@ func TestBuildExistsChain(t *testing.T) {
 	grandchildMeta := f.grandchildMeta
 
 	t.Run("empty chain returns nil", func(t *testing.T) {
-		result := wrapper.buildExistsChain(parentMeta, nil, nil)
+		result := wrapper.buildExistsChain(ctx, parentMeta, nil, false, nil)
 		if result != nil {
 			t.Error("expected nil for empty chain")
 		}
@@ -437,7 +437,7 @@ func TestBuildExistsChain(t *testing.T) {
 
 	t.Run("single level without inner filter", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, nil)
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, nil)
 
 		var results []existsTestParent
 		err := db.GetDB().NewSelect().
@@ -454,7 +454,7 @@ func TestBuildExistsChain(t *testing.T) {
 
 	t.Run("single level with inner filter", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, func(q *bun.SelectQuery) *bun.SelectQuery {
 			return applyFilter(q, "exists_children", "status", metadata.OpEq, []interface{}{"inactive"}, "LIKE")
 		})
 
@@ -477,7 +477,7 @@ func TestBuildExistsChain(t *testing.T) {
 
 	t.Run("two level chain without inner filter", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta, grandchildMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, nil)
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, nil)
 
 		var results []existsTestParent
 		err := db.GetDB().NewSelect().
@@ -498,7 +498,7 @@ func TestBuildExistsChain(t *testing.T) {
 
 	t.Run("two level chain with inner filter", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta, grandchildMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, func(q *bun.SelectQuery) *bun.SelectQuery {
 			return applyFilter(q, "exists_grandchildren", "value", metadata.OpEq, []interface{}{"deep"}, "LIKE")
 		})
 
@@ -517,7 +517,7 @@ func TestBuildExistsChain(t *testing.T) {
 
 	t.Run("two level chain with non-matching filter", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta, grandchildMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, func(q *bun.SelectQuery) *bun.SelectQuery {
 			return applyFilter(q, "exists_grandchildren", "value", metadata.OpEq, []interface{}{"nonexistent"}, "LIKE")
 		})
 
@@ -536,7 +536,7 @@ func TestBuildExistsChain(t *testing.T) {
 
 	t.Run("NOT EXISTS", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, nil)
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, nil)
 
 		var results []existsTestParent
 		err := db.GetDB().NewSelect().
@@ -557,7 +557,7 @@ func TestBuildExistsChain(t *testing.T) {
 
 	t.Run("inner filter with in operator", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, func(q *bun.SelectQuery) *bun.SelectQuery {
 			return applyFilter(q, "exists_children", "status", metadata.OpIn, []interface{}{"active", "inactive"}, "LIKE")
 		})
 
@@ -592,7 +592,7 @@ func TestBuildExistsChain_CrossIsolation(t *testing.T) {
 		// even though inactive children exist in the table.
 		// A broken FK correlation (missing child.fk = parent.pk) would return both.
 		chain := []*metadata.TypeMetadata{childMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, func(q *bun.SelectQuery) *bun.SelectQuery {
 			return applyFilter(q, "exists_children", "status", metadata.OpEq, []interface{}{"inactive"}, "LIKE")
 		})
 
@@ -626,7 +626,7 @@ func TestBuildExistsChain_CrossIsolation(t *testing.T) {
 		// A broken nested FK correlation would let parent 1 match
 		// because grandchildren exist somewhere in the table.
 		chain := []*metadata.TypeMetadata{childMeta, grandchildMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, nil)
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, nil)
 
 		var results []existsTestParent
 		err := db.GetDB().NewSelect().
@@ -660,7 +660,7 @@ func TestBuildExistsChain_CrossIsolation(t *testing.T) {
 		// Filtering grandchildren for value="deep" must NOT return parent 1,
 		// even though parent 1 has children (just not ones with grandchildren).
 		chain := []*metadata.TypeMetadata{childMeta, grandchildMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, func(q *bun.SelectQuery) *bun.SelectQuery {
 			return applyFilter(q, "exists_grandchildren", "value", metadata.OpEq, []interface{}{"deep"}, "LIKE")
 		})
 
@@ -758,7 +758,7 @@ func TestBuildCountChain(t *testing.T) {
 	}
 
 	t.Run("empty chain returns nil", func(t *testing.T) {
-		result := wrapper.buildCountChain(parentMeta, nil)
+		result := wrapper.buildCountChain(ctx, parentMeta, nil, false)
 		if result != nil {
 			t.Error("expected nil for empty chain")
 		}
@@ -766,7 +766,7 @@ func TestBuildCountChain(t *testing.T) {
 
 	t.Run("single level count", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta}
-		countSubq := wrapper.buildCountChain(parentMeta, chain)
+		countSubq := wrapper.buildCountChain(ctx, parentMeta, chain, false)
 
 		var results []existsTestParent
 		err := db.GetDB().NewSelect().
@@ -787,7 +787,7 @@ func TestBuildCountChain(t *testing.T) {
 
 	t.Run("single level count eq zero", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta}
-		countSubq := wrapper.buildCountChain(parentMeta, chain)
+		countSubq := wrapper.buildCountChain(ctx, parentMeta, chain, false)
 
 		var results []existsTestParent
 		err := db.GetDB().NewSelect().
@@ -808,7 +808,7 @@ func TestBuildCountChain(t *testing.T) {
 
 	t.Run("two level count", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta, grandchildMeta}
-		countSubq := wrapper.buildCountChain(parentMeta, chain)
+		countSubq := wrapper.buildCountChain(ctx, parentMeta, chain, false)
 
 		var results []existsTestParent
 		err := db.GetDB().NewSelect().
@@ -829,7 +829,7 @@ func TestBuildCountChain(t *testing.T) {
 
 	t.Run("cross-parent count isolation", func(t *testing.T) {
 		chain := []*metadata.TypeMetadata{childMeta, grandchildMeta}
-		countSubq := wrapper.buildCountChain(parentMeta, chain)
+		countSubq := wrapper.buildCountChain(ctx, parentMeta, chain, false)
 
 		var results []existsTestParent
 		err := db.GetDB().NewSelect().
@@ -1303,7 +1303,7 @@ func TestBuildExistsChain_TenantIsolation(t *testing.T) {
 		// beth has a child but with tenant_id=A → excluded (cross-tenant leak if not filtered).
 		// alice has a child with tenant_id=A → excluded.
 		chain := []*metadata.TypeMetadata{childMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, func(q *bun.SelectQuery) *bun.SelectQuery {
 			return applyFilter(q, "tenant_children", "tenant_id", metadata.OpEq, []interface{}{"B"}, "LIKE")
 		})
 
@@ -1344,7 +1344,7 @@ func TestBuildExistsChain_TenantIsolation(t *testing.T) {
 		// This is correct behavior: the filter is on child tenant, not parent tenant.
 		// Real tenant enforcement needs conditions at EVERY chain level.
 		chain := []*metadata.TypeMetadata{childMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, func(q *bun.SelectQuery) *bun.SelectQuery {
 			return applyFilter(q, "tenant_children", "tenant_id", metadata.OpEq, []interface{}{"A"}, "LIKE")
 		})
 
@@ -1380,7 +1380,7 @@ func TestBuildExistsChain_TenantIsolation(t *testing.T) {
 		// Only bob's child has a grandchild with tenant_id=B → only bob returned.
 		// alice's child has a grandchild but with tenant_id=A → excluded.
 		chain := []*metadata.TypeMetadata{childMeta, grandchildMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, func(q *bun.SelectQuery) *bun.SelectQuery {
 			return applyFilter(q, "tenant_grandchildren", "tenant_id", metadata.OpEq, []interface{}{"B"}, "LIKE")
 		})
 
@@ -1416,7 +1416,7 @@ func TestBuildExistsChain_TenantIsolation(t *testing.T) {
 		// All three children are active, but only child 2 (bob's) has tenant_id=B.
 		// beth's child is active but tenant_id=A → must be excluded.
 		chain := []*metadata.TypeMetadata{childMeta}
-		existsSubq := wrapper.buildExistsChain(parentMeta, chain, func(q *bun.SelectQuery) *bun.SelectQuery {
+		existsSubq := wrapper.buildExistsChain(ctx, parentMeta, chain, false, func(q *bun.SelectQuery) *bun.SelectQuery {
 			q = applyFilter(q, "tenant_children", "status", metadata.OpEq, []interface{}{"active"}, "LIKE")
 			q = applyFilter(q, "tenant_children", "tenant_id", metadata.OpEq, []interface{}{"B"}, "LIKE")
 			return q

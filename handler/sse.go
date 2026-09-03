@@ -67,7 +67,22 @@ func SSE[T any](fn SSEFunc[T]) http.HandlerFunc {
 		}()
 
 		streamSSEEvents(w, events)
+		releaseSSEProducer(cancel, events)
 	}
+}
+
+// releaseSSEProducer lets the producer goroutine finish once streaming has
+// stopped, whether because the producer returned or the client disconnected.
+// Cancelling the context lets a producer that watches ctx.Done() exit; draining
+// the channel lets one that sends without checking finish its sends instead of
+// blocking forever on a channel nobody reads any more. The drain ends when the
+// producer's deferred close runs.
+func releaseSSEProducer(cancel context.CancelFunc, events <-chan SSEEvent) {
+	cancel()
+	go func() {
+		for range events {
+		}
+	}()
 }
 
 // RootSSE handles Server-Sent Event requests for root-level endpoints.
@@ -92,6 +107,7 @@ func RootSSE(fn RootSSEFunc) http.HandlerFunc {
 		}()
 
 		streamSSEEvents(w, events)
+		releaseSSEProducer(cancel, events)
 	}
 }
 

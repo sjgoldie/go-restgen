@@ -6204,16 +6204,21 @@ func TestTenant_SetTenantField_SkipsIsTenantTable(t *testing.T) {
 	wrapper := &datastore.Wrapper[TestTenantOrg]{Store: db}
 	ctx := ctxWithMeta(orgMeta)
 
-	// Create org with explicit ID, tenant context set to "org-a"
+	// Create the caller's own org, tenant context set to "org-a"
 	tenantCtx := ctxWithTenant(ctx, "org-a")
-	created, err := wrapper.Create(tenantCtx, TestTenantOrg{ID: "org-x", Name: "Org X"})
+	created, err := wrapper.Create(tenantCtx, TestTenantOrg{ID: "org-a", Name: "Org A"})
 	if err != nil {
 		t.Fatal("Failed to create org:", err)
 	}
 
-	// IsTenantTable should NOT auto-set the tenant field — ID stays as provided
-	if created.ID != "org-x" {
-		t.Errorf("Expected org ID to remain org-x (IsTenantTable skips setTenantField), got %s", created.ID)
+	// IsTenantTable skips setTenantField (the PK is the tenant) and keeps the caller's own ID
+	if created.ID != "org-a" {
+		t.Errorf("Expected org ID to remain org-a (IsTenantTable skips setTenantField), got %s", created.ID)
+	}
+
+	// A different org ID is another tenant's row and is rejected
+	if _, err := wrapper.Create(tenantCtx, TestTenantOrg{ID: "org-x", Name: "Org X"}); !errors.Is(err, apperrors.ErrValidation) {
+		t.Errorf("Expected validation error creating another tenant's org, got %v", err)
 	}
 }
 

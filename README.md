@@ -114,6 +114,17 @@ defer datastore.Cleanup()
 db, err := datastore.NewSQLite("./data.db")
 ```
 
+### Query Timeout
+
+Every datastore operation runs under a per-query timeout: 30 seconds on PostgreSQL, 5 seconds on SQLite. Override it with `WithTimeout` on any constructor, including the `WithDB` variants:
+
+```go
+db, err := datastore.NewPostgres(dsn, datastore.WithTimeout(10*time.Second))
+db := datastore.NewPostgresWithDB(sqlDB, datastore.WithTimeout(10*time.Second))
+```
+
+Zero or negative values are ignored and the default applies. A query that exceeds the timeout returns `504 request_timeout`.
+
 ### Using an External Database Connection
 
 Use `NewPostgresWithDB` or `NewSQLiteWithDB` when you need to manage the database connection externally, such as with Vault rotating credentials or custom connection pooling:
@@ -679,6 +690,12 @@ router.RegisterRoutes[Post](b, "/posts",
 )
 ```
 
+Ownership is evaluated per method. Each `AuthConfig`'s `Fields` and `BypassScopes` apply exactly to the methods it names, so in the example above an assignee can read and update but not delete. Relation includes, relation counts, and nested-route parent filtering use the type's own ownership configuration, since they are not tied to a single method.
+
+### Ownership Is Re-Enforced on Update
+
+PUT and PATCH cannot reassign or orphan a row. The ownership fields are copied from the existing row onto the incoming item for any caller without a bypass scope, mirroring how the tenant field is re-enforced. A caller holding a bypass scope may change the owner, which is how an admin transfers a resource.
+
 ### Complex Example: Mixed Auth Patterns
 
 ```go
@@ -749,7 +766,7 @@ go-restgen supports automatic multi-tenant data isolation, ensuring each tenant'
 Multi-tenancy is configured per-route using two options:
 
 - **`WithTenantScope(field, useRLS...)`** — Scopes all queries by the tenant ID stored in the named field. Auto-sets the field on create and update. Child routes inherit automatically. Pass `true` as the optional second argument to enable PostgreSQL Row-Level Security (see [PostgreSQL Row-Level Security](#postgresql-row-level-security-rls)).
-- **`IsTenantTable()`** — Marks the route as the tenant entity itself (e.g., Organization). The model's primary key IS the tenant ID, so queries use `WHERE id = tenantID`.
+- **`IsTenantTable()`** — Marks the route as the tenant entity itself (e.g., Organization). The model's primary key IS the tenant ID, so queries filter on the primary key column (whatever it is named) equalling the tenant ID. A create on this route targets the caller's own tenant: an omitted primary key is filled with `AuthInfo.TenantID`, and a different one is rejected with `400 validation_error`, so one tenant cannot pre-create another tenant's record.
 
 The tenant ID comes from `AuthInfo.TenantID`, which you populate in your auth middleware.
 
@@ -836,7 +853,9 @@ func authMiddleware(next http.Handler) http.Handler {
 | Operation | Behavior |
 |-----------|----------|
 | **CREATE** | Tenant field auto-set from `AuthInfo.TenantID` (ignores JSON body value) |
+| **CREATE (tenant table)** | Primary key filled with `AuthInfo.TenantID` when omitted; a different key is rejected with 400 |
 | **GET/LIST** | Auto-applies `WHERE org_id = <tenantID>` filter |
+| **Relation counts and filters** | `?include_count=` and `?filter[Relation][exists|count_*]` apply the same tenant and ownership scoping as `?include=` |
 | **UPDATE/PATCH** | Re-enforces tenant field (prevents cross-tenant moves via PUT/PATCH) |
 | **DELETE** | Validates resource belongs to tenant before deletion |
 | **Cross-tenant access** | Returns 404 (doesn't leak existence) |
@@ -1030,6 +1049,8 @@ GET /users?limit=10&after=<cursor>
 GET /users?limit=10&before=<cursor>
 ```
 
+Cursors are opaque and carry their sort values with type information, so `int64` keys beyond 2^53 and `time.Time` sort columns round-trip exactly. Treat them as short-lived: a cursor that is malformed, or was issued by an earlier go-restgen version with a different encoding, is rejected with `400 bad_request`.
+
 **Response body** includes pagination metadata:
 ```json
 {
@@ -1046,7 +1067,7 @@ GET /users?limit=10&before=<cursor>
 - `has_more` — whether more items exist beyond the current page
 - `next_cursor` — pass to `?after=` for the next page (absent on last page)
 - `prev_cursor` — pass to `?before=` for the previous page (absent on first page)
-- `total_count` — only included when `?count=true` is requested
+- `total_count` — included whenever `?count=true` is requested, `0` when nothing matches
 
 #### Offset-Based Pagination (Opt-In)
 
@@ -1080,7 +1101,7 @@ Request total count (useful for pagination UI) with `count=true`:
 GET /users?limit=10&count=true
 ```
 
-The count is returned in `pagination.total_count` in the response body.
+The count is returned in `pagination.total_count` in the response body. It is present whenever `count=true` was sent, including `0` when no rows match, so a client can tell "none" from "not requested".
 
 ### Sum Aggregation
 
@@ -1222,6 +1243,8 @@ All error responses are returned as structured JSON with a consistent format:
 | 503 | `service_unavailable` | Service Unavailable |
 
 The `error` field is a machine-readable code for programmatic error handling. The `message` field uses `http.StatusText()` — the standard HTTP status text for the response code. For validation errors, the `message` contains the custom message from your validator function. Error code constants are exported as `handler.ErrCodeBadRequest`, `handler.ErrCodeNotFound`, etc.
+
+Client input that cannot be interpreted is a `400 bad_request`, never a 500: a malformed JSON body, an oversized body, or a malformed `?after=` / `?before=` cursor.
 
 `handler.WriteError` is exported for use in custom middleware and handlers:
 
@@ -1892,6 +1915,8 @@ router.RegisterRoutes[Order](b, "/orders",
 
 Generated endpoint: `GET /orders/{id}/events`
 
+When the client disconnects, the framework cancels `ctx` and keeps draining the `events` channel until your function returns, so a producer that sends without checking `ctx.Done()` finishes its sends and exits instead of blocking forever. A long-lived producer should still watch `ctx.Done()` so it stops doing work once nobody is listening.
+
 ### Root-Level SSE (`RegisterRootSSE`)
 
 Root SSE endpoints have no parent model. Always registered as GET.
@@ -2015,6 +2040,8 @@ router.WithCustomPatch(func(
     return svc.Patch(ctx, id, patched)
 })
 ```
+
+On a nested single route such as `/posts/{id}/author`, `id` is the parent's ID. The framework does not write it into the child's primary key, so a custom update or patch handler receives the author as sent (patch: as fetched) and should call `svc.UpdateByParentRelation` or `svc.PatchByParentRelation` to resolve the child.
 
 ### Validators Distinguish PATCH from PUT
 
@@ -2154,9 +2181,12 @@ Exceeding the limit returns 400 Bad Request.
 ### Transaction Semantics
 
 - **All-or-nothing**: If any item fails, the entire batch is rolled back
+- **Existing rows fetched once, inside the transaction**: Update, patch, and delete load every existing row in a single query within the write transaction, so there is no window between the checks and the writes
 - **Ownership validated per-item**: Each item is checked individually
-- **Validation runs per-item**: Custom validators are invoked for each item
+- **Validation runs per-item**: Custom validators are invoked for each item, with both `Old` and `New` populated for update and patch
 - **Audit runs per-item**: Audit records are created for each item in the same transaction
+
+Custom batch handlers can fetch existing rows the same way with `svc.GetMany(ctx, ids)`, which applies the same parent, ownership, and tenant scoping as `Get` and returns rows in the order of the IDs.
 
 ### Custom Batch Handlers
 

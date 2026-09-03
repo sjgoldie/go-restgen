@@ -406,26 +406,48 @@ func TestGettersReturnNilBeforeInitialize(t *testing.T) {
 	}
 }
 
-// TestMiddlewareUsesTypeNameFromMetadata covers the branch where the resource
-// attribute comes from go-restgen metadata rather than falling back to the path.
-func TestMiddlewareUsesTypeNameFromMetadata(t *testing.T) {
+// TestMiddlewareSeedsResourceNameHolder verifies the middleware places a
+// metadata.ResourceName holder in the request context so go-restgen's metadata
+// middleware, which runs inside it, can report the type name outward.
+func TestMiddlewareSeedsResourceNameHolder(t *testing.T) {
 	if err := Initialize(noop.NewMeterProvider()); err != nil {
 		t.Fatalf("Initialize returned error: %v", err)
 	}
 
-	handler := Middleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var seen *metadata.ResourceName
+	handler := Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen, _ = r.Context().Value(metadata.ResourceNameKey).(*metadata.ResourceName)
+		if seen != nil {
+			seen.Name = "Article"
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	meta := &metadata.TypeMetadata{TypeName: "Article"}
-	req := httptest.NewRequest("GET", "/articles", nil)
-	req = req.WithContext(context.WithValue(req.Context(), metadata.MetadataKey, meta))
-
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/articles", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if seen == nil {
+		t.Fatal("expected a ResourceName holder in the inner request context")
+	}
+}
+
+// TestResourceNamePrefersReportedTypeName covers both branches of the
+// resource attribute: the type name reported by the metadata middleware, and
+// the URL path when nothing was reported.
+func TestResourceNamePrefersReportedTypeName(t *testing.T) {
+	req := httptest.NewRequest("GET", "/articles/1", nil)
+
+	if got := resourceName(req, &metadata.ResourceName{Name: "Article"}); got != "Article" {
+		t.Errorf("reported type name: got %q, want Article", got)
+	}
+	if got := resourceName(req, &metadata.ResourceName{}); got != "/articles/1" {
+		t.Errorf("empty holder: got %q, want /articles/1", got)
+	}
+	if got := resourceName(req, nil); got != "/articles/1" {
+		t.Errorf("nil holder: got %q, want /articles/1", got)
 	}
 }
 

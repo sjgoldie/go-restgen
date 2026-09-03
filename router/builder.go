@@ -363,6 +363,7 @@ func registerSingleRoutes[T any](r chi.Router, b *Builder, meta *metadata.TypeMe
 	if b.parentMeta != nil {
 		meta.URLParamUUID = b.parentMeta.URLParamUUID
 	}
+	meta.IsSingleRoute = true
 	meta.RelationName = relationName
 	meta.ParentFKField = singleRoute.ParentFKField
 
@@ -617,6 +618,12 @@ func createMetadataMiddleware(meta *metadata.TypeMetadata) func(http.Handler) ht
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), metadata.MetadataKey, meta)
+
+			// Report the type name outward to any middleware that seeded a holder
+			// (the metrics middleware runs outside this one and cannot see our context).
+			if holder, ok := ctx.Value(metadata.ResourceNameKey).(*metadata.ResourceName); ok && holder != nil {
+				holder.Name = meta.TypeName
+			}
 
 			// Parse query options and add to context
 			opts := metadata.ParseQueryOptions(r.URL.Query())

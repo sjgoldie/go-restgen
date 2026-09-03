@@ -1,0 +1,43 @@
+meta {
+  name: Verify After-Commit Notifications
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/notifications
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+script:post-response {
+  // The after-commit hook records one notification per committed mutation and
+  // whether the job was readable through the service layer at that moment.
+  const jobId = parseInt(bru.getVar("jobId"));
+  const mine = res.body.filter(n => n.job_id === jobId);
+
+  if (mine.length !== 3) {
+    throw new Error(`Expected 3 after-commit notifications for job ${jobId}, got ${mine.length}`);
+  }
+
+  const byOperation = Object.fromEntries(mine.map(n => [n.operation, n]));
+  for (const op of ["create", "update", "delete"]) {
+    if (!byOperation[op]) {
+      throw new Error(`Missing '${op}' after-commit notification`);
+    }
+  }
+
+  if (byOperation.create.visible_after_commit !== true) {
+    throw new Error("Created job must be visible to the hook after commit");
+  }
+  if (byOperation.update.visible_after_commit !== true) {
+    throw new Error("Updated job must be visible to the hook after commit");
+  }
+  if (byOperation.delete.visible_after_commit !== false) {
+    throw new Error("Deleted job must be gone when the hook runs after commit");
+  }
+}

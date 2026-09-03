@@ -436,6 +436,25 @@ func TestTypeMetadata_Clone(t *testing.T) {
 		}
 	})
 
+	t.Run("hook functions are carried across", func(t *testing.T) {
+		hooked := &TypeMetadata{
+			Validator:   ValidatorFunc[struct{}](func(ValidationContext[struct{}]) error { return nil }),
+			Auditor:     AuditFunc[struct{}](func(AuditContext[struct{}]) any { return nil }),
+			AfterCommit: AfterCommitFunc[struct{}](func(AfterCommitContext[struct{}]) error { return nil }),
+		}
+		hookedClone := hooked.Clone()
+
+		if _, ok := hookedClone.Validator.(ValidatorFunc[struct{}]); !ok {
+			t.Error("Validator should be carried across by Clone")
+		}
+		if _, ok := hookedClone.Auditor.(AuditFunc[struct{}]); !ok {
+			t.Error("Auditor should be carried across by Clone")
+		}
+		if _, ok := hookedClone.AfterCommit.(AfterCommitFunc[struct{}]); !ok {
+			t.Error("AfterCommit should be carried across by Clone")
+		}
+	})
+
 	t.Run("nil slices remain nil", func(t *testing.T) {
 		emptyMeta := &TypeMetadata{
 			TypeID:   "empty",

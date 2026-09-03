@@ -719,7 +719,7 @@ func TestMaxUploadSizeDefault(t *testing.T) {
 		r := chi.NewRouter()
 		b := NewBuilder(r)
 
-		_, setup := prepareMetadata[fileModel](b, "/files", nil, nil, nil, nil, 0, "", true, "", nil, "", false, false, 0, 0)
+		_, setup := prepareMetadata[fileModel](b, "/files", nil, nil, nil, nil, nil, 0, "", true, "", nil, "", false, false, 0, 0)
 
 		if setup.meta.MaxUploadSize != metadata.DefaultMaxUploadSize {
 			t.Errorf("expected default MaxUploadSize %d, got %d", metadata.DefaultMaxUploadSize, setup.meta.MaxUploadSize)
@@ -731,7 +731,7 @@ func TestMaxUploadSizeDefault(t *testing.T) {
 		b := NewBuilder(r)
 
 		customSize := int64(10 << 20)
-		_, setup := prepareMetadata[fileModel](b, "/files", nil, nil, nil, nil, 0, "", true, "", nil, "", false, false, 0, customSize)
+		_, setup := prepareMetadata[fileModel](b, "/files", nil, nil, nil, nil, nil, 0, "", true, "", nil, "", false, false, 0, customSize)
 
 		if setup.meta.MaxUploadSize != customSize {
 			t.Errorf("expected MaxUploadSize %d, got %d", customSize, setup.meta.MaxUploadSize)
@@ -742,7 +742,7 @@ func TestMaxUploadSizeDefault(t *testing.T) {
 		r := chi.NewRouter()
 		b := NewBuilder(r)
 
-		_, setup := prepareMetadata[testModel](b, "/items", nil, nil, nil, nil, 0, "", false, "", nil, "", false, false, 0, 0)
+		_, setup := prepareMetadata[testModel](b, "/items", nil, nil, nil, nil, nil, 0, "", false, "", nil, "", false, false, 0, 0)
 
 		if setup.meta.MaxUploadSize != metadata.DefaultMaxUploadSize {
 			t.Errorf("expected default MaxUploadSize %d, got %d", metadata.DefaultMaxUploadSize, setup.meta.MaxUploadSize)

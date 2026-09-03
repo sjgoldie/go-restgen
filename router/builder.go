@@ -99,6 +99,7 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 	var queryConfigs []QueryConfig
 	var validator metadata.ValidatorFunc[T]
 	var auditor metadata.AuditFunc[T]
+	var afterCommit metadata.AfterCommitFunc[T]
 	var custom customHandlers[T]
 	var batch batchHandlers[T]
 	var batchLimit int
@@ -127,6 +128,8 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			validator = v.Fn
 		case AuditConfig[T]:
 			auditor = v.Fn
+		case AfterCommitConfig[T]:
+			afterCommit = v.Fn
 		case CustomGetConfig[T]:
 			custom.get = v.Fn
 		case CustomGetAllConfig[T]:
@@ -184,12 +187,12 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, custom, batch, batchLimit, actions, endpoints, sses, relationName, singleRoute, isFileResource, pkField, joinOn, tenantField, useRLS, isTenantTable, maxBodySize, maxUploadSize)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, afterCommit, custom, batch, batchLimit, actions, endpoints, sses, relationName, singleRoute, isFileResource, pkField, joinOn, tenantField, useRLS, isTenantTable, maxBodySize, maxUploadSize)
 }
 
 // prepareMetadata assembles type metadata and auth configuration before route registration.
 // This extracts the setup phase from registerRoutesWithBuilder to reduce cyclomatic complexity.
-func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, useRLS bool, isTenantTable bool, maxBodySize int64, maxUploadSize int64) (string, *metadataSetup) {
+func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], afterCommit metadata.AfterCommitFunc[T], batchLimit int, relationName string, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, useRLS bool, isTenantTable bool, maxBodySize int64, maxUploadSize int64) (string, *metadataSetup) {
 	// Ensure path starts with /
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
@@ -318,6 +321,11 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 		meta.Auditor = auditor
 	}
 
+	// Set after-commit hook if provided
+	if afterCommit != nil {
+		meta.AfterCommit = afterCommit
+	}
+
 	// Set batch limit if provided
 	if batchLimit > 0 {
 		meta.BatchLimit = batchLimit
@@ -380,8 +388,8 @@ func registerSingleRoutes[T any](r chi.Router, b *Builder, meta *metadata.TypeMe
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, useRLS bool, isTenantTable bool, maxBodySize int64, maxUploadSize int64) {
-	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, useRLS, isTenantTable, maxBodySize, maxUploadSize)
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], afterCommit metadata.AfterCommitFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, useRLS bool, isTenantTable bool, maxBodySize int64, maxUploadSize int64) {
+	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, afterCommit, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, useRLS, isTenantTable, maxBodySize, maxUploadSize)
 	meta := setup.meta
 	authMap := setup.authMap
 	metadataMiddleware := setup.metadataMiddleware

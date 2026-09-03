@@ -66,9 +66,10 @@ router.RegisterRoutes[Model](builder, "/path",
     router.WithCustomBatchDelete(customBatchDeleteFn),
     router.WithBatchLimit(100),
 
-    // Validation and audit
+    // Validation, audit, and after-commit side effects
     router.WithValidator(validatorFn),
     router.WithAudit(auditFn),
+    router.WithAfterCommit(afterCommitFn),
 
     // File uploads (model must embed filestore.FileFields)
     router.AsFileResource(),
@@ -274,7 +275,7 @@ type CustomBatchDeleteFunc[T any] func(
 ) error
 ```
 
-### Validator and Audit
+### Validator, Audit, and After-Commit
 
 ```go
 // Validator — return error to reject with 400
@@ -290,6 +291,14 @@ router.WithValidator(func(vc metadata.ValidationContext[T]) error {
 router.WithAudit(func(ac metadata.AuditContext[T]) any {
     // ac.Operation, ac.New, ac.Old, ac.Ctx (same as validator)
     return &AuditLog{...}
+})
+
+// After-commit — side effects that must only see committed data (workflows, events).
+// Runs once per item after the write commits; on RLS routes it gets a fresh
+// tenant-scoped transaction in ac.Ctx. Errors are logged, never returned to the client.
+router.WithAfterCommit(func(ac metadata.AfterCommitContext[T]) error {
+    // ac.Operation, ac.New, ac.Old, ac.Ctx (cancellation removed, values kept)
+    return workflows.Start(ac.Ctx, "thing-changed", ac.New.ID)
 })
 ```
 

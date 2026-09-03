@@ -1,6 +1,6 @@
 ---
 name: go-restgen
-description: go-restgen REST API framework patterns — model definitions, route registration, auth, nesting, custom endpoints, SSE, file uploads, tenancy, and query configuration.
+description: go-restgen REST API framework patterns — model definitions, route registration, auth, nesting, custom endpoints, SSE, file uploads, tenancy, validation, audit, after-commit hooks, and query configuration.
 ---
 
 # go-restgen Framework Guide
@@ -145,6 +145,16 @@ router.WithSSE("events", sseFn, router.AuthConfig{...})
 // Root-level SSE: GET /any/path
 router.RegisterRootSSE(b, "/events/system", sseFn, router.AllPublic())
 ```
+
+## Mutation Hooks
+
+```go
+router.WithValidator(validatorFn)     // before write, return error => 400
+router.WithAudit(auditFn)             // inside the write transaction, return a model to insert
+router.WithAfterCommit(afterCommitFn) // after the write has committed, once per item
+```
+
+Use `WithAfterCommit` for side effects that must only see committed data (start a workflow, publish an event). Never do that from a custom handler on an RLS route: the request transaction commits after the handler returns. On RLS routes the hook's `ac.Ctx` carries a fresh tenant-scoped transaction, so datastore and service calls from it are policy-scoped. Errors are logged, not returned to the client.
 
 ## Key Conventions
 

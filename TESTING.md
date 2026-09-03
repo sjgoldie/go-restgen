@@ -15,7 +15,7 @@ go-restgen uses a combination of unit tests, integration tests, and end-to-end A
 - **datastore**: 82.3% - Database operations (uses SQLite in-memory)
 - **errors**: 100.0% - Domain error types
 
-**Integration Test Coverage: 300 end-to-end API tests** (Bruno) across 16 examples
+**Integration Test Coverage: 301 end-to-end API tests** (Bruno) across 16 examples
 
 All unit tests use SQLite in-memory databases - no external database required!
 
@@ -109,7 +109,7 @@ Located in `bruno/` directory with 300 tests across 16 example applications.
 - **auth** (48 tests) - Scopes, ownership, admin bypass
 - **uuid** (14 tests) - UUID primary keys
 - **validator** (16 tests) - Custom validation
-- **audit** (8 tests) - Audit logging
+- **audit** (9 tests) - Audit logging and after-commit hooks
 - **relations** (24 tests) - Relation includes (?include=)
 - **files-proxy** (13 tests) - File upload with proxy mode
 - **files-signed** (13 tests) - File upload with signed URLs

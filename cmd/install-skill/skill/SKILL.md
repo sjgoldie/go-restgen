@@ -150,7 +150,7 @@ router.RegisterRootSSE(b, "/events/system", sseFn, router.AllPublic())
 
 ```go
 router.WithValidator(validatorFn)     // before write, return error => 400
-router.WithAudit(auditFn)             // inside the write transaction, return a model to insert
+router.WithAudit(auditFn)             // inside the write transaction, return a model (or []any of models) to insert
 router.WithAfterCommit(afterCommitFn) // after the write has committed, once per item
 ```
 

@@ -116,7 +116,7 @@ router.RegisterRootSSE(b, "/events/system", sseFn, router.AllPublic())
 
 ```go
 router.WithValidator(validatorFn)     // before write, return error => 400
-router.WithAudit(auditFn)             // inside the write transaction, return a model to insert
+router.WithAudit(auditFn)             // inside the write transaction, return a model (or []any of models) to insert
 router.WithAfterCommit(afterCommitFn) // after the write has committed, once per item
 ```
 
@@ -419,7 +419,9 @@ router.WithValidator(func(vc metadata.ValidationContext[T]) error {
     return nil
 })
 
-// Audit — return a model to insert in same transaction, nil to skip
+// Audit — return a model to insert in same transaction, nil to skip.
+// Return []any to insert several rows in order (e.g. audit row + version row);
+// nil elements are skipped, any insert failure rolls back the whole write.
 router.WithAudit(func(ac metadata.AuditContext[T]) any {
     // ac.Operation, ac.New, ac.Old, ac.Ctx (same as validator)
     return &AuditLog{...}

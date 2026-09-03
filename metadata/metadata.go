@@ -49,9 +49,12 @@ type AuditContext[T any] struct {
 	Ctx       context.Context // Contains AuthInfo, parentIDs, etc.
 }
 
-// AuditFunc is a function that creates an audit record for a mutation operation
-// Return nil to skip audit for this operation
-// The returned audit record (any bun model) will be inserted in the same transaction
+// AuditFunc is a function that creates audit records for a mutation operation.
+// Return nil to skip audit for this operation.
+// Return a single bun model, or a []any of bun models, to be inserted in the
+// same transaction as the operation. A []any is inserted in slice order and nil
+// elements (including typed nil pointers) are skipped, so a route can write an
+// audit row and, when applicable, a version row from one function.
 type AuditFunc[T any] func(AuditContext[T]) any
 
 // AfterCommitContext provides context for after-commit hooks.

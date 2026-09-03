@@ -772,7 +772,8 @@ func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bu
 }
 
 // setOwnershipField sets the ownership field on an item if enforced in context
-// Uses metadata from context to determine which field to set
+// Uses metadata from context to determine which field to set. When several
+// ownership fields are configured only the first, OwnershipFields[0], is set.
 // Always sets the field when ownership is configured, regardless of bypass scopes
 // (Bypass scopes only affect filtering on reads, not field population on creates)
 func (w *Wrapper[T]) setOwnershipField(ctx context.Context, item *T) error {
@@ -1571,9 +1572,10 @@ func (w *Wrapper[T]) runValidation(ctx context.Context, meta *metadata.TypeMetad
 	return nil
 }
 
-// runAudit executes the audit function if one is configured in metadata
-// Inserts the audit record using the provided database handle (can be tx or db)
-// Returns an error if the audit insert fails
+// runAudit executes the audit function if one is configured in metadata.
+// The auditor returns either a single model or a []any of models; each is
+// inserted in order using the provided database handle (can be tx or db).
+// nil results and nil elements are skipped. Returns the first insert error.
 func (w *Wrapper[T]) runAudit(ctx context.Context, db bun.IDB, meta *metadata.TypeMetadata, op metadata.Operation, old, new *T) error {
 	if meta.Auditor == nil {
 		return nil
@@ -1593,15 +1595,36 @@ func (w *Wrapper[T]) runAudit(ctx context.Context, db bun.IDB, meta *metadata.Ty
 		Ctx:       ctx,
 	}
 
-	// Run the auditor to get the audit record
+	// Run the auditor to get the audit record(s)
 	auditRecord := auditor(ac)
 	if auditRecord == nil {
 		return nil // nil means skip audit for this operation
 	}
 
-	// Insert the audit record
-	_, err := db.NewInsert().Model(auditRecord).Exec(ctx)
-	return err
+	records, ok := auditRecord.([]any)
+	if !ok {
+		records = []any{auditRecord}
+	}
+
+	for _, record := range records {
+		if isNilModel(record) {
+			continue
+		}
+		if _, err := db.NewInsert().Model(record).Exec(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// isNilModel reports whether an audit record is nil, including a typed nil
+// pointer such as a conditionally built version row that was never populated.
+func isNilModel(record any) bool {
+	if record == nil {
+		return true
+	}
+	v := reflect.ValueOf(record)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 // GetByParentRelation retrieves a single item of type T via the parent's foreign key field

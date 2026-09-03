@@ -287,7 +287,9 @@ router.WithValidator(func(vc metadata.ValidationContext[T]) error {
     return nil
 })
 
-// Audit — return a model to insert in same transaction, nil to skip
+// Audit — return a model to insert in same transaction, nil to skip.
+// Return []any to insert several rows in order (e.g. audit row + version row);
+// nil elements are skipped, any insert failure rolls back the whole write.
 router.WithAudit(func(ac metadata.AuditContext[T]) any {
     // ac.Operation, ac.New, ac.Old, ac.Ctx (same as validator)
     return &AuditLog{...}

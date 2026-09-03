@@ -651,7 +651,7 @@ router.RegisterRoutes[Post](b, "/posts", router.AuthConfig{
 
 ### Multiple Owner Fields (OR Logic)
 
-Allow access if user owns via any of the specified fields:
+Allow access if user owns via any of the specified fields. On create, only the first field in `Fields` is auto-populated from `AuthInfo.UserID`; the others are left as sent by the client (or empty), so set them in a validator or custom create handler if they must also default to the caller:
 
 ```go
 type Post struct {
@@ -1433,6 +1433,26 @@ The audit function receives an `AuditContext[T]` with:
 - **Rollback**: If audit insert fails, the main operation is rolled back
 - **Skip Audit**: Return `nil` from the audit function to skip audit for that operation
 - **Flexible**: You define the audit model - can include user info, timestamps, JSON snapshots, etc.
+- **Multiple rows**: Return `[]any` to insert several models in slice order, all in the same transaction
+
+### Multiple Records per Operation
+
+Return `[]any` when one operation needs more than one row written with it, such as an audit row plus a version snapshot. Rows are inserted in slice order. `nil` elements, including typed nil pointers, are skipped, so a conditionally built row can be included unconditionally. If any insert fails, everything rolls back together.
+
+```go
+router.WithAudit(func(ac metadata.AuditContext[Document]) any {
+    var version *DocumentVersion
+    if ac.Operation != metadata.OpDelete {
+        version = &DocumentVersion{DocumentID: ac.New.ID, Body: ac.New.Body}
+    }
+    return []any{
+        &DocumentAuditLog{DocumentID: docID(ac), Operation: string(ac.Operation)},
+        version, // nil on delete, skipped
+    }
+})
+```
+
+A pointer to a typed slice, such as `&[]*JobAuditLog{...}`, is also accepted and is inserted as one multi-row insert, as Bun has always allowed. A bare slice is not a valid Bun model and fails the transaction, so use `[]any` for mixed rows and `&[]*T{}` for many rows of one type.
 
 ### Conditional Auditing
 
@@ -2438,6 +2458,7 @@ You can add support for other databases by implementing the `datastore.Store` in
 type Store interface {
     GetDB() *bun.DB
     GetTimeout() time.Duration
+    IlikeOp() string // SQL operator for case-insensitive LIKE ("ILIKE" on PostgreSQL, "LIKE" on SQLite)
     Cleanup()
 }
 ```
@@ -2456,6 +2477,10 @@ func (s *MySQL) GetDB() *bun.DB {
 
 func (s *MySQL) GetTimeout() time.Duration {
     return 5 * time.Second
+}
+
+func (s *MySQL) IlikeOp() string {
+    return "LIKE" // MySQL LIKE is case-insensitive under the default collations
 }
 
 func (s *MySQL) Cleanup() {

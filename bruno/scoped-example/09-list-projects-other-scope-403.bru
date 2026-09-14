@@ -1,0 +1,25 @@
+meta {
+  name: List Projects - Grant for Another Scope Gets 403
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/projects
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: diana
+  X-Grants: task:read@region=emea
+}
+
+assert {
+  res.status: eq 403
+}
+
+docs {
+  # No Grant for the Required Scope
+  Diana has task:read but not project:read, globally or scoped, so the route is forbidden.
+}

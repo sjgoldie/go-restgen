@@ -80,7 +80,7 @@ func (w *Wrapper[T]) reassertOwnership(ctx context.Context, meta *metadata.TypeM
 		return
 	}
 	fields, bypass := ownershipScope(ctx, meta)
-	if len(fields) == 0 || hasBypassScope(ctx, bypass) {
+	if len(fields) == 0 || hasBypassScope(ctx, bypass) || hasScopedBypass(ctx, meta, bypass, existing) {
 		return
 	}
 
@@ -126,33 +126,22 @@ func (w *Wrapper[T]) enforceTenantTablePK(ctx context.Context, meta *metadata.Ty
 
 // applyChildScopeFilters narrows a relation subquery on tableName to the rows
 // the caller may see: the child's ownership fields when applyOwnership is set
-// (unless the caller holds a bypass scope), and the child's tenant field when
-// the request is tenant scoped. This is the same scoping ?include= applies, so
-// relation counts and existence filters cannot reveal rows a caller cannot list.
-func (w *Wrapper[T]) applyChildScopeFilters(ctx context.Context, q *bun.SelectQuery, childMeta *metadata.TypeMetadata, tableName string, applyOwnership bool) *bun.SelectQuery {
+// (unless the caller holds a bypass scope), the child's tenant field when the
+// request is tenant scoped, and the child's partitions using the access resolved
+// for its relation path. This is the same scoping ?include= applies, so relation
+// counts and existence filters cannot reveal rows a caller cannot list.
+func (w *Wrapper[T]) applyChildScopeFilters(ctx context.Context, q *bun.SelectQuery, childMeta *metadata.TypeMetadata, tableName, path string, applyOwnership bool) *bun.SelectQuery {
 	childType := derefType(childMeta.ModelType)
+	ref := columnRef{table: tableName}
 
+	var restrict []clause
 	if applyOwnership && len(childMeta.OwnershipFields) > 0 && !hasBypassScope(ctx, childMeta.BypassScopes) {
 		authInfo, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
 		if authInfo == nil || authInfo.UserID == "" {
-			return q.Where("1 = 0")
+			return q.Where(noRows.query)
 		}
-		q = q.WhereGroup(" AND ", func(g *bun.SelectQuery) *bun.SelectQuery {
-			first := true
-			for _, field := range childMeta.OwnershipFields {
-				col, err := ColumnName(childType, field)
-				if err != nil {
-					continue
-				}
-				if first {
-					g = g.Where("?.? = ?", bun.Ident(tableName), bun.Ident(col), authInfo.UserID)
-					first = false
-				} else {
-					g = g.WhereOr("?.? = ?", bun.Ident(tableName), bun.Ident(col), authInfo.UserID)
-				}
-			}
-			return g
-		})
+		bypass := w.scopedBypassClauses(ctx, childMeta, ref, childMeta.BypassScopes)
+		restrict = append(restrict, w.ownedClause(childMeta, ref, childMeta.OwnershipFields, authInfo.UserID, bypass))
 	}
 
 	if enforced, ok := ctx.Value(metadata.TenantScopedKey).(bool); ok && enforced && childMeta.TenantField != "" {
@@ -162,7 +151,8 @@ func (w *Wrapper[T]) applyChildScopeFilters(ctx context.Context, q *bun.SelectQu
 		}
 	}
 
-	return q
+	restrict = append(restrict, w.partitionRestrict(ctx, childMeta, ref, path)...)
+	return accessQuery(q, restrict, w.shareClause(ctx, childMeta, ref, shareFor(ctx, path)))
 }
 
 // GetMany fetches the rows for ids in a single query, applying the same parent,
@@ -189,15 +179,7 @@ func (w *Wrapper[T]) fetchByIDs(ctx context.Context, meta *metadata.TypeMetadata
 	rows := []*T{}
 	query := w.getDB(ctx).NewSelect().Model(&rows)
 
-	query, err := w.applyParentFiltersWithMeta(ctx, query, meta)
-	if err != nil {
-		return nil, err
-	}
-	query, err = w.applyOwnershipFilterWithMeta(ctx, query, meta)
-	if err != nil {
-		return nil, err
-	}
-	query, err = w.applyTenantFilter(ctx, query, meta)
+	query, err := w.rowAccess(ctx, query, meta)
 	if err != nil {
 		return nil, err
 	}

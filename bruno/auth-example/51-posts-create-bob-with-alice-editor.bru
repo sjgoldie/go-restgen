@@ -1,0 +1,33 @@
+meta {
+  name: Posts - Create Post in Bob's Blog with Alice as Editor
+  type: http
+  seq: 51
+}
+
+post {
+  url: {{baseUrl}}/blogs/{{bobBlogId}}/posts
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user,admin
+}
+
+body:json {
+  {
+    "title": "Bob's Post Edited by Alice",
+    "content": "Post in Bob's blog",
+    "editor_id": "alice"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.author_id: eq bob
+  res.body.editor_id: eq alice
+}
+
+script:post-response {
+  bru.setVar("bobPostEditedByAliceId", res.body.id);
+}

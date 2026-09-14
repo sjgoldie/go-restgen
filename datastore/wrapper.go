@@ -121,20 +121,8 @@ func (w *Wrapper[T]) GetAll(ctx context.Context) ([]*T, int, map[string]float64,
 		return nil, 0, nil, nil, err
 	}
 
-	// Apply parent filters and JOINs from metadata
-	query, err = w.applyParentFiltersWithMeta(ctx, query, meta)
-	if err != nil {
-		return nil, 0, nil, nil, err
-	}
-
-	// Apply ownership filter for type T
-	query, err = w.applyOwnershipFilterWithMeta(ctx, query, meta)
-	if err != nil {
-		return nil, 0, nil, nil, err
-	}
-
-	// Apply tenant filter
-	query, err = w.applyTenantFilter(ctx, query, meta)
+	// Apply parent chain, ownership, tenant, partition, and share scoping
+	query, err = w.rowAccess(ctx, query, meta)
 	if err != nil {
 		return nil, 0, nil, nil, err
 	}
@@ -284,6 +272,11 @@ func (w *Wrapper[T]) Create(ctx context.Context, item T) (*T, error) {
 		return nil, err
 	}
 
+	// Partition fields must be set and within the caller's access
+	if err := w.enforcePartitionWrite(ctx, meta, nil, &item); err != nil {
+		return nil, err
+	}
+
 	// Run custom validation (after ownership and tenant are set so validator sees final state)
 	if err := w.runValidation(ctx, meta, metadata.OpCreate, nil, &item); err != nil {
 		return nil, err
@@ -355,6 +348,11 @@ func (w *Wrapper[T]) updateWithOp(ctx context.Context, id string, item T, op met
 
 	// Re-enforce ownership fields on update (prevents reassigning or orphaning the row)
 	w.reassertOwnership(ctx, meta, existing, &item)
+
+	// Partition fields must stay within the caller's access (prevents moving the row out of it)
+	if err := w.enforcePartitionWrite(ctx, meta, existing, &item); err != nil {
+		return nil, err
+	}
 
 	// Run custom validation with old and new values
 	if err := w.runValidation(ctx, meta, op, existing, &item); err != nil {
@@ -466,20 +464,8 @@ func (w *Wrapper[T]) getWithMeta(ctx context.Context, meta *metadata.TypeMetadat
 	item := reflect.New(meta.ModelType).Interface()
 	query := w.getDB(ctx).NewSelect().Model(item)
 
-	// Apply parent filters and JOINs from metadata
-	query, err := w.applyParentFiltersWithMeta(ctx, query, meta)
-	if err != nil {
-		return nil, err
-	}
-
-	// Apply ownership filter using the metadata
-	query, err = w.applyOwnershipFilterWithMeta(ctx, query, meta)
-	if err != nil {
-		return nil, err
-	}
-
-	// Apply tenant filter
-	query, err = w.applyTenantFilter(ctx, query, meta)
+	// Apply parent chain, ownership, tenant, partition, and share scoping
+	query, err := w.rowAccess(ctx, query, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -575,22 +561,24 @@ func (w *Wrapper[T]) goNameFromColumn(t reflect.Type, colName string) string {
 	return field.GoName
 }
 
-// applyParentFiltersWithMeta applies parent ID filters and JOINs using metadata chain
-func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.SelectQuery, currentMeta *metadata.TypeMetadata) (*bun.SelectQuery, error) {
+// applyParentFiltersWithMeta applies parent ID filters, JOINs, and parent tenant filters using
+// the metadata chain. Parent ownership and partition conditions are returned rather than
+// applied, so the caller can combine them with the row's own access and any share setting.
+func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.SelectQuery, currentMeta *metadata.TypeMetadata) (*bun.SelectQuery, []clause, error) {
 	// Metadata is required - nil means programming error
 	if currentMeta == nil {
-		return nil, fmt.Errorf("metadata is nil for type")
+		return nil, nil, fmt.Errorf("metadata is nil for type")
 	}
 
 	// If no parent, this is a root resource - no filters needed
 	if currentMeta.ParentMeta == nil {
-		return query, nil
+		return query, nil, nil
 	}
 
 	// Extract parent IDs from context
 	parentIDs, ok := ctx.Value(metadata.ParentIDsKey).(map[string]string)
 	if !ok || parentIDs == nil {
-		return query, nil
+		return query, nil, nil
 	}
 
 	// Walk up the parent chain to collect all join info
@@ -641,6 +629,7 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 	}
 
 	// Now build the JOINs and WHERE clauses
+	var restrict []clause
 	baseType := currentMeta.ModelType
 	for _, join := range joins {
 		// Check if we have a parent ID for this level
@@ -676,53 +665,58 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 		// WHERE parent_table.<pk> = ? (the parent's real PK column, not literally "id")
 		query = query.Where("?.? = ?", bun.Ident(join.parentTable), bun.Ident(w.pkColumn(join.parentMeta)), parentID)
 
-		// Issue #28 fix: Apply ownership filter for this parent if needed
-		if slices.Contains(parentsNeedingOwnership, join.parentMeta) && ownershipUserID != "" {
-			query = w.applyParentOwnershipFilter(query, join.parentMeta, ownershipUserID)
+		// Issue #28 fix: ownership condition for this parent if needed
+		if slices.Contains(parentsNeedingOwnership, join.parentMeta) && ownershipUserID != "" && len(join.parentMeta.OwnershipFields) > 0 {
+			ref := columnRef{table: join.parentMeta.TableName}
+			bypass := w.scopedBypassClauses(ctx, join.parentMeta, ref, join.parentMeta.BypassScopes)
+			restrict = append(restrict, w.ownedClause(join.parentMeta, ref, join.parentMeta.OwnershipFields, ownershipUserID, bypass))
 		}
 
 		// Issue #64: Apply tenant filter for this parent if needed
 		if slices.Contains(parentsNeedingTenant, join.parentMeta) && tenantID != "" {
 			query = w.applyParentTenantFilter(query, join.parentMeta, tenantID)
 		}
+
+		// The parent in the URL must be within the caller's partition access
+		restrict = append(restrict, w.partitionRestrict(ctx, join.parentMeta, columnRef{table: join.parentTable}, "")...)
 	}
 
-	return query, nil
+	return query, restrict, nil
 }
 
-// applyParentOwnershipFilter adds ownership WHERE clause for a parent table
-func (w *Wrapper[T]) applyParentOwnershipFilter(query *bun.SelectQuery, parentMeta *metadata.TypeMetadata, userID string) *bun.SelectQuery {
-	if len(parentMeta.OwnershipFields) == 0 {
-		return query
-	}
+// ownedClause builds a single grouped condition that a row of meta at ref is owned by userID
+// through any of fields, or is covered by one of the bypass clauses. The OR is grouped so
+// it cannot split the surrounding AND conditions (parent, tenant, filters, primary key).
+// Fields that do not resolve to a column are skipped; if none resolve and there is no
+// bypass, no rows match.
+func (w *Wrapper[T]) ownedClause(meta *metadata.TypeMetadata, ref columnRef, fields []string, userID string, bypass []clause) clause {
+	itemType := derefType(meta.ModelType)
 
-	parentType := derefType(parentMeta.ModelType)
-
-	// Build WHERE clause for ownership: parent_table.ownership_field = userID
-	// For multiple fields, use OR logic (same as applyOwnershipFilterWithMeta)
-	for i, fieldName := range parentMeta.OwnershipFields {
-		colName, err := ColumnName(parentType, fieldName)
+	var conditions []clause
+	for _, fieldName := range fields {
+		colName, err := ColumnName(itemType, fieldName)
 		if err != nil {
 			continue
 		}
-
-		if i == 0 {
-			query = query.Where("?.? = ?", bun.Ident(parentMeta.TableName), bun.Ident(colName), userID)
-		} else {
-			query = query.WhereOr("?.? = ?", bun.Ident(parentMeta.TableName), bun.Ident(colName), userID)
-		}
+		col, args := ref.column(colName)
+		conditions = append(conditions, clause{query: col + " = ?", args: append(args, userID)})
 	}
+	conditions = append(conditions, bypass...)
 
-	return query
+	if len(conditions) == 0 {
+		return noRows
+	}
+	return joinClauses(conditions, " OR ")
 }
 
-// applyOwnershipFilterWithMeta applies ownership filtering to a query if enforced in context
-// Uses the provided metadata for ownership configuration
-func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata) (*bun.SelectQuery, error) {
+// ownershipClauses returns the ownership condition for the rows of meta when ownership is
+// enforced in context, or nil when it does not apply (not enforced, no fields, or a bypass scope).
+// Uses the provided metadata for ownership configuration.
+func (w *Wrapper[T]) ownershipClauses(ctx context.Context, meta *metadata.TypeMetadata) ([]clause, error) {
 	// Check if ownership is enforced
 	enforced, ok := ctx.Value(metadata.OwnershipEnforcedKey).(bool)
 	if !ok || !enforced {
-		return query, nil
+		return nil, nil
 	}
 
 	// Get ownership information from context
@@ -734,41 +728,24 @@ func (w *Wrapper[T]) applyOwnershipFilterWithMeta(ctx context.Context, query *bu
 	// Ownership fields and bypass scopes for this request's method (or the type-wide config)
 	ownershipFields, bypassScopes := ownershipScope(ctx, meta)
 	if len(ownershipFields) == 0 {
-		return query, nil
+		return nil, nil
 	}
 
 	// User has a bypass scope, don't apply ownership filter
 	if hasBypassScope(ctx, bypassScopes) {
-		return query, nil
+		return nil, nil
 	}
 
 	itemType := derefType(meta.ModelType)
-
-	// Build OR conditions: WHERE (field1 = ? OR field2 = ? OR ...)
-	// Use ?TableAlias to properly qualify columns when JOINs are present
-	if len(ownershipFields) == 1 {
-		// Single field - simple WHERE clause
-		colName, err := ColumnName(itemType, ownershipFields[0])
-		if err != nil {
+	for _, fieldName := range ownershipFields {
+		if _, err := ColumnName(itemType, fieldName); err != nil {
 			return nil, fmt.Errorf("failed to get column name for ownership field: %w", err)
-		}
-		query = query.Where("?TableAlias.? = ?", bun.Ident(colName), userID)
-	} else {
-		// Multiple fields - OR logic
-		for i, fieldName := range ownershipFields {
-			colName, err := ColumnName(itemType, fieldName)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get column name for ownership field: %w", err)
-			}
-			if i == 0 {
-				query = query.Where("?TableAlias.? = ?", bun.Ident(colName), userID)
-			} else {
-				query = query.WhereOr("?TableAlias.? = ?", bun.Ident(colName), userID)
-			}
 		}
 	}
 
-	return query, nil
+	// (field1 = ? OR field2 = ? OR <scoped bypass>), qualified with ?TableAlias so JOINs don't clash
+	bypass := w.scopedBypassClauses(ctx, meta, columnRef{}, bypassScopes)
+	return []clause{w.ownedClause(meta, columnRef{}, ownershipFields, userID, bypass)}, nil
 }
 
 // setOwnershipField sets the ownership field on an item if enforced in context
@@ -1124,6 +1101,9 @@ func (w *Wrapper[T]) applyQueryFilters(ctx context.Context, query *bun.SelectQue
 					query = w.applyChildFieldFilter(ctx, query, meta, path, filter)
 					continue
 				}
+			}
+			if !isRelationAuthorized(allowedIncludes, strings.Join(path.relations, ".")) {
+				continue
 			}
 			query = w.applyParentFieldFilter(ctx, query, meta, path, filter)
 			continue
@@ -1746,28 +1726,69 @@ func (w *Wrapper[T]) applyRelationIncludes(ctx context.Context, query *bun.Selec
 
 		// Simple child include (has-many)
 		if childMeta, exists := meta.ChildMeta[relationName]; exists {
-			cm := childMeta
-			shouldApplyOwnership := applyOwnership
-			query = query.Relation(relationName, func(q *bun.SelectQuery) *bun.SelectQuery {
-				if !shouldApplyOwnership {
-					return q
-				}
-				filtered, err := w.applyOwnershipFilterWithMeta(ctx, q, cm)
-				if err != nil {
-					return q.Where("1 = 0")
-				}
-				return filtered
-			})
+			query = query.Relation(relationName, w.childIncludeAccess(ctx, childMeta, relationName, applyOwnership))
 			continue
 		}
 
 		// Simple parent include (belongs-to)
 		if meta.ParentMeta != nil && strings.EqualFold(relationName, w.getRelationNameForParent(meta, meta.ParentMeta)) {
-			query = query.Relation(relationName)
+			query = w.relationWithAccess(ctx, query, meta, []string{relationName}, []*metadata.TypeMetadata{meta.ParentMeta})
 		}
 	}
 
 	return query
+}
+
+// childIncludeAccess returns the relation query hook that scopes an included child relation
+// at path: its partitions and, when applyOwnership is set, its ownership, widened by the
+// share setting resolved for that path.
+func (w *Wrapper[T]) childIncludeAccess(ctx context.Context, childMeta *metadata.TypeMetadata, path string, applyOwnership bool) func(*bun.SelectQuery) *bun.SelectQuery {
+	return func(q *bun.SelectQuery) *bun.SelectQuery {
+		restrict := w.partitionRestrict(ctx, childMeta, columnRef{}, path)
+		if applyOwnership {
+			owned, err := w.ownershipClauses(ctx, childMeta)
+			if err != nil {
+				return q.Where(noRows.query)
+			}
+			restrict = append(restrict, owned...)
+		}
+		return accessQuery(q, restrict, w.shareClause(ctx, childMeta, columnRef{}, shareFor(ctx, path)))
+	}
+}
+
+// relationWithAccess adds a belongs-to relation path (one join per level) with each joined
+// level restricted to the partition access and share setting for its include path. A parent
+// the caller may not see is left empty rather than removing the base row.
+func (w *Wrapper[T]) relationWithAccess(ctx context.Context, query *bun.SelectQuery, baseMeta *metadata.TypeMetadata, parts []string, chain []*metadata.TypeMetadata) *bun.SelectQuery {
+	aliases := make([]string, 0, len(parts))
+	current := baseMeta
+	for i, part := range parts {
+		path := strings.Join(parts[:i+1], ".")
+		alias := w.relationAlias(current, part)
+		if alias == "" {
+			return query.Relation(strings.Join(parts, "."))
+		}
+		aliases = append(aliases, alias)
+
+		ref := columnRef{table: strings.Join(aliases, "__")}
+		restrict := w.partitionRestrict(ctx, chain[i], ref, path)
+		conditions := accessJoinConditions(restrict, w.shareClause(ctx, chain[i], ref, shareFor(ctx, path)))
+		query = query.RelationWithOpts(path, bun.RelationOpts{AdditionalJoinOnConditions: conditions})
+		current = chain[i]
+	}
+	return query
+}
+
+// relationAlias returns the SQL name Bun uses for a relation field on meta, which forms
+// the joined table's alias.
+func (w *Wrapper[T]) relationAlias(meta *metadata.TypeMetadata, relationName string) string {
+	table := w.Store.GetDB().Table(derefType(meta.ModelType))
+	for name, rel := range table.Relations {
+		if strings.EqualFold(name, relationName) {
+			return rel.Field.Name
+		}
+	}
+	return ""
 }
 
 // applyNestedInclude handles nested include paths like "Accounts.Sites.Bills" or "Account.User"
@@ -1807,20 +1828,10 @@ func (w *Wrapper[T]) applyNestedChildInclude(ctx context.Context, query *bun.Sel
 		return query
 	}
 
-	// Add .Relation() for each level, applying ownership where configured
+	// Add .Relation() for each level, applying partitions, shares and, where configured, ownership
 	for i, childMeta := range chain {
 		path := strings.Join(parts[:i+1], ".")
-		cm := childMeta
-		query = query.Relation(path, func(q *bun.SelectQuery) *bun.SelectQuery {
-			if !applyOwnership || len(cm.OwnershipFields) == 0 {
-				return q
-			}
-			filtered, err := w.applyOwnershipFilterWithMeta(ctx, q, cm)
-			if err != nil {
-				return q.Where("1 = 0")
-			}
-			return filtered
-		})
+		query = query.Relation(path, w.childIncludeAccess(ctx, childMeta, path, applyOwnership && len(childMeta.OwnershipFields) > 0))
 	}
 
 	return query
@@ -1829,21 +1840,18 @@ func (w *Wrapper[T]) applyNestedChildInclude(ctx context.Context, query *bun.Sel
 // applyNestedParentInclude handles nested parent includes like "Account.User"
 func (w *Wrapper[T]) applyNestedParentInclude(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, parts []string, applyOwnership bool) *bun.SelectQuery {
 	// Validate the entire chain exists in ParentMeta
+	chain := make([]*metadata.TypeMetadata, 0, len(parts))
 	currentMeta := meta
 	for range parts {
 		if currentMeta.ParentMeta == nil {
 			return query
 		}
 		currentMeta = currentMeta.ParentMeta
+		chain = append(chain, currentMeta)
 	}
 
-	// Build the nested relation path for Bun
-	// For parent chain, we need to use the actual field names (e.g., "Account.User")
-	fullPath := strings.Join(parts, ".")
-
-	query = query.Relation(fullPath)
-
-	return query
+	// For parent chain, Bun uses the actual field names (e.g., "Account.User")
+	return w.relationWithAccess(ctx, query, meta, parts, chain)
 }
 
 // getRelationNameForParent finds the belongs-to relation field name on the child
@@ -1931,6 +1939,11 @@ func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 				return err
 			}
 
+			// Partition fields must be set and within the caller's access
+			if err := w.enforcePartitionWrite(ctx, meta, nil, item); err != nil {
+				return err
+			}
+
 			// Run validation
 			if err := w.runValidation(ctx, meta, metadata.OpCreate, nil, item); err != nil {
 				return err
@@ -2010,6 +2023,11 @@ func (w *Wrapper[T]) batchUpdateWithOp(ctx context.Context, items []T, op metada
 				return err
 			}
 			w.reassertOwnership(ctx, meta, preFetch.existingItems[i], item)
+
+			// Partition fields must stay within the caller's access
+			if err := w.enforcePartitionWrite(ctx, meta, preFetch.existingItems[i], item); err != nil {
+				return err
+			}
 
 			// Update the item
 			err := tx.NewUpdate().Model(item).WherePK().Returning("*").Scan(ctx)
@@ -2174,7 +2192,13 @@ func (w *Wrapper[T]) applyParentFieldFilter(ctx context.Context, query *bun.Sele
 		return query
 	}
 
-	query = w.buildParentJoins(query, meta, joinChain)
+	parentIDs, _ := ctx.Value(metadata.ParentIDsKey).(map[string]string)
+	query = w.buildParentJoins(query, meta, joinChain, parentIDs)
+	for i, parent := range joinChain {
+		relPath := strings.Join(path.relations[:i+1], ".")
+		ref := columnRef{table: parent.TableName}
+		query = accessQuery(query, w.partitionRestrict(ctx, parent, ref, relPath), w.shareClause(ctx, parent, ref, shareFor(ctx, relPath)))
+	}
 	vals := prepareFilterValues(ctx, targetMeta.ModelType, path.field, filter)
 	return applyFilter(query, targetMeta.TableName, colName, filter.Operator, vals, w.Store.IlikeOp())
 }
@@ -2209,19 +2233,25 @@ func (w *Wrapper[T]) matchesParentName(child, parent *metadata.TypeMetadata, rel
 	return parent.RelationName != "" && strings.EqualFold(relName, parent.RelationName)
 }
 
-// buildParentJoins adds JOINs for a parent chain
-func (w *Wrapper[T]) buildParentJoins(query *bun.SelectQuery, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata) *bun.SelectQuery {
+// buildParentJoins adds JOINs for a parent chain. A parent whose ID is in the URL has
+// already been joined by applyParentFiltersWithMeta, so it is not joined again.
+func (w *Wrapper[T]) buildParentJoins(query *bun.SelectQuery, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, parentIDs map[string]string) *bun.SelectQuery {
 	if len(chain) == 0 {
 		return query
 	}
 
 	// First join: from base table using ?TableAlias
-	fkOnChild := w.hasColumn(baseMeta.ModelType, baseMeta.ForeignKeyCol)
-	query = w.joinParentFromBase(query, baseMeta, chain[0], fkOnChild)
+	if _, joined := parentIDs[chain[0].URLParamUUID]; !joined {
+		fkOnChild := w.hasColumn(baseMeta.ModelType, baseMeta.ForeignKeyCol)
+		query = w.joinParentFromBase(query, baseMeta, chain[0], fkOnChild)
+	}
 
 	// Remaining joins: from previously joined tables
 	for i := 1; i < len(chain); i++ {
 		child, parent := chain[i-1], chain[i]
+		if _, joined := parentIDs[parent.URLParamUUID]; joined {
+			continue
+		}
 		fkOnChild := w.hasColumn(child.ModelType, child.ForeignKeyCol)
 		query = w.joinParentFromTable(query, child, parent, fkOnChild)
 	}
@@ -2267,7 +2297,7 @@ func (w *Wrapper[T]) applyChildFieldFilter(ctx context.Context, query *bun.Selec
 	}
 
 	applyOwnership := metadata.AllowedIncludesFromContext(ctx)[strings.Join(path.relations, ".")]
-	existsSubq := w.buildExistsChain(ctx, meta, childChain, applyOwnership, func(q *bun.SelectQuery) *bun.SelectQuery {
+	existsSubq := w.buildExistsChain(ctx, meta, childChain, path.relations, applyOwnership, func(q *bun.SelectQuery) *bun.SelectQuery {
 		return applyFilter(q, targetMeta.TableName, colName, filter.Operator, vals, w.Store.IlikeOp())
 	})
 
@@ -2312,7 +2342,7 @@ func (w *Wrapper[T]) applyRelationFilter(ctx context.Context, query *bun.SelectQ
 
 	switch filter.Operator {
 	case metadata.OpExists:
-		existsSubq := w.buildExistsChain(ctx, meta, childChain, applyOwnership, nil)
+		existsSubq := w.buildExistsChain(ctx, meta, childChain, relations, applyOwnership, nil)
 		if existsSubq == nil {
 			return query
 		}
@@ -2332,7 +2362,7 @@ func (w *Wrapper[T]) applyRelationFilter(ctx context.Context, query *bun.SelectQ
 			slog.DebugContext(ctx, "count filter value is not an integer", "field", field, "value", filter.Value)
 			return query
 		}
-		countSubq := w.buildCountChain(ctx, meta, childChain, applyOwnership)
+		countSubq := w.buildCountChain(ctx, meta, childChain, relations, applyOwnership)
 		if countSubq == nil {
 			return query
 		}
@@ -2343,8 +2373,9 @@ func (w *Wrapper[T]) applyRelationFilter(ctx context.Context, query *bun.SelectQ
 // buildCountChain builds a correlated COUNT(*) subquery for a child relation chain.
 // For single-level chains, returns a direct COUNT. For multi-level chains, uses nested
 // subqueries to resolve intermediate IDs before counting at the leaf level.
-// Every level is scoped to rows the caller may see (ownership when applyOwnership, tenant always).
-func (w *Wrapper[T]) buildCountChain(ctx context.Context, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, applyOwnership bool) *bun.SelectQuery {
+// Every level is scoped to rows the caller may see (ownership when applyOwnership, tenant and
+// partitions always, each level using the access for its own relation path).
+func (w *Wrapper[T]) buildCountChain(ctx context.Context, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, relations []string, applyOwnership bool) *bun.SelectQuery {
 	if len(chain) == 0 {
 		return nil
 	}
@@ -2353,13 +2384,14 @@ func (w *Wrapper[T]) buildCountChain(ctx context.Context, baseMeta *metadata.Typ
 	baseAlias := db.Table(baseMeta.ModelType).Alias
 
 	leaf := chain[len(chain)-1]
+	leafPath := strings.Join(relations[:len(chain)], ".")
 
 	if len(chain) == 1 {
 		q := db.NewSelect().
 			Table(leaf.TableName).
 			ColumnExpr("COUNT(*)").
 			Where("?.? = ?.?", bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol), bun.Ident(baseAlias), bun.Ident(defaultParentJoinCol(leaf.ParentJoinCol)))
-		return w.applyChildScopeFilters(ctx, q, leaf, leaf.TableName, applyOwnership)
+		return w.applyChildScopeFilters(ctx, q, leaf, leaf.TableName, leafPath, applyOwnership)
 	}
 
 	// Multi-level: build nested subqueries from base outward, count at leaf
@@ -2382,14 +2414,14 @@ func (w *Wrapper[T]) buildCountChain(ctx context.Context, baseMeta *metadata.Typ
 				ColumnExpr("?.?", bun.Ident(child.TableName), bun.Ident(selectCol)).
 				Where("?.? IN (?)", bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), subq)
 		}
-		subq = w.applyChildScopeFilters(ctx, subq, child, child.TableName, applyOwnership)
+		subq = w.applyChildScopeFilters(ctx, subq, child, child.TableName, strings.Join(relations[:i+1], "."), applyOwnership)
 	}
 
 	q := db.NewSelect().
 		Table(leaf.TableName).
 		ColumnExpr("COUNT(*)").
 		Where("?.? IN (?)", bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol), subq)
-	return w.applyChildScopeFilters(ctx, q, leaf, leaf.TableName, applyOwnership)
+	return w.applyChildScopeFilters(ctx, q, leaf, leaf.TableName, leafPath, applyOwnership)
 }
 
 // ComputeIncludeCounts computes per-item child relation counts for the given items.
@@ -2430,7 +2462,7 @@ func (w *Wrapper[T]) ComputeIncludeCounts(ctx context.Context, items []*T, inclu
 		}
 
 		// Same ownership scoping ?include= applies, so counts cannot reveal rows the caller cannot list
-		counts, err := w.queryRelationCounts(ctx, meta, childChain, pks, allowedIncludes[relPath])
+		counts, err := w.queryRelationCounts(ctx, childChain, relations, pks, allowedIncludes[relPath])
 		if err != nil {
 			slog.WarnContext(ctx, "failed to compute include count", "relation", relPath, "error", err)
 			continue
@@ -2449,8 +2481,9 @@ func (w *Wrapper[T]) ComputeIncludeCounts(ctx context.Context, items []*T, inclu
 
 // queryRelationCounts runs a grouped count query for a child relation chain.
 // Returns a map of parent PK (as string) → count of matching child records.
-// Every level is scoped to rows the caller may see (ownership when applyOwnership, tenant always).
-func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, pks []interface{}, applyOwnership bool) (map[string]int, error) {
+// Every level is scoped to rows the caller may see (ownership when applyOwnership, tenant and
+// partitions always, each level using the access for its own relation path).
+func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, chain []*metadata.TypeMetadata, relations []string, pks []interface{}, applyOwnership bool) (map[string]int, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -2470,8 +2503,8 @@ func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, baseMeta *metadata
 		query = query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(parent.TableName), bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
 	}
 
-	for _, level := range chain {
-		query = w.applyChildScopeFilters(ctx, query, level, level.TableName, applyOwnership)
+	for i, level := range chain {
+		query = w.applyChildScopeFilters(ctx, query, level, level.TableName, strings.Join(relations[:i+1], "."), applyOwnership)
 	}
 
 	// WHERE first_child.fk IN (pks)
@@ -2502,8 +2535,9 @@ func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, baseMeta *metadata
 // buildExistsChain builds nested EXISTS subqueries using Bun's query builder.
 // Each level correlates to its parent via FK = parent PK.
 // The optional innerFilter applies additional conditions to the deepest level's subquery.
-// Every level is scoped to rows the caller may see (ownership when applyOwnership, tenant always).
-func (w *Wrapper[T]) buildExistsChain(ctx context.Context, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, applyOwnership bool, innerFilter func(q *bun.SelectQuery) *bun.SelectQuery) *bun.SelectQuery {
+// Every level is scoped to rows the caller may see (ownership when applyOwnership, tenant and
+// partitions always, each level using the access for its own relation path).
+func (w *Wrapper[T]) buildExistsChain(ctx context.Context, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, relations []string, applyOwnership bool, innerFilter func(q *bun.SelectQuery) *bun.SelectQuery) *bun.SelectQuery {
 	if len(chain) == 0 {
 		return nil
 	}
@@ -2524,7 +2558,7 @@ func (w *Wrapper[T]) buildExistsChain(ctx context.Context, baseMeta *metadata.Ty
 			Table(child.TableName).
 			ColumnExpr("1").
 			Where("?.? = ?.?", bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parents[i]), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
-		subq = w.applyChildScopeFilters(ctx, subq, child, child.TableName, applyOwnership)
+		subq = w.applyChildScopeFilters(ctx, subq, child, child.TableName, strings.Join(relations[:i+1], "."), applyOwnership)
 
 		if i == len(chain)-1 && innerFilter != nil {
 			subq = innerFilter(subq)

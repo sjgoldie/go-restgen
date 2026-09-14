@@ -21,13 +21,18 @@ const (
 
 // authResult contains the result of an auth check
 type authResult struct {
-	Status         authStatus // Whether auth passed, or which error
-	ApplyOwnership bool       // Whether ownership filtering should be applied
+	Status         authStatus              // Whether auth passed, or which error
+	ApplyOwnership bool                    // Whether ownership filtering should be applied
+	Partitions     metadata.PartitionScope // Caller's access per partition (nil when the type has no partitions)
 }
 
-// checkAuth checks if the user is authorized for the given config.
-// This is the core auth logic used by both route auth and include auth.
-func checkAuth(authInfo *AuthInfo, config *AuthConfig) authResult {
+// checkAuth checks if the user is authorized for the given config on a type with the
+// given partitions. This is the core auth logic used by both route auth and include auth.
+func checkAuth(authInfo *AuthInfo, config *AuthConfig, partitions []metadata.Partition) authResult {
+	if len(partitions) > 0 {
+		return checkPartitionedAuth(authInfo, config, partitions)
+	}
+
 	// Check for special public scope - no auth required
 	if containsScope(config.Scopes, ScopePublic) {
 		return authResult{Status: authOK, ApplyOwnership: false}
@@ -50,15 +55,37 @@ func checkAuth(authInfo *AuthInfo, config *AuthConfig) authResult {
 		}
 	}
 
-	// Issue #24 fix: If auth is required (ScopeAuthOnly or ownership), verify UserID is non-empty.
+	// Issue #24 fix: If auth is required (ScopeAuthOnly, ownership, or shares), verify UserID is non-empty.
 	// This catches the case where middleware sets AuthInfo{} but doesn't populate UserID.
-	authRequired := containsScope(config.Scopes, ScopeAuthOnly) || config.Ownership != nil
+	authRequired := containsScope(config.Scopes, ScopeAuthOnly) || config.Ownership != nil || config.Share != nil
 	if authRequired && authInfo.UserID == "" {
 		return authResult{Status: authUnauthorized}
 	}
 
 	// Auth passed - ownership applies if configured
 	return authResult{Status: authOK, ApplyOwnership: config.Ownership != nil}
+}
+
+// checkPartitionedAuth checks auth for a type divided by partitions. The config must
+// require explicit scopes; the caller passes with a global scope (unrestricted) or with a
+// scoped grant for a required scope on every partition (narrowed to the grant values).
+func checkPartitionedAuth(authInfo *AuthInfo, config *AuthConfig, partitions []metadata.Partition) authResult {
+	if authInfo == nil {
+		return authResult{Status: authUnauthorized}
+	}
+	if !partitionScopesUsable(config.Scopes) {
+		return authResult{Status: authForbidden}
+	}
+	if (config.Ownership != nil || config.Share != nil) && authInfo.UserID == "" {
+		return authResult{Status: authUnauthorized}
+	}
+
+	access, ok := resolvePartitionAccess(authInfo, config.Scopes, partitions)
+	if !ok {
+		return authResult{Status: authForbidden}
+	}
+
+	return authResult{Status: authOK, ApplyOwnership: config.Ownership != nil, Partitions: access}
 }
 
 // wrapWithAuth wraps a handler with authentication and authorization checking based on AuthConfig
@@ -69,24 +96,39 @@ func wrapWithAuth(next http.Handler, config *AuthConfig) http.Handler {
 		// Extract AuthInfo from context (may be nil for unauthenticated requests)
 		authInfo, _ := ctx.Value(AuthInfoKey).(*AuthInfo)
 
+		// Get metadata from context (set by metadata middleware that runs before auth middleware)
+		meta, _ := ctx.Value(metadata.MetadataKey).(*metadata.TypeMetadata)
+
 		// Build AllowedIncludes for child and parent routes
-		// This must happen before the parent auth check so public parents still get child includes
+		// This must happen before the parent auth check so public parents still get child includes.
+		// Both maps are always set, so relation filters and counts authorize against them rather
+		// than treating a missing map as unrestricted.
 		allowedIncludes := make(metadata.AllowedIncludes)
+		access := includeAccess{
+			scopes: make(map[string]metadata.PartitionScope),
+			shares: make(map[string]*metadata.Share),
+		}
 
 		if len(config.ChildAuth) > 0 {
-			buildChildAllowedIncludes(authInfo, config.ChildAuth, "", false, allowedIncludes)
+			buildChildAllowedIncludes(authInfo, config.ChildAuth, meta, "", false, allowedIncludes, access)
 		}
 
 		if config.ParentAuth != nil {
-			buildParentAllowedIncludes(authInfo, config, allowedIncludes)
+			buildParentAllowedIncludes(authInfo, config, meta, allowedIncludes, access)
 		}
 
-		if len(allowedIncludes) > 0 {
-			ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, allowedIncludes)
+		ctx = context.WithValue(ctx, metadata.AllowedIncludesKey, allowedIncludes)
+		ctx = context.WithValue(ctx, metadata.IncludePartitionScopesKey, access.scopes)
+		if len(access.shares) > 0 {
+			ctx = context.WithValue(ctx, metadata.IncludeSharesKey, access.shares)
 		}
 
 		// Check parent route auth
-		result := checkAuth(authInfo, config)
+		var partitions []metadata.Partition
+		if meta != nil {
+			partitions = meta.Partitions
+		}
+		result := checkAuth(authInfo, config, partitions)
 		switch result.Status {
 		case authUnauthorized:
 			slog.WarnContext(ctx, "auth rejected: unauthorized", "path", r.URL.Path, "method", r.Method)
@@ -104,9 +146,17 @@ func wrapWithAuth(next http.Handler, config *AuthConfig) http.Handler {
 			ctx = applyOwnershipContext(ctx, authInfo, config.Ownership)
 		}
 
+		// Partition access for the datastore to narrow reads and check writes
+		if result.Partitions != nil {
+			ctx = context.WithValue(ctx, metadata.PartitionScopeKey, result.Partitions)
+		}
+
+		// Share setting for the datastore to widen access to rows shared with the caller
+		if config.share != nil {
+			ctx = context.WithValue(ctx, metadata.ShareKey, config.share)
+		}
+
 		// Issue #28 fix: Check parent chain for ownership requirements
-		// Get metadata from context (set by metadata middleware that runs before auth middleware)
-		meta, _ := ctx.Value(metadata.MetadataKey).(*metadata.TypeMetadata)
 		if meta != nil {
 			parentResult := checkParentOwnership(authInfo, meta)
 			switch parentResult.status {
@@ -190,13 +240,40 @@ func checkParentOwnership(authInfo *AuthInfo, meta *metadata.TypeMetadata) paren
 	}
 }
 
+// includeAccess collects, per relation path, the partition access and share setting
+// resolved from that related route's own config.
+type includeAccess struct {
+	scopes map[string]metadata.PartitionScope
+	shares map[string]*metadata.Share
+}
+
+// record stores a relation path's access from its auth result and config.
+func (a includeAccess) record(path string, result authResult, config *AuthConfig) {
+	if result.Partitions != nil {
+		a.scopes[path] = result.Partitions
+	}
+	if config.share != nil {
+		a.shares[path] = config.share
+	}
+}
+
 // buildChildAllowedIncludes recursively walks the ChildAuth tree, running checkAuth at each
 // level and building dotted paths for AllowedIncludes. Auth is cumulative (AND): a deeper
 // level is only reachable if its parent passes. Ownership flag is cumulative (OR): if any
-// level in the chain has ApplyOwnership, the dotted path gets true.
-func buildChildAllowedIncludes(authInfo *AuthInfo, childAuth map[string]*AuthConfig, prefix string, parentApplyOwnership bool, includes metadata.AllowedIncludes) {
+// level in the chain has ApplyOwnership, the dotted path gets true. Each level's partition
+// access and share setting, from that child route's own config, are recorded against its path.
+func buildChildAllowedIncludes(authInfo *AuthInfo, childAuth map[string]*AuthConfig, meta *metadata.TypeMetadata, prefix string, parentApplyOwnership bool, includes metadata.AllowedIncludes, access includeAccess) {
 	for relationName, childConfig := range childAuth {
-		childResult := checkAuth(authInfo, childConfig)
+		var childMeta *metadata.TypeMetadata
+		if meta != nil {
+			childMeta = meta.ChildMeta[relationName]
+		}
+		var partitions []metadata.Partition
+		if childMeta != nil {
+			partitions = childMeta.Partitions
+		}
+
+		childResult := checkAuth(authInfo, childConfig, partitions)
 		if childResult.Status != authOK {
 			continue
 		}
@@ -208,9 +285,10 @@ func buildChildAllowedIncludes(authInfo *AuthInfo, childAuth map[string]*AuthCon
 
 		applyOwnership := parentApplyOwnership || childResult.ApplyOwnership
 		includes[path] = applyOwnership
+		access.record(path, childResult, childConfig)
 
 		if len(childConfig.ChildAuth) > 0 {
-			buildChildAllowedIncludes(authInfo, childConfig.ChildAuth, path, applyOwnership, includes)
+			buildChildAllowedIncludes(authInfo, childConfig.ChildAuth, childMeta, path, applyOwnership, includes, access)
 		}
 	}
 }
@@ -218,14 +296,25 @@ func buildChildAllowedIncludes(authInfo *AuthInfo, childAuth map[string]*AuthCon
 // buildParentAllowedIncludes walks the ParentAuth chain, running checkAuth at each level
 // and building dotted paths for parent includes (belongs-to direction).
 // Auth is cumulative (AND): stops at the first level that fails.
-// Ownership flag is cumulative (OR).
-func buildParentAllowedIncludes(authInfo *AuthInfo, config *AuthConfig, includes metadata.AllowedIncludes) {
+// Ownership flag is cumulative (OR). Each level's partition access and share setting are
+// recorded against its path.
+func buildParentAllowedIncludes(authInfo *AuthInfo, config *AuthConfig, meta *metadata.TypeMetadata, includes metadata.AllowedIncludes, access includeAccess) {
 	var parts []string
 	var cumulativeOwnership bool
 	current := config
+	currentMeta := meta
 
 	for current.ParentAuth != nil {
-		parentResult := checkAuth(authInfo, current.ParentAuth)
+		var parentMeta *metadata.TypeMetadata
+		if currentMeta != nil {
+			parentMeta = currentMeta.ParentMeta
+		}
+		var partitions []metadata.Partition
+		if parentMeta != nil {
+			partitions = parentMeta.Partitions
+		}
+
+		parentResult := checkAuth(authInfo, current.ParentAuth, partitions)
 		if parentResult.Status != authOK {
 			break
 		}
@@ -234,8 +323,10 @@ func buildParentAllowedIncludes(authInfo *AuthInfo, config *AuthConfig, includes
 		cumulativeOwnership = cumulativeOwnership || parentResult.ApplyOwnership
 		path := strings.Join(parts, ".")
 		includes[path] = cumulativeOwnership
+		access.record(path, parentResult, current.ParentAuth)
 
 		current = current.ParentAuth
+		currentMeta = parentMeta
 	}
 }
 

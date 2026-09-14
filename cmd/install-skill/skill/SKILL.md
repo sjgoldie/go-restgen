@@ -76,9 +76,11 @@ router.AuthConfig{
 
 Auth middleware sets `AuthInfo` on context:
 ```go
-authInfo := &router.AuthInfo{UserID: userID, TenantID: tenantID, Scopes: scopes}
+authInfo := &router.AuthInfo{UserID: userID, TenantID: tenantID, Scopes: scopes, Grants: grants}
 ctx := context.WithValue(r.Context(), router.AuthInfoKey, authInfo)
 ```
+
+`Grants` (`[]router.ScopedGrant{Scope, Partition, Values}`) hold scopes the user has only within some partition values; see Scoped Roles in patterns.md.
 
 ## Nesting
 

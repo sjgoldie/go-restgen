@@ -1,0 +1,32 @@
+meta {
+  name: Posts (Root) - Editor Gets Post Without Owning the Blog
+  type: http
+  seq: 54
+}
+
+get {
+  url: {{baseUrl}}/posts/{{alicePostId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("Bob reaches the post he edits through the root route", function() {
+    expect(res.body.id).to.equal(bru.getVar("alicePostId"));
+    expect(res.body.editor_id).to.equal("bob");
+  });
+}
+
+docs {
+  # Same Model, Different Route
+  Post is also registered at /posts with AuthorID OR EditorID ownership and no parent,
+  so an editor can reach the post without owning its blog.
+}

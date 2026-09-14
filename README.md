@@ -26,6 +26,7 @@ I have leaned heavily on Claude Code (https://www.claude.com/product/claude-code
 - 📦 **Composable** - Mix generated routes with custom handlers
 - 🧪 **Testable** - SQLite in-memory database for fast tests
 - 🏢 **Multi-tenant** - Automatic data isolation with tenant scoping and cross-tenant protection
+- 🗂️ **Scoped roles and sharing** - Grant a scope within specific regions or other partitions, and share individual rows with users
 - 🛡️ **Secure by default** - Blocked unless explicitly configured, path IDs always take precedence
 
 ## Installation
@@ -540,7 +541,8 @@ func authMiddleware(next http.Handler) http.Handler {
         authInfo := &router.AuthInfo{
             UserID:   userID,   // External user ID (e.g., "auth0|123", Firebase UID)
             TenantID: tenantID, // Tenant/org ID for multi-tenant isolation (optional)
-            Scopes:   scopes,   // User's permissions/scopes
+            Scopes:   scopes,   // User's permissions/scopes, across all partitions
+            Grants:   grants,   // Scopes held only within partition values (optional, see Scoped Roles)
         }
 
         ctx := context.WithValue(r.Context(), router.AuthInfoKey, authInfo)
@@ -691,6 +693,8 @@ router.RegisterRoutes[Post](b, "/posts",
 ```
 
 Ownership is evaluated per method. Each `AuthConfig`'s `Fields` and `BypassScopes` apply exactly to the methods it names, so in the example above an assignee can read and update but not delete. Relation includes, relation counts, and nested-route parent filtering use the type's own ownership configuration, since they are not tied to a single method.
+
+The owner fields are matched as a single grouped condition, so every other condition on the query — the parent in the URL, tenant scope, partitions, client filters, and the requested ID — applies to a row regardless of which field made the caller its owner.
 
 ### Ownership Is Re-Enforced on Update
 
@@ -915,6 +919,189 @@ When `WithAfterCommit` is configured on an RLS route, the hook runs after the re
 
 If you manage your own transaction under `metadata.RLSTxKey`, wrap the context with `datastore.WithAfterCommitQueue` before running datastore operations and call `datastore.RunAfterCommit` once you have committed. Hooks scheduled on a transaction without a queue are skipped with an error log rather than run before commit.
 
+## Scoped Roles (Partitioned Access)
+
+Scopes are global: a user with `project:read` can read every project. Scoped roles narrow a scope to part of the data — "EMEA staff read EMEA projects", "Charlie writes EMEA but reads EMEA and APAC". Rows are divided by a named **partition** (a region, a department, a channel), and the auth middleware grants scopes within partition values.
+
+### How It Works
+
+- **`WithPartition(name, field)`** — Divides a route's rows by the partition `name`, whose value is held in the model's `field`. Child routes inherit the partition and are narrowed through their parent row, so they need no field of their own. Declare `WithPartition` with the same name on a child to narrow it by its own field instead.
+- **`AuthInfo.Grants`** — Your middleware adds a `ScopedGrant{Scope, Partition, Values}` for each scope the user holds only within some partition values.
+
+For each request, the method's required scopes decide access to each partition the route declares:
+
+| Caller holds | Access |
+|--------------|--------|
+| A required scope in `AuthInfo.Scopes` | Unrestricted |
+| A `ScopedGrant` for a required scope on the partition | Narrowed to the values of all such grants |
+| Neither, for any declared partition | `403 Forbidden` |
+
+A grant with no values grants access to nothing. A grant naming a partition the route does not declare is ignored — it never acts as a global scope. With several partitions on one route, the caller needs access to each, and a row must be within all of them.
+
+### Defining Models and Routes
+
+```go
+type Project struct {
+    bun.BaseModel `bun:"table:projects"`
+    ID            int     `bun:"id,pk,autoincrement" json:"id"`
+    Region        string  `bun:"region,notnull" json:"region"` // Partition field
+    Name          string  `bun:"name,notnull" json:"name"`
+    Tasks         []*Task `bun:"rel:has-many,join:id=project_id" json:"tasks,omitempty"`
+}
+
+// Task has no region field: it is within the region of its project
+type Task struct {
+    bun.BaseModel `bun:"table:tasks"`
+    ID            int      `bun:"id,pk,autoincrement" json:"id"`
+    ProjectID     int      `bun:"project_id,notnull,skipupdate" json:"project_id"`
+    Project       *Project `bun:"rel:belongs-to,join:project_id=id" json:"project,omitempty"`
+    Title         string   `bun:"title,notnull" json:"title"`
+}
+
+router.RegisterRoutes[Project](b, "/projects",
+    router.WithPartition("region", "Region"),
+    router.AuthConfig{Methods: []string{router.MethodGet, router.MethodList}, Scopes: []string{"project:read"}},
+    router.AuthConfig{Methods: []string{router.MethodPost, router.MethodPut, router.MethodPatch, router.MethodDelete}, Scopes: []string{"project:write"}},
+    func(b *router.Builder) {
+        router.RegisterRoutes[Task](b, "/tasks",
+            router.AllScoped("task:read"),
+            router.WithRelationName("Tasks"),
+        )
+    },
+)
+```
+
+Every method on a partitioned route must require explicit scopes. `ScopePublic`, `ScopeAuthOnly`, and scope-less ownership configs cannot be resolved against partitions, so they are logged as a warning at registration and blocked at request time.
+
+The partition field cannot be the primary key. Such a declaration is logged as a warning at registration, and only callers with a global scope can use the route.
+
+### Auth Middleware
+
+Your middleware resolves the user's roles into global scopes and scoped grants. A region → sub-region hierarchy is expanded here: grant the region and every descendant.
+
+```go
+authInfo := &router.AuthInfo{
+    UserID: userID,
+    Scopes: []string{"order:read"},
+    Grants: []router.ScopedGrant{
+        {Scope: "project:read", Partition: "region", Values: []string{"emea", "apac"}},
+        {Scope: "project:write", Partition: "region", Values: []string{"emea"}},
+    },
+}
+```
+
+This user reads projects in EMEA and APAC, but writes EMEA only.
+
+### Security Guarantees
+
+| Operation | Behavior |
+|-----------|----------|
+| **GET/LIST** | Rows outside the caller's access are filtered out; `total_count`, sums, and cursors only cover visible rows |
+| **Get outside access** | Returns 404 (doesn't leak existence) |
+| **CREATE** | The partition field must be set (`400 validation_error` when missing — it is never filled in for the caller) and within access (`403` otherwise) |
+| **CREATE (child)** | The parent must be within access (`404` otherwise) |
+| **UPDATE/PATCH** | The row must be within access (`404` otherwise) and the new partition value must be too (`403` otherwise); a restricted caller cannot move a child to another parent |
+| **DELETE** | The row must be within access (`404` otherwise) |
+| **Batch operations** | Every item is checked; the batch is all-or-nothing |
+| **Actions, endpoints, SSE** | The item is fetched with the access of the endpoint's own scopes |
+| **Nested routes** | The parent in the URL must be within access |
+| **Relations** | `?include=`, `?include_count=`, relation filters, and parent field filters use the access resolved from the related route's own scopes |
+
+Tenant scoping, ownership, and partitions combine with AND. Shares widen ownership and partitions (see [Sharing](#sharing)).
+
+### Scoped Ownership Bypass
+
+`OwnershipConfig.BypassScopes` also accepts scoped grants. A global bypass scope lifts ownership everywhere; a scoped grant for a bypass scope lifts it only within the grant's values:
+
+```go
+router.RegisterRoutes[Order](b, "/orders",
+    router.WithPartition("region", "Region"),
+    router.AuthConfig{
+        Methods:   []string{router.MethodAll},
+        Scopes:    []string{"order:read"},
+        Ownership: &router.OwnershipConfig{Fields: []string{"CustomerID"}, BypassScopes: []string{"support"}},
+    },
+)
+
+// Customers see the orders they placed; this support agent also sees every EMEA order
+authInfo := &router.AuthInfo{
+    UserID: "alice",
+    Scopes: []string{"order:read"},
+    Grants: []router.ScopedGrant{{Scope: "support", Partition: "region", Values: []string{"emea"}}},
+}
+```
+
+A bypass grant only lifts ownership; it never widens the caller's partition access.
+
+### Known Limits
+
+- Partition values are matched exactly. Range rules ("amount under 10,000") are not partitions.
+- Separation of duties (for example, "support agents cannot refund their own orders") belongs in a validator or action.
+- Access is per row, not per field.
+- `RegisterRootEndpoint` and `RegisterRootSSE` have no model, so partitions do not apply to them.
+
+See the [scoped roles example](./examples/scoped) for a complete working example.
+
+## Sharing
+
+Sharing gives a user access to specific rows — "Alice shares her project with Bob as a viewer". Shares are stored as a normal model in your app, and a route's `AuthConfig` says which of its methods accept them. Restgen reads the current shares on every request, so the auth middleware only needs to provide the user ID.
+
+### Share Model and Route Settings
+
+```go
+// ProjectShare is a normal model managed through its own route
+type ProjectShare struct {
+    bun.BaseModel `bun:"table:project_shares"`
+    ID            int    `bun:"id,pk,autoincrement" json:"id"`
+    ProjectID     int    `bun:"project_id,notnull" json:"project_id"`
+    UserID        string `bun:"user_id,notnull" json:"user_id"`
+    Level         string `bun:"level,notnull" json:"level"` // "viewer" or "editor"
+}
+
+projectShares := func(target any, levels ...string) *router.ShareConfig {
+    return &router.ShareConfig{
+        Model:       (*ProjectShare)(nil),
+        Target:      target, // nil for the project route; (*Project)(nil) on its child routes
+        TargetField: "ProjectID",
+        UserField:   "UserID",
+        LevelField:  "Level",
+        Levels:      levels, // accepted levels; none accepts any share
+    }
+}
+owned := &router.OwnershipConfig{Fields: []string{"OwnerID"}}
+
+router.RegisterRoutes[Project](b, "/projects",
+    router.AuthConfig{Methods: []string{router.MethodGet, router.MethodList}, Ownership: owned, Share: projectShares(nil)},
+    router.AuthConfig{Methods: []string{router.MethodPut, router.MethodPatch}, Ownership: owned, Share: projectShares(nil, "editor")},
+    router.AuthConfig{Methods: []string{router.MethodPost, router.MethodDelete}, Ownership: owned},
+    func(b *router.Builder) {
+        router.RegisterRoutes[Task](b, "/tasks",
+            router.AuthConfig{Methods: []string{router.MethodGet, router.MethodList}, Scopes: []string{router.ScopeAuthOnly}, Share: projectShares((*Project)(nil))},
+            router.AuthConfig{Methods: []string{router.MethodPost, router.MethodPut, router.MethodPatch}, Scopes: []string{router.ScopeAuthOnly}, Share: projectShares((*Project)(nil), "editor")},
+            router.AuthConfig{Methods: []string{router.MethodDelete}, Scopes: []string{router.ScopeAuthOnly}},
+            router.WithRelationName("Tasks"),
+        )
+    },
+)
+
+router.RegisterRoutes[ProjectShare](b, "/project-shares", router.AllScoped("project:share"))
+```
+
+Here any share reads a project and its tasks, an editor share also updates the project and creates and updates its tasks, and deletes never go through a share.
+
+### How Shares Combine
+
+- **Per method:** a method accepts shares only when its `AuthConfig` has a `Share` setting, at the levels it lists.
+- **Child routes:** a child route accepts shares on a parent only when its own `AuthConfig` says so, with `Target` set to the parent's model. A child route with no share setting is not reached through parent shares.
+- **Ownership:** a row is accessible to its owner or to anyone it is shared with.
+- **Partitions:** shares widen partition access. A row is accessible within the caller's partitions or when it is shared with them. A shared row outside the caller's partitions can be edited but its partition value cannot change.
+- **Tenant scope and scopes:** always apply. A share never crosses tenants, and the caller still needs the method's required scopes — on a partitioned route, a user whose only access is through shares holds the scope as a grant with no values.
+- **Relations:** `?include=`, `?include_count=`, and relation filters use the share setting of the related route's GET config.
+
+A share setting requires a user ID (`401` without one). An invalid setting (unknown model field, or a `Target` that is not the route's model or an ancestor) is logged at registration and grants nothing.
+
+See the [scoped roles example](./examples/scoped) for sharing combined with regions.
+
 ## Query Parameters: Filtering, Sorting & Pagination
 
 go-restgen supports query parameters for filtering, sorting, and paginating results on `GET /resource` (list) endpoints.
@@ -1013,7 +1200,11 @@ GET /posts?filter[Comments][count_gt]=5
 GET /posts?filter[Status]=published&filter[Comments][count_gte]=1
 ```
 
-Relation filters use correlated subqueries, so they respect tenant scoping and parent filtering automatically. Unauthorized relations are silently ignored (the filter is skipped and the broader result set is returned).
+Relation filters use correlated subqueries, so they respect tenant scoping, partitions, and parent filtering automatically. Unauthorized relations are silently ignored (the filter is skipped and the broader result set is returned).
+
+**Parent Field Filters:**
+
+Filter by a field on a parent in the route chain using dot notation, e.g. `GET /blogs/1/posts?filter[Blog.Status]=published`. The parent route must list the field in `WithFilters`, and the caller must be authorized to `?include=` that parent; otherwise the filter is ignored, so a caller cannot probe a parent's values they cannot read.
 
 ### Sorting
 
@@ -2680,6 +2871,7 @@ See the [`examples/`](./examples) directory for complete working examples:
 - **[Custom Handlers](./examples/custom)** - Override default CRUD behavior with custom handler functions
 - **[Custom Join Columns](./examples/custom_join)** - Non-FK relationships using `WithJoinOn` for shared attribute joins
 - **[Multi-Tenant](./examples/tenant)** - Multi-tenant data isolation with organizations, tenant-scoped projects, child task inheritance, and cross-tenant security tests
+- **[Scoped Roles and Sharing](./examples/scoped)** - Scopes granted within regions, inherited by child routes, per-relation access, a scoped ownership bypass, and project sharing with viewer and editor levels
 
 All examples include comprehensive Bruno API tests. See [`bruno/README.md`](./bruno/README.md) for details.
 
@@ -2727,7 +2919,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 go tool cover -func=/tmp/coverage.out
 ```
 
-For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 301 API tests across 16 example applications.
+For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 383 API tests across 17 example applications.
 
 You can override the default port (8080) using the `PORT` environment variable:
 
@@ -2760,6 +2952,8 @@ go-restgen builds on these excellent projects:
 - [x] PATCH endpoint for partial updates (field-level, no deep patch)
 - [x] Custom join columns via `WithJoinOn` for non-FK relationships
 - [x] Multi-tenant data isolation with `WithTenantScope` and `IsTenantTable`
+- [x] Scoped roles with `WithPartition` and `AuthInfo.Grants`
+- [x] Row sharing with `ShareConfig`
 - [x] Child relation filters (`exists`, `count_*`) and `include_count` for relation counts
 - [ ] MySQL support
 - [ ] OpenAPI/Swagger generation

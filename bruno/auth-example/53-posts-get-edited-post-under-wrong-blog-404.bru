@@ -1,0 +1,25 @@
+meta {
+  name: Posts - Edited Post Under Another Blog's URL Is 404
+  type: http
+  seq: 53
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{aliceBlogId}}/posts/{{bobPostEditedByAliceId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # Issue #144: Single GET Honours the URL Parent
+  The post belongs to Bob's blog, so fetching it under Alice's blog is not found,
+  even though Alice is its editor.
+}

@@ -1,0 +1,26 @@
+meta {
+  name: Create Task Under APAC Project - Global Writer
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/projects/{{borealisId}}/tasks
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: admin
+  X-Scopes: task:write
+}
+
+body:json {
+  {
+    "title": "Launch plan"
+  }
+}
+
+assert {
+  res.status: eq 201
+}

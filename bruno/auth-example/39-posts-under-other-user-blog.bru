@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/blogs/{{bob_blog_id}}/posts
+  url: {{baseUrl}}/blogs/{{bobBlogId}}/posts
   body: none
   auth: none
 }
@@ -36,5 +36,5 @@ docs {
   Parent ownership filtering prevents Alice from seeing Bob's blog's posts.
   Returns 200 with empty array (data is protected, which is what matters).
 
-  Note: This test requires bob_blog_id to be set from test 05-blogs-create-bob.bru
+  Note: This test requires bobBlogId to be set from test 05-blogs-create-bob.bru
 }

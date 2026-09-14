@@ -1,0 +1,32 @@
+meta {
+  name: Move Shared Project to Another Region - 403
+  type: http
+  seq: 31
+}
+
+patch {
+  url: {{baseUrl}}/projects/{{borealisId}}
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: diana
+  X-Grants: project:read@region=;project:write@region=emea
+}
+
+body:json {
+  {
+    "region": "emea"
+  }
+}
+
+assert {
+  res.status: eq 403
+}
+
+docs {
+  # Shared Rows Can Be Edited, Not Moved
+  Diana can write EMEA projects, but Borealis reached her through a share, so its region
+  cannot change, not even into a region she has access to.
+}

@@ -1,0 +1,25 @@
+meta {
+  name: Get APAC Project - EMEA Grant Gets 404
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/projects/{{borealisId}}
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Grants: project:read@region=emea
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # Outside Access Is Not Found
+  A project outside the caller's regions is treated as if it does not exist.
+}

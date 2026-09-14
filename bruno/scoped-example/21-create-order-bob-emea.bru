@@ -1,0 +1,28 @@
+meta {
+  name: Create Order - Bob (EMEA)
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: bob
+  X-Scopes: order:read
+}
+
+body:json {
+  {
+    "region": "emea",
+    "title": "Monitor"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.customer_id: eq bob
+}

@@ -630,3 +630,45 @@ jobs:
       - name: Run Tests
         working-directory: bruno
         run: bru run query-example --env local --format json --sandbox=developer
+
+  scoped-example-test:
+    name: Scoped Roles Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.6'
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Build Server
+        working-directory: examples/scoped
+        run: go build -o /tmp/scoped-server .
+
+      - name: Start Server
+        run: /tmp/scoped-server &
+
+      - name: Wait for Server
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli@4.0.0
+
+      - name: Run Tests
+        working-directory: bruno
+        run: bru run scoped-example --env local --format json --sandbox=developer

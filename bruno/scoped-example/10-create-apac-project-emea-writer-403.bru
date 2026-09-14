@@ -1,0 +1,32 @@
+meta {
+  name: Create APAC Project - EMEA Writer Gets 403
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/projects
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: charlie
+  X-Grants: project:read@region=emea|apac;project:write@region=emea
+}
+
+body:json {
+  {
+    "region": "apac",
+    "name": "Bamboo"
+  }
+}
+
+assert {
+  res.status: eq 403
+}
+
+docs {
+  # Writes Use the Write Scope's Grant
+  Charlie can read EMEA and APAC but write EMEA only, so creating an APAC project is forbidden.
+}

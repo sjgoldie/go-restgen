@@ -54,6 +54,13 @@ func TestErrors(t *testing.T) {
 				return e != nil && e.Error() != ""
 			},
 		},
+		{
+			name: "ErrForbidden is defined",
+			err:  apperrors.ErrForbidden,
+			check: func(e error) bool {
+				return e != nil && e.Error() != ""
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -73,6 +80,7 @@ func TestErrors_Distinct(t *testing.T) {
 		apperrors.ErrUnavailable,
 		apperrors.ErrMetadataNotFound,
 		apperrors.ErrValidation,
+		apperrors.ErrForbidden,
 	}
 
 	// Verify all errors are distinct
@@ -120,6 +128,11 @@ func TestErrors_Messages(t *testing.T) {
 			name:    "ErrValidation message",
 			err:     apperrors.ErrValidation,
 			message: "validation failed",
+		},
+		{
+			name:    "ErrForbidden message",
+			err:     apperrors.ErrForbidden,
+			message: "forbidden",
 		},
 	}
 

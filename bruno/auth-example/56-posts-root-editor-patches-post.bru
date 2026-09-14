@@ -1,0 +1,34 @@
+meta {
+  name: Posts (Root) - Editor Patches Post
+  type: http
+  seq: 56
+}
+
+patch {
+  url: {{baseUrl}}/posts/{{alicePostId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user
+}
+
+body:json {
+  {
+    "title": "Alice's First Post (edited by Bob)",
+    "author_id": "bob"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.title: eq Alice's First Post (edited by Bob)
+}
+
+tests {
+  test("Ownership fields cannot be reassigned by a non-admin editor", function() {
+    expect(res.body.author_id).to.equal("alice");
+    expect(res.body.editor_id).to.equal("bob");
+  });
+}

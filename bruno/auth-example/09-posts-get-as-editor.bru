@@ -1,5 +1,5 @@
 meta {
-  name: Posts - Get Post As Editor
+  name: Posts - Editor Without Blog Ownership Gets 404 Under the Blog
   type: http
   seq: 9
 }
@@ -15,13 +15,12 @@ auth:bearer {
 }
 
 assert {
-  res.status: eq 200
-  res.body.id: eq {{alicePostId}}
+  res.status: eq 404
 }
 
-tests {
-  test("Bob can access post because he's listed as editor", function() {
-    expect(res.status).to.equal(200);
-    expect(res.body.editor_id).to.equal("bob");
-  });
+docs {
+  # Nested Posts Require Owning the Blog
+  Bob is the post's editor, but he does not own Alice's blog. Blogs require ownership,
+  so posts nested under a blog are only reachable by the blog's owner (Issue #28).
+  Editors reach their posts through the root /posts route instead (see 54-57).
 }

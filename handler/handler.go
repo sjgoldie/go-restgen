@@ -195,6 +195,10 @@ func handleOperationError(ctx context.Context, w http.ResponseWriter, err error,
 		WriteError(w, http.StatusBadRequest, ErrCodeInvalidReference, http.StatusText(http.StatusBadRequest))
 		return
 	}
+	if errors.Is(err, apperrors.ErrForbidden) {
+		WriteError(w, http.StatusForbidden, ErrCodeForbidden, http.StatusText(http.StatusForbidden))
+		return
+	}
 	if errors.Is(err, apperrors.ErrNotFound) {
 		WriteError(w, http.StatusNotFound, ErrCodeNotFound, http.StatusText(http.StatusNotFound))
 		return

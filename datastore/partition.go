@@ -85,6 +85,13 @@ func (w *Wrapper[T]) partitionValueClause(ctx context.Context, meta *metadata.Ty
 	partition := meta.Partitions[idx]
 	modelType := derefType(meta.ModelType)
 
+	if len(partition.Via) > 0 {
+		holder := partition.Via[len(partition.Via)-1]
+		return viaClause(w.Store.GetDB(), partition.Via, ref, func(holderRef columnRef) clause {
+			return w.partitionHolderClause(ctx, partition, holder, holderRef, values)
+		})
+	}
+
 	if partition.Field != "" && partition.Field == meta.PKField {
 		return noRows
 	}
@@ -119,6 +126,28 @@ func (w *Wrapper[T]) partitionValueClause(ctx context.Context, meta *metadata.Ty
 
 	query, args := ref.column(childCol)
 	return clause{query: query + " IN (?)", args: append(args, subq)}
+}
+
+// viaClause builds the condition that a row at ref references, through the belongs-to steps,
+// a row satisfying leaf. leaf receives a reference to the last related table.
+func viaClause(db *bun.DB, steps []metadata.RelationStep, ref columnRef, leaf func(columnRef) clause) clause {
+	last := len(steps) - 1
+	cond := leaf(columnRef{table: steps[last].Table})
+	for i := last; i >= 0; i-- {
+		step := steps[i]
+		subq := db.NewSelect().
+			Table(step.Table).
+			ColumnExpr("?.?", bun.Ident(step.Table), bun.Ident(step.JoinColumn)).
+			Where(cond.query, cond.args...)
+
+		prev := ref
+		if i > 0 {
+			prev = columnRef{table: steps[i-1].Table}
+		}
+		query, args := prev.column(step.FKColumn)
+		cond = clause{query: query + " IN (?)", args: append(args, subq)}
+	}
+	return cond
 }
 
 // partitionFilterValues converts partition values to the field's Go kind so they compare
@@ -181,7 +210,8 @@ func scopedBypassValues(ctx context.Context, meta *metadata.TypeMetadata, bypass
 }
 
 // hasScopedBypass reports whether a scoped bypass grant covers an already loaded row.
-// Only partitions whose value is held on the row itself can be checked in memory.
+// Only partitions whose value is held on the row itself can be checked in memory; inherited
+// and related-row partitions never grant the bypass here.
 func hasScopedBypass(ctx context.Context, meta *metadata.TypeMetadata, bypass []string, row any) bool {
 	if meta == nil || len(meta.Partitions) == 0 || len(bypass) == 0 || row == nil {
 		return false
@@ -191,7 +221,7 @@ func hasScopedBypass(ctx context.Context, meta *metadata.TypeMetadata, bypass []
 	}
 	values := scopedBypassValues(ctx, meta, bypass)
 	for _, p := range meta.Partitions {
-		if p.Field == "" || len(values[p.Name]) == 0 {
+		if p.Field == "" || len(p.Via) > 0 || len(values[p.Name]) == 0 {
 			continue
 		}
 		if value, ok := partitionFieldValue(row, p.Field); ok && slices.Contains(values[p.Name], value) {
@@ -238,6 +268,13 @@ func (w *Wrapper[T]) enforcePartitionWrite(ctx context.Context, meta *metadata.T
 			return apperrors.ErrForbidden
 		}
 
+		if len(p.Via) > 0 {
+			if err := w.enforceRelatedPartition(ctx, meta, p, access, existing, item); err != nil {
+				return err
+			}
+			continue
+		}
+
 		if p.Field == "" {
 			if existing != nil && !access.Unrestricted && w.parentChanged(meta, existing, item) {
 				return apperrors.ErrForbidden
@@ -272,6 +309,154 @@ func (w *Wrapper[T]) enforcePartitionWrite(ctx context.Context, meta *metadata.T
 		}
 	}
 	return nil
+}
+
+// enforceRelatedPartition checks a partition held on a related row. The reference to the first
+// related row must be set (400 when missing). A restricted caller must reference a related row
+// within their access, or on create one shared with them through the method's Via share setting
+// (403 otherwise). On update they cannot change the reference of a row whose related row is
+// outside their access, since it was reached through a share.
+func (w *Wrapper[T]) enforceRelatedPartition(ctx context.Context, meta *metadata.TypeMetadata, p metadata.Partition, access metadata.PartitionAccess, existing, item *T) error {
+	fkField := w.goNameFromColumn(meta.ModelType, p.Via[0].FKColumn)
+	if fkField == "" {
+		return apperrors.ErrForbidden
+	}
+	ref := reflect.ValueOf(item).Elem().FieldByName(fkField)
+	if !ref.IsValid() {
+		return apperrors.ErrForbidden
+	}
+	if ref.IsZero() {
+		return apperrors.NewValidationError(fmt.Sprintf("%s is required", partitionFieldLabel(meta, fkField)))
+	}
+	if access.Unrestricted {
+		return nil
+	}
+
+	var before reflect.Value
+	if existing != nil {
+		before = reflect.ValueOf(existing).Elem().FieldByName(fkField)
+		if before.IsValid() && reflect.DeepEqual(before.Interface(), ref.Interface()) {
+			return nil
+		}
+	}
+
+	if existing != nil && before.IsValid() {
+		within, err := w.relatedWithin(ctx, p, before.Interface(), access.Values)
+		if err != nil {
+			return err
+		}
+		if !within {
+			return apperrors.ErrForbidden
+		}
+	}
+
+	within, err := w.relatedWithin(ctx, p, ref.Interface(), access.Values)
+	if err != nil {
+		return err
+	}
+	if within {
+		return nil
+	}
+	if existing == nil {
+		shared, err := w.itemShared(ctx, meta, item)
+		if err != nil {
+			return err
+		}
+		if shared {
+			return nil
+		}
+	}
+	return apperrors.ErrForbidden
+}
+
+// itemShared reports whether a new item references, through the method's Via share setting,
+// a row shared with the caller, so it can be created under a shared related row.
+func (w *Wrapper[T]) itemShared(ctx context.Context, meta *metadata.TypeMetadata, item *T) (bool, error) {
+	share := shareFor(ctx, "")
+	if share == nil || len(share.Via) == 0 || derefType(meta.ModelType) != share.BaseType {
+		return false, nil
+	}
+	authInfo, ok := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
+	if !ok || authInfo == nil || authInfo.UserID == "" {
+		return false, nil
+	}
+
+	first := share.Via[0]
+	fkField := w.goNameFromColumn(meta.ModelType, first.FKColumn)
+	if fkField == "" {
+		return false, nil
+	}
+	reference := reflect.ValueOf(item).Elem().FieldByName(fkField)
+	if !reference.IsValid() || reference.IsZero() {
+		return false, nil
+	}
+
+	targets, err := w.sharedTargets(ctx, share, authInfo.UserID)
+	if err != nil {
+		return false, nil
+	}
+	target := share.Via[len(share.Via)-1]
+	targetClause := func(targetRef columnRef) clause {
+		query, args := targetRef.column(target.PKColumn)
+		return clause{query: query + " IN (?)", args: append(args, targets)}
+	}
+
+	firstRef := columnRef{table: first.Table}
+	cond := targetClause(firstRef)
+	if len(share.Via) > 1 {
+		cond = viaClause(w.Store.GetDB(), share.Via[1:], firstRef, targetClause)
+	}
+
+	count, err := w.getDB(ctx).NewSelect().
+		Table(first.Table).
+		Where("?.? = ?", bun.Ident(first.Table), bun.Ident(first.JoinColumn), reference.Interface()).
+		Where(cond.query, cond.args...).
+		Count(ctx)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// relatedWithin reports whether the related row referenced by reference exists and holds a
+// partition value within values, following the rest of the relation path.
+func (w *Wrapper[T]) relatedWithin(ctx context.Context, p metadata.Partition, reference any, values []string) (bool, error) {
+	if len(values) == 0 {
+		return false, nil
+	}
+	first := p.Via[0]
+	firstRef := columnRef{table: first.Table}
+
+	var cond clause
+	if len(p.Via) == 1 {
+		cond = w.partitionHolderClause(ctx, p, first, firstRef, values)
+	} else {
+		holder := p.Via[len(p.Via)-1]
+		cond = viaClause(w.Store.GetDB(), p.Via[1:], firstRef, func(holderRef columnRef) clause {
+			return w.partitionHolderClause(ctx, p, holder, holderRef, values)
+		})
+	}
+
+	count, err := w.getDB(ctx).NewSelect().
+		Table(first.Table).
+		Where("?.? = ?", bun.Ident(first.Table), bun.Ident(first.JoinColumn), reference).
+		Where(cond.query, cond.args...).
+		Count(ctx)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// partitionHolderClause builds the condition that the model holding a partition's field, at ref,
+// has a value within values.
+func (w *Wrapper[T]) partitionHolderClause(ctx context.Context, p metadata.Partition, holder metadata.RelationStep, ref columnRef, values []string) clause {
+	col, err := ColumnName(holder.ModelType, p.Field)
+	if err != nil {
+		return noRows
+	}
+	query, args := ref.column(col)
+	return clause{query: query + " IN (?)", args: append(args, bun.List(partitionFilterValues(ctx, holder.ModelType, p.Field, values)))}
 }
 
 // parentChanged reports whether an update changes the column that links a row to its parent.

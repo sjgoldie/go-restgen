@@ -125,8 +125,9 @@ func shareFor(ctx context.Context, path string) *metadata.Share {
 }
 
 // shareClause builds the condition that a row of meta at ref is shared with the caller: the
-// row itself is the share target, or its ancestor chain leads to a shared target row. Nil when
-// there is no share setting, no caller user ID, or the target is not meta or an ancestor.
+// row itself is the share target, its ancestor chain leads to a shared target row, or, for a
+// share with Via, its belongs-to relations lead to one. Nil when there is no share setting, no
+// caller user ID, or the target is not reachable from meta.
 func (w *Wrapper[T]) shareClause(ctx context.Context, meta *metadata.TypeMetadata, ref columnRef, share *metadata.Share) *clause {
 	if share == nil || meta == nil {
 		return nil
@@ -134,6 +135,22 @@ func (w *Wrapper[T]) shareClause(ctx context.Context, meta *metadata.TypeMetadat
 	authInfo, ok := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
 	if !ok || authInfo == nil || authInfo.UserID == "" {
 		return nil
+	}
+
+	if len(share.Via) > 0 {
+		if derefType(meta.ModelType) != share.BaseType {
+			return nil
+		}
+		subq, err := w.sharedTargets(ctx, share, authInfo.UserID)
+		if err != nil {
+			return &noRows
+		}
+		target := share.Via[len(share.Via)-1]
+		c := viaClause(w.Store.GetDB(), share.Via, ref, func(targetRef columnRef) clause {
+			query, args := targetRef.column(target.PKColumn)
+			return clause{query: query + " IN (?)", args: append(args, subq)}
+		})
+		return &c
 	}
 
 	if derefType(meta.ModelType) == share.TargetType {

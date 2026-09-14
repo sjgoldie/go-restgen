@@ -1,0 +1,31 @@
+meta {
+  name: Create Assessment Without Project - 400
+  type: http
+  seq: 39
+}
+
+post {
+  url: {{baseUrl}}/assessments
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Grants: assessment:write@region=emea
+}
+
+body:json {
+  {
+    "title": "No project"
+  }
+}
+
+assert {
+  res.status: eq 400
+}
+
+docs {
+  # The Reference Is Required
+  Without project_id there is no region to check, so the request is rejected rather than defaulted.
+}

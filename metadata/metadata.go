@@ -99,14 +99,28 @@ type ScopedGrant struct {
 
 // Share is a resolved share setting for one method on a route: rows are also visible
 // to the caller when a row of the share model links the caller's user ID to the shared
-// row. The shared row is either the route's own row or one of its ancestors.
+// row. The shared row is the route's own row, one of its ancestors, or, when Via is set,
+// the row reached from the route's row through belongs-to relations.
 type Share struct {
-	ModelType   reflect.Type // Share model type (e.g., ProjectShare)
-	TargetType  reflect.Type // Shared model type (e.g., Project): the route's own type or an ancestor
-	TargetField string       // Share model field holding the shared row's primary key
-	UserField   string       // Share model field holding the user ID
-	LevelField  string       // Share model field holding the share level; empty when levels are not used
-	Levels      []string     // Levels accepted; empty accepts any share
+	ModelType   reflect.Type   // Share model type (e.g., ProjectShare)
+	TargetType  reflect.Type   // Shared model type (e.g., Project)
+	TargetField string         // Share model field holding the shared row's primary key
+	UserField   string         // Share model field holding the user ID
+	LevelField  string         // Share model field holding the share level; empty when levels are not used
+	Levels      []string       // Levels accepted; empty accepts any share
+	BaseType    reflect.Type   // Model the Via path starts from; set only with Via
+	Via         []RelationStep // Belongs-to relations from BaseType to TargetType; empty for the route's own or an ancestor's rows
+}
+
+// RelationStep is one belongs-to relation in a resolved relation path: rows of the previous
+// model reference rows of ModelType.
+type RelationStep struct {
+	Name       string       // Relation field on the previous model (e.g., "Project")
+	ModelType  reflect.Type // Related model
+	Table      string       // Related model's table
+	FKColumn   string       // Column on the previous model holding the reference
+	JoinColumn string       // Column on the related model that FKColumn references
+	PKColumn   string       // Related model's primary key column
 }
 
 // shareKeyType is the context key type for the current method's share setting
@@ -124,12 +138,14 @@ type includeSharesKeyType string
 const IncludeSharesKey includeSharesKeyType = "restgen_include_shares"
 
 // Partition declares that the rows of a type are divided by a named partition.
-// When Field is set, the model holds the partition value itself. When Field is
+// When Field is set without Via, the model holds the partition value itself. With Via,
+// Field is held by the model reached through those belongs-to relations. When Field is
 // empty, the value is inherited through the parent route's row. Field is never the
-// primary key.
+// primary key of the model holding it.
 type Partition struct {
-	Name  string // Partition name, matched against ScopedGrant.Partition
-	Field string // Go field holding the partition value; empty when inherited from the parent
+	Name  string         // Partition name, matched against ScopedGrant.Partition
+	Field string         // Go field holding the partition value; empty when inherited from the parent
+	Via   []RelationStep // Belongs-to relations to the model holding Field; empty when this model holds it
 }
 
 // PartitionAccess is the caller's access to one partition for the current operation.
@@ -380,7 +396,9 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 	}
 	if len(m.Partitions) > 0 {
 		result.Partitions = make([]Partition, len(m.Partitions))
-		copy(result.Partitions, m.Partitions)
+		for i, p := range m.Partitions {
+			result.Partitions[i] = Partition{Name: p.Name, Field: p.Field, Via: slices.Clone(p.Via)}
+		}
 	}
 	if len(m.FilterableFields) > 0 {
 		result.FilterableFields = make([]string, len(m.FilterableFields))

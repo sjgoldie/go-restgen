@@ -925,7 +925,7 @@ Scopes are global: a user with `project:read` can read every project. Scoped rol
 
 ### How It Works
 
-- **`WithPartition(name, field)`** — Divides a route's rows by the partition `name`, whose value is held in the model's `field`. Child routes inherit the partition and are narrowed through their parent row, so they need no field of their own. Declare `WithPartition` with the same name on a child to narrow it by its own field instead.
+- **`WithPartition(name, field)`** — Divides a route's rows by the partition `name`, whose value is held in the model's `field`, or in a related model's field reached through belongs-to relations (`"Project.Region"`, see [Partitions Through Relations](#partitions-through-relations)). Child routes inherit the partition and are narrowed through their parent row, so they need no field of their own. Declare `WithPartition` with the same name on a child to narrow it by its own field instead.
 - **`AuthInfo.Grants`** — Your middleware adds a `ScopedGrant{Scope, Partition, Values}` for each scope the user holds only within some partition values.
 
 For each request, the method's required scopes decide access to each partition the route declares:
@@ -974,6 +974,34 @@ router.RegisterRoutes[Project](b, "/projects",
 Every method on a partitioned route must require explicit scopes. `ScopePublic`, `ScopeAuthOnly`, and scope-less ownership configs cannot be resolved against partitions, so they are logged as a warning at registration and blocked at request time.
 
 The partition field cannot be the primary key. Such a declaration is logged as a warning at registration, and only callers with a global scope can use the route.
+
+### Partitions Through Relations
+
+A route that is not nested under the row holding the partition value can reach it through belongs-to relations. Write the field as a path: relation names, then the field on the last related model.
+
+```go
+// Assessment is listed at the top level, across projects; its region is its project's region
+type Assessment struct {
+    bun.BaseModel `bun:"table:assessments"`
+    ID            int      `bun:"id,pk,autoincrement" json:"id"`
+    ProjectID     int      `bun:"project_id,notnull" json:"project_id"`
+    Project       *Project `bun:"rel:belongs-to,join:project_id=id" json:"project,omitempty"`
+    Title         string   `bun:"title,notnull" json:"title"`
+}
+
+router.RegisterRoutes[Assessment](b, "/assessments",
+    router.WithPartition("region", "Project.Region"),
+    router.AuthConfig{Methods: []string{router.MethodGet, router.MethodList}, Scopes: []string{"assessment:read"}},
+    router.AuthConfig{Methods: []string{router.MethodPost, router.MethodPut, router.MethodPatch, router.MethodDelete}, Scopes: []string{"assessment:write"}},
+)
+```
+
+- Each step must be a belongs-to relation with a single join column; paths can be several steps long (`"Assessment.Project.Region"`).
+- Reads are narrowed to rows whose related row is within access.
+- CREATE requires the reference (`project_id`, `400` when missing), and the referenced row must be within access (`403` otherwise, including when it does not exist).
+- UPDATE/PATCH may change the reference only to a row within access (`403` otherwise).
+- Child routes inherit the partition through their parent row, as with a plain field.
+- The field on the last related model cannot be its primary key. An invalid path (unknown relation, a has-many or many-to-many step, unknown field) is logged as a warning at registration, and only callers with a global scope can use the route.
 
 ### Auth Middleware
 
@@ -1093,12 +1121,34 @@ Here any share reads a project and its tasks, an editor share also updates the p
 
 - **Per method:** a method accepts shares only when its `AuthConfig` has a `Share` setting, at the levels it lists.
 - **Child routes:** a child route accepts shares on a parent only when its own `AuthConfig` says so, with `Target` set to the parent's model. A child route with no share setting is not reached through parent shares.
+- **Relation paths:** a route that references the shared row through belongs-to relations, rather than being nested under it, sets `Via` to the relation path instead of `Target`. See [Shares Through Relations](#shares-through-relations).
 - **Ownership:** a row is accessible to its owner or to anyone it is shared with.
 - **Partitions:** shares widen partition access. A row is accessible within the caller's partitions or when it is shared with them. A shared row outside the caller's partitions can be edited but its partition value cannot change.
 - **Tenant scope and scopes:** always apply. A share never crosses tenants, and the caller still needs the method's required scopes — on a partitioned route, a user whose only access is through shares holds the scope as a grant with no values.
 - **Relations:** `?include=`, `?include_count=`, and relation filters use the share setting of the related route's GET config.
 
-A share setting requires a user ID (`401` without one). An invalid setting (unknown model field, or a `Target` that is not the route's model or an ancestor) is logged at registration and grants nothing.
+A share setting requires a user ID (`401` without one). An invalid setting (unknown model field, a `Target` that is not the route's model or an ancestor, an invalid `Via` path, or both `Target` and `Via` set) is logged at registration and grants nothing.
+
+### Shares Through Relations
+
+```go
+router.RegisterRoutes[Assessment](b, "/assessments",
+    router.WithPartition("region", "Project.Region"),
+    router.AuthConfig{
+        Methods: []string{router.MethodGet, router.MethodList},
+        Scopes:  []string{"assessment:read"},
+        Share:   &router.ShareConfig{Model: (*ProjectShare)(nil), Via: "Project", TargetField: "ProjectID", UserField: "UserID"},
+    },
+    router.AuthConfig{
+        Methods: []string{router.MethodPost, router.MethodPut, router.MethodPatch},
+        Scopes:  []string{"assessment:write"},
+        Share:   &router.ShareConfig{Model: (*ProjectShare)(nil), Via: "Project", TargetField: "ProjectID", UserField: "UserID", LevelField: "Level", Levels: []string{"editor"}},
+    },
+    router.AuthConfig{Methods: []string{router.MethodDelete}, Scopes: []string{"assessment:write"}},
+)
+```
+
+`Via` follows belongs-to relations from the route's model to the shared model, the same way as a partition path. Here a share on a project reaches every assessment that references it: any share reads them, and an editor share updates them and creates assessments that reference the shared project. An assessment reached through a share cannot be pointed at another project, and a restricted caller cannot point an assessment at a shared project outside their partitions.
 
 See the [scoped roles example](./examples/scoped) for sharing combined with regions.
 
@@ -2919,7 +2969,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 go tool cover -func=/tmp/coverage.out
 ```
 
-For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 383 API tests across 17 example applications.
+For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 396 API tests across 17 example applications.
 
 You can override the default port (8080) using the `PORT` environment variable:
 

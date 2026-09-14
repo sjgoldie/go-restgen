@@ -416,6 +416,7 @@ authInfo := &router.AuthInfo{
 - Create: partition field required (400) and within access (403). Update: row within access (404) and new value within access (403).
 - Every method on a partitioned route needs explicit scopes: public, auth-only, and scope-less configs are blocked.
 - Declare `WithPartition` with the same name on a child to use its own field. The partition field cannot be the primary key.
+- A top-level route reaches the value through belongs-to relations: `WithPartition("region", "Project.Region")`. Create requires the reference (400) to a row within access (403); updates may re-point it only within access (403).
 - `OwnershipConfig.BypassScopes` accepts scoped grants: the bypass applies only within the grant's values.
 - The middleware expands region hierarchies into the grant values.
 
@@ -443,6 +444,7 @@ router.RegisterRoutes[Project](b, "/projects",
 
 - A method accepts shares only when its `AuthConfig` has `Share`, at its `Levels` (none = any share).
 - Child routes accept parent shares only when their own config sets `Target` to the parent's model.
+- Top-level routes referencing the shared model through belongs-to relations set `Via: "Project"` instead of `Target`; a shared row cannot be re-pointed.
 - Owner OR shared; within partitions OR shared. Tenant scope and required scopes always apply.
 - Shared rows outside the caller's partitions can be edited, but their partition value cannot change.
 - Requires `AuthInfo.UserID`. Restgen reads shares per request; the middleware loads nothing.

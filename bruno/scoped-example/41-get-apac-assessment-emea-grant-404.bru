@@ -1,0 +1,20 @@
+meta {
+  name: Get APAC Assessment - EMEA Grant Gets 404
+  type: http
+  seq: 41
+}
+
+get {
+  url: {{baseUrl}}/assessments/{{borealisAssessmentId}}
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Grants: assessment:read@region=emea
+}
+
+assert {
+  res.status: eq 404
+}

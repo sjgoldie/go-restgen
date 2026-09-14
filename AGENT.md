@@ -340,6 +340,16 @@ authInfo := &router.AuthInfo{
 
 Behaviour: a required scope in `Scopes` is unrestricted; a grant for a required scope narrows to its values; neither returns 403. GET/LIST filter to visible rows (404 outside). CREATE requires the partition field (400) within access (403). UPDATE/PATCH require the row (404) and the new value (403) within access. Includes, counts, and relation filters use the related route's own scopes. Every method on a partitioned route needs explicit scopes (public, auth-only, and scope-less configs are blocked). `OwnershipConfig.BypassScopes` accepts scoped grants, lifting ownership only within the grant's values. Declare `WithPartition` with the same name on a child to use its own field. The partition field cannot be the primary key.
 
+A route not nested under the row holding the value reaches it through belongs-to relations:
+```go
+// Assessment belongs to Project and is listed at the top level
+router.RegisterRoutes[Assessment](b, "/assessments",
+    router.WithPartition("region", "Project.Region"),
+    router.AllScoped("assessment:read"),
+)
+```
+Each step must be belongs-to with a single join column; multi-step paths work (`"Assessment.Project.Region"`). CREATE requires the reference (400) pointing at a row within access (403, also when missing). UPDATE may change the reference only to a row within access (403). The last field cannot be the related model's primary key. Invalid paths are logged and leave only global scopes with access.
+
 ## Pattern: Sharing
 
 ```go
@@ -370,7 +380,7 @@ router.RegisterRoutes[Project](b, "/projects",
 )
 ```
 
-Behaviour: a method accepts shares only when its `AuthConfig` has `Share`, at its `Levels` (none = any). A row is accessible to its owner or anyone it is shared with, and within the caller's partitions or shared with them; tenant scope and required scopes always apply. Shared rows outside the caller's partitions can be edited but their partition value cannot change. `Target` is nil for the route's own model or an ancestor's model on child routes. Requires `AuthInfo.UserID` (401). Shares are read on every request; the middleware loads nothing.
+Behaviour: a method accepts shares only when its `AuthConfig` has `Share`, at its `Levels` (none = any). A row is accessible to its owner or anyone it is shared with, and within the caller's partitions or shared with them; tenant scope and required scopes always apply. Shared rows outside the caller's partitions can be edited but their partition value cannot change. `Target` is nil for the route's own model or an ancestor's model on child routes. On a route that references the shared model through belongs-to relations instead of nesting, set `Via` (e.g. `Via: "Project"`) instead of `Target`; an editor share then also creates rows referencing the shared row, and a shared row cannot be pointed elsewhere. Requires `AuthInfo.UserID` (401). Shares are read on every request; the middleware loads nothing.
 
 ## Pattern: Custom Handlers
 

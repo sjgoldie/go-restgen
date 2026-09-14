@@ -1,0 +1,34 @@
+meta {
+  name: List Assessments - Bob Sees Shared Project's Assessments
+  type: http
+  seq: 43
+}
+
+get {
+  url: {{baseUrl}}/assessments
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: bob
+  X-Grants: assessment:read@region=
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Bob sees only the assessments of the project shared with him", function() {
+    expect(res.body.data.length).to.equal(1);
+    expect(res.body.data[0].id).to.equal(bru.getVar("borealisAssessmentId"));
+  });
+}
+
+docs {
+  # Shares Through a Relation
+  The route's share config has Via: "Project", so a share on Borealis reaches every
+  assessment that references Borealis, even though assessments are not nested under projects.
+}

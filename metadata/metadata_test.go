@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1066,18 +1067,25 @@ func TestTypeMetadata_Clone_SummableFields(t *testing.T) {
 
 func TestTypeMetadata_Clone_Partitions(t *testing.T) {
 	original := &TypeMetadata{
-		TypeName:   "TestType",
-		Partitions: []Partition{{Name: "region", Field: "Region"}},
+		TypeName: "TestType",
+		Partitions: []Partition{
+			{Name: "region", Field: "Region"},
+			{Name: "channel", Field: "Channel", Via: []RelationStep{{Name: "Store", Table: "stores"}}},
+		},
 	}
 
 	cloned := original.Clone()
 
-	if len(cloned.Partitions) != 1 || cloned.Partitions[0] != original.Partitions[0] {
+	if !reflect.DeepEqual(cloned.Partitions, original.Partitions) {
 		t.Fatalf("Partitions not copied: got %+v", cloned.Partitions)
 	}
 	cloned.Partitions[0].Field = testModifiedValue
+	cloned.Partitions[1].Via[0].Table = testModifiedValue
 	if original.Partitions[0].Field == testModifiedValue {
 		t.Error("modifying cloned Partitions affected original - not a deep copy")
+	}
+	if original.Partitions[1].Via[0].Table == testModifiedValue {
+		t.Error("modifying cloned partition relation steps affected original - not a deep copy")
 	}
 	if (&TypeMetadata{}).Clone().Partitions != nil {
 		t.Error("nil Partitions should remain nil after clone")

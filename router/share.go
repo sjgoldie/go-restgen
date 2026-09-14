@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"reflect"
+	"strings"
 
 	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/sjgoldie/go-restgen/metadata"
@@ -17,12 +18,17 @@ import (
 // an ancestor route's model (e.g. (*Project)(nil) on a task route) to accept shares of the
 // parent row for its children. A child route does not accept parent shares unless it says so.
 //
+// Via accepts shares of a row reached from the route's row through belongs-to relations,
+// e.g. "Project" on a top-level task route accepts shares of each task's project. Via and
+// Target cannot be combined.
+//
 // Shares widen access: a shared row is accessible even when the caller's ownership or
 // partition access would exclude it, but tenant scope and the route's required scopes
 // still apply. The caller must have a user ID.
 type ShareConfig struct {
 	Model       any      // Share model, e.g. (*ProjectShare)(nil)
 	Target      any      // Shared model, e.g. (*Project)(nil); nil for the route's own model
+	Via         string   // Belongs-to relation path from the route's model to the shared model (e.g., "Project")
 	TargetField string   // Share model field holding the shared row's primary key (e.g., "ProjectID")
 	UserField   string   // Share model field holding the user ID (e.g., "UserID")
 	LevelField  string   // Optional share model field holding the share level (e.g., "Level")
@@ -47,12 +53,23 @@ func resolveShare(cfg *ShareConfig, meta *metadata.TypeMetadata, path string) *m
 		return warn("requires a share Model")
 	}
 
-	targetType := derefModelType(meta.ModelType)
-	if cfg.Target != nil {
+	baseType := derefModelType(meta.ModelType)
+	targetType := baseType
+	var via []metadata.RelationStep
+	switch {
+	case cfg.Via != "" && cfg.Target != nil:
+		return warn("cannot set both Via and Target")
+	case cfg.Via != "":
+		steps, related, err := datastore.ResolveRelationPath(baseType, strings.Split(cfg.Via, "."))
+		if err != nil {
+			return warn("Via is not a chain of belongs-to relations", "via", cfg.Via, "error", err)
+		}
+		via, targetType = steps, related
+	case cfg.Target != nil:
 		targetType = modelType(cfg.Target)
-	}
-	if !shareTargetInChain(meta, targetType) {
-		return warn("Target is not this route's model or an ancestor's", "target", targetType.Name())
+		if !shareTargetInChain(meta, targetType) {
+			return warn("Target is not this route's model or an ancestor's", "target", targetType.Name())
+		}
 	}
 
 	for _, field := range []string{cfg.TargetField, cfg.UserField} {
@@ -72,7 +89,7 @@ func resolveShare(cfg *ShareConfig, meta *metadata.TypeMetadata, path string) *m
 		}
 	}
 
-	return &metadata.Share{
+	share := &metadata.Share{
 		ModelType:   shareType,
 		TargetType:  targetType,
 		TargetField: cfg.TargetField,
@@ -80,6 +97,11 @@ func resolveShare(cfg *ShareConfig, meta *metadata.TypeMetadata, path string) *m
 		LevelField:  cfg.LevelField,
 		Levels:      cfg.Levels,
 	}
+	if len(via) > 0 {
+		share.BaseType = baseType
+		share.Via = via
+	}
+	return share
 }
 
 // resolveShares resolves the share setting of every config for a route.

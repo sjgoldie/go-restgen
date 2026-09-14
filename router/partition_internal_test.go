@@ -17,13 +17,34 @@ type partitionInternalModel struct {
 	Channel       string `bun:"channel"`
 }
 
+type partitionInternalProject struct {
+	bun.BaseModel `bun:"table:partition_internal_projects"`
+	ID            int    `bun:"id,pk,autoincrement"`
+	Region        string `bun:"region"`
+}
+
+type partitionInternalTask struct {
+	bun.BaseModel `bun:"table:partition_internal_tasks"`
+	ID            int                       `bun:"id,pk,autoincrement"`
+	ProjectID     int                       `bun:"project_id"`
+	Project       *partitionInternalProject `bun:"rel:belongs-to,join:project_id=id"`
+	Notes         []*partitionInternalNote  `bun:"rel:has-many,join:id=task_id"`
+}
+
+type partitionInternalNote struct {
+	bun.BaseModel `bun:"table:partition_internal_notes"`
+	ID            int                    `bun:"id,pk,autoincrement"`
+	TaskID        int                    `bun:"task_id"`
+	Task          *partitionInternalTask `bun:"rel:belongs-to,join:task_id=id"`
+}
+
 func TestResolvePartitions(t *testing.T) {
 	modelType := reflect.TypeFor[partitionInternalModel]()
 
 	t.Run("root route uses its own declarations", func(t *testing.T) {
 		got := resolvePartitions(nil, modelType, "ID", []PartitionConfig{WithPartition("region", "Region")})
 		want := []metadata.Partition{{Name: "region", Field: "Region"}}
-		if !slices.Equal(got, want) {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %+v, want %+v", got, want)
 		}
 	})
@@ -32,7 +53,7 @@ func TestResolvePartitions(t *testing.T) {
 		parent := &metadata.TypeMetadata{Partitions: []metadata.Partition{{Name: "region", Field: "Region"}}}
 		got := resolvePartitions(parent, modelType, "ID", nil)
 		want := []metadata.Partition{{Name: "region"}}
-		if !slices.Equal(got, want) {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %+v, want %+v", got, want)
 		}
 	})
@@ -44,7 +65,7 @@ func TestResolvePartitions(t *testing.T) {
 			WithPartition("channel", "Channel"),
 		})
 		want := []metadata.Partition{{Name: "region", Field: "Region"}, {Name: "channel", Field: "Channel"}}
-		if !slices.Equal(got, want) {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %+v, want %+v", got, want)
 		}
 	})
@@ -56,8 +77,40 @@ func TestResolvePartitions(t *testing.T) {
 			WithPartition("project", "ID"),
 		})
 		want := []metadata.Partition{{Name: "", Field: "Region"}, {Name: "channel", Field: "NoSuchField"}, {Name: "project", Field: "ID"}}
-		if !slices.Equal(got, want) {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("relation path resolves to the related model's field", func(t *testing.T) {
+		got := resolvePartitions(nil, reflect.TypeFor[partitionInternalNote](), "ID", []PartitionConfig{WithPartition("region", "Task.Project.Region")})
+		want := []metadata.Partition{{
+			Name:  "region",
+			Field: "Region",
+			Via: []metadata.RelationStep{
+				{Name: "Task", ModelType: reflect.TypeFor[partitionInternalTask](), Table: "partition_internal_tasks", FKColumn: "task_id", JoinColumn: "id", PKColumn: "id"},
+				{Name: "Project", ModelType: reflect.TypeFor[partitionInternalProject](), Table: "partition_internal_projects", FKColumn: "project_id", JoinColumn: "id", PKColumn: "id"},
+			},
+		}}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("invalid relation paths are kept unresolved", func(t *testing.T) {
+		taskType := reflect.TypeFor[partitionInternalTask]()
+		cases := map[string]string{
+			"unknown relation":                   "Owner.Region",
+			"has-many relation":                  "Notes.TaskID",
+			"unknown field on the related model": "Project.Missing",
+			"primary key of the related model":   "Project.ID",
+		}
+		for name, field := range cases {
+			got := resolvePartitions(nil, taskType, "ID", []PartitionConfig{WithPartition("region", field)})
+			want := []metadata.Partition{{Name: "region", Field: field}}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("%s: got %+v, want %+v", name, got, want)
+			}
 		}
 	})
 }

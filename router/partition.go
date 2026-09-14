@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/sjgoldie/go-restgen/datastore"
 	"github.com/sjgoldie/go-restgen/metadata"
@@ -16,7 +17,7 @@ type ScopedGrant = metadata.ScopedGrant
 // PartitionConfig declares a partition on a route.
 type PartitionConfig struct {
 	Name  string // Partition name, matched against ScopedGrant.Partition (e.g., "region")
-	Field string // Go field on the model holding the partition value (e.g., "Region")
+	Field string // Go field holding the partition value (e.g., "Region"), or a belongs-to path to it (e.g., "Project.Region")
 }
 
 // WithPartition divides a route's rows by a named partition held in field.
@@ -27,9 +28,14 @@ type PartitionConfig struct {
 // and updates must set field to one of those values (a missing value is rejected with 400,
 // a value outside the grant with 403), and an update cannot move a row out of them.
 //
+// field can also be a path through belongs-to relations to the model holding the value,
+// e.g. "Project.Region" on a task, so a route without the parent in its URL is narrowed
+// through the related row. Creates and updates must then reference a related row within
+// the caller's access.
+//
 // Child routes inherit the partition and are narrowed through their parent row. Declare
 // WithPartition with the same name on a child to narrow it by its own field instead.
-// The field cannot be the primary key.
+// The field cannot be the primary key of the model holding it.
 // Every method on a partitioned route must require explicit scopes: public, auth-only,
 // and scope-less configs are blocked.
 func WithPartition(name, field string) PartitionConfig {
@@ -47,33 +53,56 @@ func resolvePartitions(parentMeta *metadata.TypeMetadata, tType reflect.Type, pk
 	}
 
 	for _, cfg := range configs {
-		if cfg.Name == "" || cfg.Field == "" {
-			slog.WarnContext(context.Background(), "WithPartition requires a name and a field; only callers with a global scope can access this route",
-				"type", tType.Name(),
-				"partition", cfg.Name,
-				"field", cfg.Field)
-		} else if cfg.Field == pkField {
-			slog.WarnContext(context.Background(), "WithPartition cannot use the primary key; scoped callers see no rows",
-				"type", tType.Name(),
-				"partition", cfg.Name,
-				"field", cfg.Field)
-		} else if _, err := datastore.ColumnName(tType, cfg.Field); err != nil {
-			slog.WarnContext(context.Background(), "WithPartition field is not a column on the model; scoped callers see no rows",
-				"type", tType.Name(),
-				"partition", cfg.Name,
-				"field", cfg.Field,
-				"error", err)
-		}
+		partition := resolvePartitionField(tType, pkField, cfg)
 
 		idx := slices.IndexFunc(partitions, func(p metadata.Partition) bool { return p.Name == cfg.Name })
 		if idx >= 0 {
-			partitions[idx].Field = cfg.Field
+			partitions[idx] = partition
 		} else {
-			partitions = append(partitions, metadata.Partition{Name: cfg.Name, Field: cfg.Field})
+			partitions = append(partitions, partition)
 		}
 	}
 
 	return partitions
+}
+
+// resolvePartitionField resolves a WithPartition declaration. A dotted field such as
+// "Project.Region" walks belongs-to relations to the model holding the field. An invalid
+// declaration is logged and kept unresolved, so only callers with a global scope can access
+// the route.
+func resolvePartitionField(tType reflect.Type, pkField string, cfg PartitionConfig) metadata.Partition {
+	unresolved := metadata.Partition{Name: cfg.Name, Field: cfg.Field}
+	warn := func(msg string, args ...any) metadata.Partition {
+		args = append([]any{"type", tType.Name(), "partition", cfg.Name, "field", cfg.Field}, args...)
+		slog.WarnContext(context.Background(), msg, args...)
+		return unresolved
+	}
+
+	if cfg.Name == "" || cfg.Field == "" {
+		return warn("WithPartition requires a name and a field; only callers with a global scope can access this route")
+	}
+
+	parts := strings.Split(cfg.Field, ".")
+	field := parts[len(parts)-1]
+	holder, holderPK := tType, pkField
+	var via []metadata.RelationStep
+
+	if len(parts) > 1 {
+		steps, related, err := datastore.ResolveRelationPath(tType, parts[:len(parts)-1])
+		if err != nil {
+			return warn("WithPartition relation path is not a chain of belongs-to relations; scoped callers see no rows", "error", err)
+		}
+		via, holder, holderPK = steps, related, datastore.PrimaryKeyField(related)
+	}
+
+	if field == holderPK {
+		return warn("WithPartition cannot use the primary key; scoped callers see no rows")
+	}
+	if _, err := datastore.ColumnName(holder, field); err != nil {
+		return warn("WithPartition field is not a column on the model; scoped callers see no rows", "error", err)
+	}
+
+	return metadata.Partition{Name: cfg.Name, Field: field, Via: via}
 }
 
 // warnPartitionAuth logs registration warnings for auth configs that cannot be used on a

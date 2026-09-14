@@ -1,0 +1,39 @@
+meta {
+  name: Create Assessment Under Shared Project - Editor
+  type: http
+  seq: 46
+}
+
+post {
+  url: {{baseUrl}}/assessments
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: diana
+  X-Grants: assessment:write@region=
+}
+
+body:json {
+  {
+    "project_id": {{borealisId}},
+    "title": "Diana's assessment"
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+tests {
+  test("Assessment is created under the shared project", function() {
+    expect(res.body.project_id).to.equal(bru.getVar("borealisId"));
+  });
+}
+
+docs {
+  # Editor Shares Create Under the Shared Row
+  Diana has no regions, but her editor share on Borealis lets her create assessments that
+  reference it, the same as creating tasks under it.
+}

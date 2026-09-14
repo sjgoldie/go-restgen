@@ -1,0 +1,32 @@
+meta {
+  name: Create Assessment Under APAC Project - EMEA Writer Gets 403
+  type: http
+  seq: 38
+}
+
+post {
+  url: {{baseUrl}}/assessments
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Grants: assessment:write@region=emea
+}
+
+body:json {
+  {
+    "project_id": {{borealisId}},
+    "title": "Not allowed"
+  }
+}
+
+assert {
+  res.status: eq 403
+}
+
+docs {
+  # The Referenced Row Must Be Within Access
+  Borealis is in APAC, outside Alice's grant, so she cannot attach an assessment to it.
+}

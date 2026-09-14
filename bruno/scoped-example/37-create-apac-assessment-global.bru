@@ -1,0 +1,32 @@
+meta {
+  name: Create Assessment Under APAC Project - Global Writer
+  type: http
+  seq: 37
+}
+
+post {
+  url: {{baseUrl}}/assessments
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: admin
+  X-Scopes: assessment:write
+}
+
+body:json {
+  {
+    "project_id": {{borealisId}},
+    "title": "Borealis review"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+}
+
+script:post-response {
+  bru.setVar("borealisAssessmentId", res.body.id);
+}

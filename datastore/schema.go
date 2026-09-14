@@ -5,6 +5,8 @@ import (
 	"reflect"
 
 	"github.com/uptrace/bun/schema"
+
+	"github.com/sjgoldie/go-restgen/metadata"
 )
 
 // Relation holds the result of finding a parent-child relationship via Bun schema.
@@ -42,6 +44,60 @@ func FieldName(tType reflect.Type, colName string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("column %s not found on type %s", colName, tType.Name())
+}
+
+// ResolveRelationPath resolves a path of belongs-to relation names starting at tType,
+// such as ["Task", "Project"], into relation steps. It returns the model type at the end
+// of the path. Every step must be a belongs-to relation with a single join column.
+func ResolveRelationPath(tType reflect.Type, relations []string) ([]metadata.RelationStep, reflect.Type, error) {
+	store, err := Get()
+	if err != nil {
+		return nil, nil, err
+	}
+	db := store.GetDB()
+
+	steps := make([]metadata.RelationStep, 0, len(relations))
+	current := derefType(tType)
+	for _, name := range relations {
+		rel, ok := db.Table(current).Relations[name]
+		if !ok {
+			return nil, nil, fmt.Errorf("relation %s not found on type %s", name, current.Name())
+		}
+		if rel.Type != schema.BelongsToRelation {
+			return nil, nil, fmt.Errorf("relation %s on type %s is not belongs-to", name, current.Name())
+		}
+		if len(rel.BasePKs) != 1 || len(rel.JoinPKs) != 1 {
+			return nil, nil, fmt.Errorf("relation %s on type %s must join on a single column", name, current.Name())
+		}
+		related := rel.JoinTable
+		if len(related.PKs) != 1 {
+			return nil, nil, fmt.Errorf("type %s must have a single primary key", related.Type.Name())
+		}
+		steps = append(steps, metadata.RelationStep{
+			Name:       name,
+			ModelType:  related.Type,
+			Table:      related.Name,
+			FKColumn:   rel.BasePKs[0].Name,
+			JoinColumn: rel.JoinPKs[0].Name,
+			PKColumn:   related.PKs[0].Name,
+		})
+		current = related.Type
+	}
+	return steps, current, nil
+}
+
+// PrimaryKeyField returns the Go field name of a model's single primary key, or "" when
+// the model does not have exactly one.
+func PrimaryKeyField(tType reflect.Type) string {
+	store, err := Get()
+	if err != nil {
+		return ""
+	}
+	table := store.GetDB().Table(derefType(tType))
+	if len(table.PKs) != 1 {
+		return ""
+	}
+	return table.PKs[0].GoName
 }
 
 // TableName returns the SQL table name for a model type using Bun's schema.

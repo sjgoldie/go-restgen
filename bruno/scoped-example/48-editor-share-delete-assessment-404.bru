@@ -1,0 +1,20 @@
+meta {
+  name: Delete Shared Assessment - Editor Gets 404
+  type: http
+  seq: 48
+}
+
+delete {
+  url: {{baseUrl}}/assessments/{{borealisAssessmentId}}
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: diana
+  X-Grants: assessment:write@region=
+}
+
+assert {
+  res.status: eq 404
+}

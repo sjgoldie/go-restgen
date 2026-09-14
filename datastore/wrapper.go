@@ -1939,8 +1939,8 @@ func (w *Wrapper[T]) BatchCreate(ctx context.Context, items []T) ([]*T, error) {
 				return err
 			}
 
-			// Partition fields must be set and within the caller's access
-			if err := w.enforcePartitionWrite(ctx, meta, nil, item); err != nil {
+			// Partition fields must be set and within the caller's access (checked inside the transaction)
+			if err := w.enforcePartitionWrite(context.WithValue(ctx, metadata.RLSTxKey, tx), meta, nil, item); err != nil {
 				return err
 			}
 
@@ -2025,7 +2025,7 @@ func (w *Wrapper[T]) batchUpdateWithOp(ctx context.Context, items []T, op metada
 			w.reassertOwnership(ctx, meta, preFetch.existingItems[i], item)
 
 			// Partition fields must stay within the caller's access
-			if err := w.enforcePartitionWrite(ctx, meta, preFetch.existingItems[i], item); err != nil {
+			if err := w.enforcePartitionWrite(txCtx, meta, preFetch.existingItems[i], item); err != nil {
 				return err
 			}
 

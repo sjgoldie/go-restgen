@@ -1,0 +1,31 @@
+meta {
+  name: Update Shared Assessment - Viewer Gets 404
+  type: http
+  seq: 44
+}
+
+patch {
+  url: {{baseUrl}}/assessments/{{borealisAssessmentId}}
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: bob
+  X-Grants: assessment:write@region=
+}
+
+body:json {
+  {
+    "title": "Bob's edit"
+  }
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # Write Shares Need the Editor Level
+  The write config accepts only editor shares, so Bob's viewer share does not reach the assessment.
+}

@@ -64,6 +64,30 @@ func (t *Task) BeforeAppendModel(_ context.Context, query bun.Query) error {
 	return nil
 }
 
+// Assessment model - belongs to a Project but is listed at the top level, across projects.
+// It has no region field: its region is its project's region.
+type Assessment struct {
+	bun.BaseModel `bun:"table:assessments"`
+	ID            int       `bun:"id,pk,autoincrement" json:"id"`
+	ProjectID     int       `bun:"project_id,notnull" json:"project_id"`
+	Project       *Project  `bun:"rel:belongs-to,join:project_id=id" json:"project,omitempty"`
+	Title         string    `bun:"title,notnull" json:"title"`
+	CreatedAt     time.Time `bun:"created_at,notnull,skipupdate" json:"created_at,omitempty"`
+	UpdatedAt     time.Time `bun:"updated_at,notnull" json:"updated_at,omitempty"`
+}
+
+func (a *Assessment) BeforeAppendModel(_ context.Context, query bun.Query) error {
+	now := time.Now()
+	switch query.(type) {
+	case *bun.InsertQuery:
+		a.CreatedAt = now
+		a.UpdatedAt = now
+	case *bun.UpdateQuery:
+		a.UpdatedAt = now
+	}
+	return nil
+}
+
 // ProjectShare model - shares a project with a user at a level ("viewer" or "editor")
 type ProjectShare struct {
 	bun.BaseModel `bun:"table:project_shares"`
@@ -155,6 +179,19 @@ func projectShares(target any, levels ...string) *router.ShareConfig {
 	}
 }
 
+// projectSharesVia accepts project shares, at the given levels, for rows that reference the
+// project through a belongs-to relation path (e.g. "Project") on a top-level route.
+func projectSharesVia(via string, levels ...string) *router.ShareConfig {
+	return &router.ShareConfig{
+		Model:       (*ProjectShare)(nil),
+		Via:         via,
+		TargetField: "ProjectID",
+		UserField:   "UserID",
+		LevelField:  "Level",
+		Levels:      levels,
+	}
+}
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelWarn,
@@ -175,6 +212,7 @@ func main() {
 	models := []interface{}{
 		(*Project)(nil),
 		(*Task)(nil),
+		(*Assessment)(nil),
 		(*ProjectShare)(nil),
 		(*Order)(nil),
 	}
@@ -241,6 +279,26 @@ func main() {
 		},
 	)
 
+	// Assessment - a top-level route across all projects, partitioned by its project's region
+	// through the Project relation. Shares of the project reach its assessments the same way.
+	router.RegisterRoutes[Assessment](b, "/assessments",
+		router.WithPartition("region", "Project.Region"),
+		router.AuthConfig{
+			Methods: []string{router.MethodGet, router.MethodList},
+			Scopes:  []string{"assessment:read"},
+			Share:   projectSharesVia("Project"),
+		},
+		router.AuthConfig{
+			Methods: []string{router.MethodPost, router.MethodPut, router.MethodPatch},
+			Scopes:  []string{"assessment:write"},
+			Share:   projectSharesVia("Project", "editor"),
+		},
+		router.AuthConfig{
+			Methods: []string{router.MethodDelete},
+			Scopes:  []string{"assessment:write"},
+		},
+	)
+
 	// ProjectShare - who a project is shared with
 	router.RegisterRoutes[ProjectShare](b, "/project-shares",
 		router.AllScoped("project:share"),
@@ -276,9 +334,12 @@ func main() {
 	fmt.Println("\n2. Tasks - child of Project, inherits the region")
 	fmt.Println("   GET    /projects/{id}/tasks       (task:read, or any share on the project)")
 	fmt.Println("   POST   /projects/{id}/tasks       (task:write, or an editor share on the project)")
-	fmt.Println("\n3. Project shares")
+	fmt.Println("\n3. Assessments - top level, region taken from each assessment's project")
+	fmt.Println("   GET    /assessments               (assessment:read, narrowed by the project's region, plus shared projects)")
+	fmt.Println("   POST   /assessments               (assessment:write, project must be within access or editor-shared)")
+	fmt.Println("\n4. Project shares")
 	fmt.Println("   POST   /project-shares            (project:share)")
-	fmt.Println("\n4. Orders - partitioned by region, owned by the customer")
+	fmt.Println("\n5. Orders - partitioned by region, owned by the customer")
 	fmt.Println("   GET    /orders                    (own orders; a support grant adds its regions)")
 	fmt.Println("   POST   /orders                    (customer_id auto-set)")
 

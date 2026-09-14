@@ -1,0 +1,32 @@
+meta {
+  name: Move Shared Assessment to Another Project - 403
+  type: http
+  seq: 47
+}
+
+patch {
+  url: {{baseUrl}}/assessments/{{borealisAssessmentId}}
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: diana
+  X-Grants: assessment:read@region=;assessment:write@region=emea
+}
+
+body:json {
+  {
+    "project_id": {{apolloId}}
+  }
+}
+
+assert {
+  res.status: eq 403
+}
+
+docs {
+  # Shared Rows Can Be Edited, Not Moved
+  Diana can write EMEA assessments, but this one reached her through a share on Borealis,
+  so it cannot be pointed at another project, not even one in a region she has access to.
+}

@@ -1,0 +1,31 @@
+meta {
+  name: Move EMEA Assessment to APAC Project - 403
+  type: http
+  seq: 42
+}
+
+patch {
+  url: {{baseUrl}}/assessments/{{apolloAssessmentId}}
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Grants: assessment:read@region=emea;assessment:write@region=emea
+}
+
+body:json {
+  {
+    "project_id": {{borealisId}}
+  }
+}
+
+assert {
+  res.status: eq 403
+}
+
+docs {
+  # Changing the Reference Is Checked
+  Pointing the assessment at Borealis would move it into APAC, outside Alice's grant.
+}

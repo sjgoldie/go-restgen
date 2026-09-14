@@ -1,0 +1,45 @@
+meta {
+  name: Include Tasks - Narrowed by Task Access
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/projects?include=Tasks&include_count=Tasks
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: charlie
+  X-Grants: project:read@region=emea|apac;task:read@region=emea
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Both projects are listed", function() {
+    expect(res.body.data.length).to.equal(2);
+  });
+  test("Only EMEA tasks are included", function() {
+    const emea = res.body.data.find(p => p.region === "emea");
+    const apac = res.body.data.find(p => p.region === "apac");
+    expect(emea.tasks.length).to.equal(1);
+    expect(apac.tasks).to.be.undefined;
+  });
+  test("Counts only include visible tasks", function() {
+    const apolloId = String(bru.getVar("apolloId"));
+    const borealisId = String(bru.getVar("borealisId"));
+    expect(res.body.counts.Tasks[apolloId]).to.equal(1);
+    expect(res.body.counts.Tasks[borealisId]).to.be.undefined;
+  });
+}
+
+docs {
+  # Each Relation Uses Its Own Route's Access
+  Charlie reads projects in EMEA and APAC, but tasks in EMEA only. Included tasks and
+  counts use his task:read grant, not his project:read grant.
+}

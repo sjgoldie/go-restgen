@@ -1,0 +1,32 @@
+meta {
+  name: List Tasks of Shared Project - Viewer
+  type: http
+  seq: 32
+}
+
+get {
+  url: {{baseUrl}}/projects/{{borealisId}}/tasks
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: bob
+  X-Grants: task:read@region=
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("A share on the project reaches its tasks for reading", function() {
+    expect(res.body.data.length).to.equal(1);
+  });
+}
+
+docs {
+  # Child Routes Accept Parent Shares
+  The task route's read methods accept any share on the parent project.
+}

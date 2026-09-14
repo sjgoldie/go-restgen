@@ -1,0 +1,28 @@
+meta {
+  name: List Projects - Grant for Two Regions
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/projects
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: charlie
+  X-Grants: project:read@region=emea|apac
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("A user in two regions sees both", function() {
+    const regions = res.body.data.map(p => p.region).sort();
+    expect(regions).to.eql(["apac", "emea"]);
+  });
+}

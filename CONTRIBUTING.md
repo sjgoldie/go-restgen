@@ -59,7 +59,7 @@ go-restgen/
 ├── router/            # Route registration helpers
 ├── filestore/         # File storage abstraction
 ├── errors/            # Domain error types
-├── examples/          # 12 example applications
+├── examples/          # 17 example applications
 │   ├── simple/        # Basic CRUD
 │   ├── nested_routes/ # Nested resources
 │   ├── auth/          # Authentication patterns
@@ -69,8 +69,13 @@ go-restgen/
 │   ├── files_proxy/   # File upload (proxy mode)
 │   ├── files_signed/  # File upload (signed URLs)
 │   ├── actions/       # Custom actions
+│   ├── anything/      # Custom endpoints and SSE
 │   ├── batch/         # Batch operations
 │   ├── custom/        # Custom handlers
+│   ├── custom_join/   # Custom join columns
+│   ├── query/         # Filtering, sorting, pagination
+│   ├── tenant/        # Multi-tenant isolation
+│   ├── scoped/        # Scoped roles (partitioned access) and sharing
 │   └── uuid_pk/       # UUID primary keys
 └── bruno/             # API integration tests
 ```

@@ -79,6 +79,9 @@ router.RegisterRoutes[Model](builder, "/path",
     router.WithTenantScope("OrgID", true),  // app-level + PostgreSQL RLS (set_config app.tenant_id)
     router.IsTenantTable(),
 
+    // Scoped roles: rows divided by a partition; children inherit it through their parent
+    router.WithPartition("region", "Region"),
+
     // Actions (POST /resource/{id}/{name})
     router.WithAction("publish", publishFn, router.AuthConfig{Scopes: []string{"user"}}),
 
@@ -383,6 +386,66 @@ router.WithTenantScope("OrgID", true)  // app filtering + PostgreSQL RLS
 ```
 
 Audit inserts share the RLS transaction, so RLS policies on the audit table apply to audit records. Either leave audit tables without RLS, or ensure auditor records satisfy the policies — misconfigured RLS on the audit table fails the audit insert and rolls back the whole transaction.
+
+## Scoped Roles
+
+Narrow a scope to part of the data (regions, departments). The route declares a partition; the auth middleware grants scopes within partition values.
+
+```go
+router.RegisterRoutes[Project](b, "/projects",
+    router.WithPartition("region", "Region"),
+    router.AuthConfig{Methods: []string{router.MethodGet, router.MethodList}, Scopes: []string{"project:read"}},
+    router.AuthConfig{Methods: []string{router.MethodPost, router.MethodPut, router.MethodPatch, router.MethodDelete}, Scopes: []string{"project:write"}},
+    func(b *router.Builder) {
+        // Inherits region through its project; no field needed
+        router.RegisterRoutes[Task](b, "/tasks", router.AllScoped("task:read"), router.WithRelationName("Tasks"))
+    },
+)
+
+authInfo := &router.AuthInfo{
+    UserID: userID,
+    Grants: []router.ScopedGrant{
+        {Scope: "project:read", Partition: "region", Values: []string{"emea", "apac"}},
+        {Scope: "project:write", Partition: "region", Values: []string{"emea"}},
+    },
+}
+```
+
+- Required scope in `Scopes` = unrestricted; grant for a required scope = narrowed to its values; neither = 403.
+- Reads outside access are filtered (404 on GET); includes, counts, and relation filters use the related route's own scopes.
+- Create: partition field required (400) and within access (403). Update: row within access (404) and new value within access (403).
+- Every method on a partitioned route needs explicit scopes: public, auth-only, and scope-less configs are blocked.
+- Declare `WithPartition` with the same name on a child to use its own field. The partition field cannot be the primary key.
+- `OwnershipConfig.BypassScopes` accepts scoped grants: the bypass applies only within the grant's values.
+- The middleware expands region hierarchies into the grant values.
+
+## Sharing
+
+Share individual rows with users. Shares are a normal model; each `AuthConfig` method says whether it accepts them.
+
+```go
+viewers := &router.ShareConfig{Model: (*ProjectShare)(nil), TargetField: "ProjectID", UserField: "UserID"}
+editors := &router.ShareConfig{Model: (*ProjectShare)(nil), TargetField: "ProjectID", UserField: "UserID", LevelField: "Level", Levels: []string{"editor"}}
+taskViewers := &router.ShareConfig{Model: (*ProjectShare)(nil), Target: (*Project)(nil), TargetField: "ProjectID", UserField: "UserID"}
+
+router.RegisterRoutes[Project](b, "/projects",
+    router.AuthConfig{Methods: []string{router.MethodGet, router.MethodList}, Ownership: owned, Share: viewers},
+    router.AuthConfig{Methods: []string{router.MethodPut, router.MethodPatch}, Ownership: owned, Share: editors},
+    router.AuthConfig{Methods: []string{router.MethodPost, router.MethodDelete}, Ownership: owned},
+    func(b *router.Builder) {
+        router.RegisterRoutes[Task](b, "/tasks",
+            router.AuthConfig{Methods: []string{router.MethodGet, router.MethodList}, Scopes: []string{router.ScopeAuthOnly}, Share: taskViewers},
+            router.WithRelationName("Tasks"),
+        )
+    },
+)
+```
+
+- A method accepts shares only when its `AuthConfig` has `Share`, at its `Levels` (none = any share).
+- Child routes accept parent shares only when their own config sets `Target` to the parent's model.
+- Owner OR shared; within partitions OR shared. Tenant scope and required scopes always apply.
+- Shared rows outside the caller's partitions can be edited, but their partition value cannot change.
+- Requires `AuthInfo.UserID`. Restgen reads shares per request; the middleware loads nothing.
 
 ## Database Setup
 

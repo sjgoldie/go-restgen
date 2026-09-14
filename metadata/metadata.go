@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -81,10 +82,86 @@ type AfterCommitFunc[T any] func(AfterCommitContext[T]) error
 // AuthInfo contains authentication and authorization information.
 // Developers populate this in their auth middleware and add to context.
 type AuthInfo struct {
-	UserID   string   // External user ID (e.g., Auth0 ID, Firebase UID, JWT sub claim)
-	TenantID string   // Tenant/organisation ID (e.g., Auth0 org_id). Used with WithTenantScope.
-	Scopes   []string // List of scopes/permissions the user has
+	UserID   string        // External user ID (e.g., Auth0 ID, Firebase UID, JWT sub claim)
+	TenantID string        // Tenant/organisation ID (e.g., Auth0 org_id). Used with WithTenantScope.
+	Scopes   []string      // List of scopes/permissions the user has, across all partitions
+	Grants   []ScopedGrant // Scopes the user has only within specific partition values. Used with WithPartition.
 }
+
+// ScopedGrant grants a scope within a partition only, e.g. "project:write" in the
+// "emea" region. A grant applies only on routes that declare the named partition;
+// elsewhere it is ignored. A grant with no Values grants access to nothing.
+type ScopedGrant struct {
+	Scope     string   // Scope granted (matched against a route's required scopes)
+	Partition string   // Partition the grant is limited to (e.g., "region")
+	Values    []string // Partition values the scope applies to (e.g., "emea", "apac")
+}
+
+// Share is a resolved share setting for one method on a route: rows are also visible
+// to the caller when a row of the share model links the caller's user ID to the shared
+// row. The shared row is either the route's own row or one of its ancestors.
+type Share struct {
+	ModelType   reflect.Type // Share model type (e.g., ProjectShare)
+	TargetType  reflect.Type // Shared model type (e.g., Project): the route's own type or an ancestor
+	TargetField string       // Share model field holding the shared row's primary key
+	UserField   string       // Share model field holding the user ID
+	LevelField  string       // Share model field holding the share level; empty when levels are not used
+	Levels      []string     // Levels accepted; empty accepts any share
+}
+
+// shareKeyType is the context key type for the current method's share setting
+type shareKeyType string
+
+// ShareKey is the context key for the current route method's *Share.
+// Set by the auth middleware when the method's AuthConfig accepts shares.
+const ShareKey shareKeyType = "restgen_share"
+
+// includeSharesKeyType is the context key type for relation share settings
+type includeSharesKeyType string
+
+// IncludeSharesKey is the context key for a map of relation path to *Share, used for
+// ?include=, include counts, and relation filters. A relation with no entry accepts no shares.
+const IncludeSharesKey includeSharesKeyType = "restgen_include_shares"
+
+// Partition declares that the rows of a type are divided by a named partition.
+// When Field is set, the model holds the partition value itself. When Field is
+// empty, the value is inherited through the parent route's row. Field is never the
+// primary key.
+type Partition struct {
+	Name  string // Partition name, matched against ScopedGrant.Partition
+	Field string // Go field holding the partition value; empty when inherited from the parent
+}
+
+// PartitionAccess is the caller's access to one partition for the current operation.
+// Unrestricted is only ever set by a global scope; an empty Values list with
+// Unrestricted false grants access to nothing.
+type PartitionAccess struct {
+	Unrestricted bool     // Caller holds a global scope for the operation: no narrowing
+	Values       []string // Partition values the caller may read and write when not Unrestricted
+}
+
+// Allows reports whether value is within this access.
+func (a PartitionAccess) Allows(value string) bool {
+	return a.Unrestricted || slices.Contains(a.Values, value)
+}
+
+// PartitionScope maps partition name to the caller's access for the current operation.
+type PartitionScope map[string]PartitionAccess
+
+// partitionScopeKeyType is the context key type for the route's partition scope
+type partitionScopeKeyType string
+
+// PartitionScopeKey is the context key for the current route's PartitionScope.
+// Set by the auth middleware on routes that declare partitions.
+const PartitionScopeKey partitionScopeKeyType = "restgen_partition_scope"
+
+// includePartitionScopesKeyType is the context key type for relation partition scopes
+type includePartitionScopesKeyType string
+
+// IncludePartitionScopesKey is the context key for a map of relation path to PartitionScope,
+// used for ?include=, include counts, and relation filters. Set by the auth middleware
+// on every authorized request; a partitioned relation with no entry sees no rows.
+const IncludePartitionScopesKey includePartitionScopesKeyType = "restgen_include_partition_scopes"
 
 // authInfoKeyType is the context key type for storing AuthInfo
 type authInfoKeyType string
@@ -218,6 +295,9 @@ type TypeMetadata struct {
 	IsTenantTable bool   // If true, this IS the tenant entity — filter by PK instead of TenantField.
 	UseRLS        bool   // If true, wrap requests in a transaction with SET LOCAL app.tenant_id (PostgreSQL RLS).
 
+	// Partitioned access (scoped grants)
+	Partitions []Partition // Partitions this type is divided by. Set by WithPartition, inherited by children.
+
 	// Child routes for relation loading via ?include=
 	ChildMeta map[string]*TypeMetadata // relation name -> child type metadata
 
@@ -297,6 +377,10 @@ func (m *TypeMetadata) Clone() *TypeMetadata {
 	if len(m.BypassScopes) > 0 {
 		result.BypassScopes = make([]string, len(m.BypassScopes))
 		copy(result.BypassScopes, m.BypassScopes)
+	}
+	if len(m.Partitions) > 0 {
+		result.Partitions = make([]Partition, len(m.Partitions))
+		copy(result.Partitions, m.Partitions)
 	}
 	if len(m.FilterableFields) > 0 {
 		result.FilterableFields = make([]string, len(m.FilterableFields))

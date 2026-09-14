@@ -50,6 +50,7 @@ PORT=9090 ./scripts/run-bruno-tests.sh all
 ./scripts/run-bruno-tests.sh actions
 ./scripts/run-bruno-tests.sh batch
 ./scripts/run-bruno-tests.sh query
+./scripts/run-bruno-tests.sh scoped
 ```
 
 The script automatically:
@@ -166,14 +167,16 @@ go run main.go
 - Open the `auth-example` folder
 - Click "Run Collection" to run all tests in sequence
 
-**Tests cover (48 tests):**
+**Tests cover (58 tests):**
 1. **Articles** - Public reads, publisher-only writes
 2. **Blogs** - Ownership filtering with query parameters:
    - Users see only their blogs, admin sees all
    - Filter by status (ownership + filter combined)
    - Sort by name (ownership + sort combined)
    - Combined filter + sort with ownership
-3. **Posts** - Multi-ownership (accessible by author OR editor)
+3. **Posts** - Multi-ownership (accessible by author OR editor):
+   - Nested under an owned blog: an editor who does not own the blog gets 404, and a post is never returned under a blog it does not belong to
+   - Root `/posts` registration: editors list, get, and patch the posts they edit without owning the blog; ownership fields cannot be reassigned; creation is blocked
 4. **Comments** - Mixed auth (GET is public, POST/PUT/DELETE require auth)
 5. **Reports** - MethodList vs MethodGet differentiation
 6. **Parent ownership cascade** - Nested resources blocked when parent ownership fails
@@ -360,9 +363,38 @@ go run main.go
 - Batch create with `?include=` on response
 - Nested batch create (variants under a product)
 
+### Scoped Roles and Sharing Example Tests
+
+Tests scopes granted within regions (partitioned access) and project sharing.
+
+**Start the server:**
+```bash
+cd examples/scoped
+go run main.go
+```
+
+**Tests cover (35 tests):**
+- Global scope sees every region; a scoped grant sees only its regions, with matching `total_count`
+- A grant for two regions; a grant for another scope is 403; no auth is 401
+- Get outside access is 404
+- Separate read and write grants: creating or moving a project outside the write grant is 403
+- Create without the partition field is 400 (no silent default)
+- Tasks inherit the region through their project (list, create under a project outside access)
+- `?include=Tasks` and `?include_count=Tasks` use the task route's own grant
+- Parent field filters are ignored without access to the parent, applied with it
+- Orders owned by the customer, with a support grant lifting ownership within EMEA only
+- Sharing: a user with no regions sees only shared projects; region access plus shares
+- Viewer shares read the project and its tasks; editor shares also update the project and create tasks
+- A shared project cannot be moved to another region; deletes never go through a share
+
+**Test users (headers):**
+- `X-User` - user ID
+- `X-Scopes` - global scopes, e.g. `project:read,project:write`
+- `X-Grants` - scoped grants, e.g. `project:read@region=emea|apac;project:write@region=emea` (`project:read@region=` grants the scope with no regions)
+
 ## Test Coverage
 
-**Total: 301 end-to-end API tests** across 16 example applications.
+**Total: 383 end-to-end API tests** across 17 example applications.
 
 These Bruno tests provide **end-to-end API coverage** for the example applications. They complement the unit tests by:
 

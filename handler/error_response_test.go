@@ -234,6 +234,27 @@ func TestErrorResponse_InvalidReference(t *testing.T) {
 	assertJSONError(t, w, http.StatusBadRequest, "invalid_reference", http.StatusText(http.StatusBadRequest))
 }
 
+func TestErrorResponse_Forbidden(t *testing.T) {
+	cleanTable(t)
+
+	customCreate := func(ctx context.Context, svc *service.Common[TestUser], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, items []TestUser) ([]*TestUser, error) {
+		return nil, apperrors.ErrForbidden
+	}
+
+	r := chi.NewRouter()
+	r.Route("/users", func(r chi.Router) {
+		r.Use(withMeta(userMeta))
+		r.Post("/batch", handler.BatchCreate[TestUser](customCreate))
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/users/batch", strings.NewReader(`[{"name":"a","email":"a@b.com"}]`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assertJSONError(t, w, http.StatusForbidden, "forbidden", http.StatusText(http.StatusForbidden))
+}
+
 func TestErrorResponse_BatchNotImplemented(t *testing.T) {
 	cleanTable(t)
 

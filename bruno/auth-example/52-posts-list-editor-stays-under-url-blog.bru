@@ -1,0 +1,39 @@
+meta {
+  name: Posts - Editor's List Stays Under the URL Blog
+  type: http
+  seq: 52
+}
+
+get {
+  url: {{baseUrl}}/blogs/{{aliceBlogId}}/posts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Only posts from Alice's blog are listed", function() {
+    const blogId = bru.getVar("aliceBlogId");
+    const editedElsewhere = bru.getVar("bobPostEditedByAliceId");
+    expect(res.body.data.length).to.be.above(0);
+    res.body.data.forEach(post => {
+      expect(post.blog_id).to.equal(blogId);
+      expect(post.id).to.not.equal(editedElsewhere);
+    });
+  });
+}
+
+docs {
+  # Issue #144: Multi-Field Ownership Is Grouped
+  Posts are owned by AuthorID OR EditorID. Alice edits a post in Bob's blog, but
+  listing posts under her own blog must not return it: the OR is grouped so it
+  cannot bypass the blog ID and blog ownership conditions.
+}

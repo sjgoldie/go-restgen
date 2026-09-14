@@ -12,6 +12,7 @@ var (
 	ErrMetadataNotFound = errors.New("metadata not found in context")
 	ErrValidation       = errors.New("validation failed")
 	ErrInvalidCursor    = errors.New("invalid cursor")
+	ErrForbidden        = errors.New("forbidden")
 )
 
 // ValidationError wraps a validation error with a custom message

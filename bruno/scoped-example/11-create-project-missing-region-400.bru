@@ -1,0 +1,33 @@
+meta {
+  name: Create Project Without Region - 400
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/projects
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: charlie
+  X-Grants: project:write@region=emea
+}
+
+body:json {
+  {
+    "name": "Unassigned"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.error: eq validation_error
+  res.body.message: eq region is required
+}
+
+docs {
+  # No Silent Defaults
+  The partition value is never filled in for the caller; a create without it fails.
+}

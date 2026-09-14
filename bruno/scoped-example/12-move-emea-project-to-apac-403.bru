@@ -1,0 +1,31 @@
+meta {
+  name: Move EMEA Project to APAC - 403
+  type: http
+  seq: 12
+}
+
+patch {
+  url: {{baseUrl}}/projects/{{apolloId}}
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: charlie
+  X-Grants: project:read@region=emea|apac;project:write@region=emea
+}
+
+body:json {
+  {
+    "region": "apac"
+  }
+}
+
+assert {
+  res.status: eq 403
+}
+
+docs {
+  # Rows Cannot Leave the Caller's Access
+  The new region must also be within the write grant.
+}

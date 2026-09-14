@@ -1064,6 +1064,47 @@ func TestTypeMetadata_Clone_SummableFields(t *testing.T) {
 	}
 }
 
+func TestTypeMetadata_Clone_Partitions(t *testing.T) {
+	original := &TypeMetadata{
+		TypeName:   "TestType",
+		Partitions: []Partition{{Name: "region", Field: "Region"}},
+	}
+
+	cloned := original.Clone()
+
+	if len(cloned.Partitions) != 1 || cloned.Partitions[0] != original.Partitions[0] {
+		t.Fatalf("Partitions not copied: got %+v", cloned.Partitions)
+	}
+	cloned.Partitions[0].Field = testModifiedValue
+	if original.Partitions[0].Field == testModifiedValue {
+		t.Error("modifying cloned Partitions affected original - not a deep copy")
+	}
+	if (&TypeMetadata{}).Clone().Partitions != nil {
+		t.Error("nil Partitions should remain nil after clone")
+	}
+}
+
+func TestPartitionAccess_Allows(t *testing.T) {
+	tests := []struct {
+		name   string
+		access PartitionAccess
+		value  string
+		want   bool
+	}{
+		{"unrestricted", PartitionAccess{Unrestricted: true}, "anything", true},
+		{"listed value", PartitionAccess{Values: []string{"emea", "apac"}}, "apac", true},
+		{"unlisted value", PartitionAccess{Values: []string{"emea"}}, "apac", false},
+		{"no values", PartitionAccess{}, "emea", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.access.Allows(tt.value); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTypeMetadata_Clone_NilSummableFields(t *testing.T) {
 	original := &TypeMetadata{
 		TypeID:   "test_id",

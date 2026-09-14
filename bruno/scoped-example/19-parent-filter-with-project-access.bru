@@ -1,0 +1,27 @@
+meta {
+  name: Parent Field Filter With Project Access - Applied
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/projects/{{apolloId}}/tasks?filter[Project.Name]=no-such-project
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Grants: task:read@region=emea;project:read@region=emea
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Filter on a readable parent is applied", function() {
+    expect(res.body.data.length).to.equal(0);
+  });
+}

@@ -1,0 +1,35 @@
+meta {
+  name: Share APAC Project With Bob - Viewer
+  type: http
+  seq: 25
+}
+
+post {
+  url: {{baseUrl}}/project-shares
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: admin
+  X-Scopes: project:share
+}
+
+body:json {
+  {
+    "project_id": {{borealisId}},
+    "user_id": "bob",
+    "level": "viewer"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.level: eq viewer
+}
+
+docs {
+  # Sharing Is a Normal Resource
+  The app records who a project is shared with. Restgen reads the current shares on
+  every request, so nothing needs to be loaded into the auth middleware.
+}

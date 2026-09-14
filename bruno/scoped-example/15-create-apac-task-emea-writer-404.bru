@@ -1,0 +1,31 @@
+meta {
+  name: Create Task Under APAC Project - EMEA Writer Gets 404
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/projects/{{borealisId}}/tasks
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Grants: task:write@region=emea
+}
+
+body:json {
+  {
+    "title": "Not allowed"
+  }
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # Parent Outside Access
+  The APAC project is not visible to an EMEA-only writer, so the create finds no parent.
+}

@@ -1,0 +1,25 @@
+meta {
+  name: Delete Shared Project - Editor Gets 404
+  type: http
+  seq: 35
+}
+
+delete {
+  url: {{baseUrl}}/projects/{{borealisId}}
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: diana
+  X-Grants: project:write@region=
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # Delete Does Not Accept Shares
+  The project route's delete config has no share setting, so even an editor share does not reach it.
+}

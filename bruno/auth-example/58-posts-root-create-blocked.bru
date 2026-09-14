@@ -1,0 +1,32 @@
+meta {
+  name: Posts (Root) - Create Is Not Configured
+  type: http
+  seq: 58
+}
+
+post {
+  url: {{baseUrl}}/posts
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "blog_id": 2,
+    "title": "Sneaking into Bob's blog"
+  }
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  # Creation Stays Nested
+  The root /posts route has no POST config, so it is blocked. Posts are created
+  under a blog the caller owns.
+}

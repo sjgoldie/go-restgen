@@ -1,0 +1,28 @@
+meta {
+  name: Update Shared Project - Editor
+  type: http
+  seq: 30
+}
+
+patch {
+  url: {{baseUrl}}/projects/{{borealisId}}
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: diana
+  X-Grants: project:read@region=;project:write@region=
+}
+
+body:json {
+  {
+    "name": "Borealis (edited by Diana)"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.name: eq Borealis (edited by Diana)
+  res.body.region: eq apac
+}

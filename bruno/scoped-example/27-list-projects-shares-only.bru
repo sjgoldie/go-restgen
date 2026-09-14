@@ -1,0 +1,34 @@
+meta {
+  name: List Projects - Bob Sees Only What Is Shared
+  type: http
+  seq: 27
+}
+
+get {
+  url: {{baseUrl}}/projects
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: bob
+  X-Grants: project:read@region=
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Bob has no regions, so he sees only the project shared with him", function() {
+    expect(res.body.data.length).to.equal(1);
+    expect(res.body.data[0].id).to.equal(bru.getVar("borealisId"));
+  });
+}
+
+docs {
+  # Shares Widen Access
+  Bob holds project:read with no regions, which on its own sees nothing. The share on
+  Borealis adds it. The route's scope is still required: shares do not replace it.
+}

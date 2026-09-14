@@ -1,0 +1,31 @@
+meta {
+  name: Create Task in Shared Project - Viewer Gets 404
+  type: http
+  seq: 33
+}
+
+post {
+  url: {{baseUrl}}/projects/{{borealisId}}/tasks
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: bob
+  X-Grants: task:write@region=
+}
+
+body:json {
+  {
+    "title": "Bob's task"
+  }
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # Task Writes Need an Editor Share
+  The task route's write methods accept only editor shares on the parent project.
+}

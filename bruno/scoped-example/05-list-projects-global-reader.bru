@@ -1,0 +1,28 @@
+meta {
+  name: List Projects - Global Reader Sees All
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/projects?count=true
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: auditor
+  X-Scopes: project:read
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Global project:read sees every region", function() {
+    expect(res.body.data.length).to.equal(3);
+    expect(res.body.pagination.total_count).to.equal(3);
+  });
+}

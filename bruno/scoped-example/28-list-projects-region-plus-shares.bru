@@ -1,0 +1,28 @@
+meta {
+  name: List Projects - Region Access Plus Shares
+  type: http
+  seq: 28
+}
+
+get {
+  url: {{baseUrl}}/projects
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: bob
+  X-Grants: project:read@region=emea
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Bob sees his EMEA projects and the APAC project shared with him", function() {
+    const names = res.body.data.map(p => p.name).sort();
+    expect(names).to.eql(["Apollo", "Borealis"]);
+  });
+}

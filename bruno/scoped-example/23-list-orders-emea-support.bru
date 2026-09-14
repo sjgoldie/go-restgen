@@ -1,0 +1,35 @@
+meta {
+  name: List Orders - EMEA Support Grant
+  type: http
+  seq: 23
+}
+
+get {
+  url: {{baseUrl}}/orders
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Scopes: order:read
+  X-Grants: support@region=emea
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Alice sees her own order plus every EMEA order", function() {
+    const titles = res.body.data.map(o => o.title).sort();
+    expect(titles).to.eql(["Laptop", "Monitor"]);
+  });
+}
+
+docs {
+  # Scoped Ownership Bypass
+  The support grant lifts ownership only within EMEA. Alice still sees her own
+  APAC order through ownership, and Bob's EMEA order through the grant.
+}

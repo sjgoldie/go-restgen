@@ -170,14 +170,20 @@ curl http://localhost:8080/blogs/1 \
 
 Nested under blogs. Can be owned by `author_id` OR `editor_id` (OR logic). Admins bypass ownership.
 
-**Auth Pattern:** Multiple ownership fields with admin bypass
+Blogs require ownership too, so posts nested under a blog are only reachable by the blog's owner: an editor who does not own the blog gets 404 there, and a post is never returned under a blog it does not belong to.
+
+Post is also registered at the root (`/posts`) with the same author OR editor ownership and no parent, so editors reach the posts they edit without owning the blog. Creation stays nested.
+
+**Auth Pattern:** Multiple ownership fields with admin bypass, registered both under an owned parent and at the root
 
 **Routes:**
-- `GET /blogs/{blogId}/posts` - Returns posts owned by user (author OR editor)
+- `GET /blogs/{blogId}/posts` - Returns the blog's posts owned by user (author OR editor)
 - `POST /blogs/{blogId}/posts` - Creates post owned by user (author_id auto-set)
 - `GET /blogs/{blogId}/posts/{id}` - Returns post if user is author OR editor (or admin)
 - `PUT /blogs/{blogId}/posts/{id}` - Updates post if user is author OR editor (or admin)
 - `DELETE /blogs/{blogId}/posts/{id}` - Deletes post if user is author OR editor (or admin)
+- `GET /posts` - Returns every post the user authors or edits, across blogs
+- `GET /posts/{id}`, `PUT /posts/{id}`, `PATCH /posts/{id}` - Post the user authors or edits (or admin)
 
 **Examples:**
 
@@ -205,8 +211,14 @@ curl -X PUT http://localhost:8080/blogs/1/posts/1 \
   -H "Content-Type: application/json" \
   -d '{"title":"My First Post","content":"Updated content","editor_id":"charlie"}'
 
-# Now Charlie can access the post (he's the editor)
+# Charlie is now the post's editor, but he does not own Alice's blog, so the
+# post is still not reachable through it
 curl http://localhost:8080/blogs/1/posts/1 \
+  -H "Authorization: Bearer user:charlie:user"
+# Response: not found (404)
+
+# Charlie reaches the post he edits through the root route
+curl http://localhost:8080/posts/1 \
   -H "Authorization: Bearer user:charlie:user"
 # Response: {"id":1,"author_id":"alice","editor_id":"charlie",...}
 

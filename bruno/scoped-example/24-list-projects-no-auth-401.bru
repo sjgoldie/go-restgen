@@ -1,0 +1,15 @@
+meta {
+  name: List Projects - No Auth Gets 401
+  type: http
+  seq: 24
+}
+
+get {
+  url: {{baseUrl}}/projects
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+}

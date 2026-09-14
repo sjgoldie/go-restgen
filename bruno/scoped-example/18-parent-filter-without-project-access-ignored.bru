@@ -1,0 +1,33 @@
+meta {
+  name: Parent Field Filter Without Project Access - Ignored
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{baseUrl}}/projects/{{apolloId}}/tasks?filter[Project.Name]=no-such-project
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Grants: task:read@region=emea
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Filter on a parent the caller cannot read is ignored", function() {
+    expect(res.body.data.length).to.equal(1);
+  });
+}
+
+docs {
+  # Parent Filters Need Parent Access (Issue #144)
+  Alice has no project:read access, so filtering tasks by Project.Name is ignored,
+  the same as ?include=Project would be. Otherwise the filter could reveal project names.
+}

@@ -1,0 +1,28 @@
+meta {
+  name: List Orders - Customer Sees Own Only
+  type: http
+  seq: 22
+}
+
+get {
+  url: {{baseUrl}}/orders
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Scopes: order:read
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Alice sees only the order she placed", function() {
+    expect(res.body.data.length).to.equal(1);
+    expect(res.body.data[0].customer_id).to.equal("alice");
+  });
+}

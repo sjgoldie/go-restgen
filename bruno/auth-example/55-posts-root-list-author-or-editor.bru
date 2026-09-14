@@ -1,0 +1,33 @@
+meta {
+  name: Posts (Root) - List Posts Authored or Edited
+  type: http
+  seq: 55
+}
+
+get {
+  url: {{baseUrl}}/posts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Alice sees the post she authored and the post she edits in Bob's blog", function() {
+    const ids = res.body.data.map(post => post.id);
+    expect(ids).to.include(bru.getVar("alicePostId"));
+    expect(ids).to.include(bru.getVar("bobPostEditedByAliceId"));
+  });
+  test("Every listed post is authored or edited by Alice", function() {
+    res.body.data.forEach(post => {
+      expect(post.author_id === "alice" || post.editor_id === "alice").to.equal(true);
+    });
+  });
+}

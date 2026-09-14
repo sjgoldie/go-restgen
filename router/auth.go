@@ -45,6 +45,10 @@ type AuthConfig struct {
 	Methods   []string         // HTTP methods this config applies to (MethodGet, MethodPost, etc.)
 	Scopes    []string         // Required scopes - user must have at least one (empty/nil = blocked)
 	Ownership *OwnershipConfig // Optional ownership enforcement
+	Share     *ShareConfig     // Optional: rows shared with the caller are also accessible for these methods
+
+	// share is Share resolved against the route's model and parent chain at registration.
+	share *metadata.Share
 
 	// ChildAuth holds auth configs for child routes (used for ?include= authorization).
 	// Populated automatically when child routes are registered with WithRelationName().

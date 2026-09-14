@@ -315,6 +315,19 @@ func main() {
 		},
 	)
 
+	// Post (root) - the same model registered again so editors can reach their posts
+	// without owning the blog. Nested posts require owning the blog (parent ownership);
+	// this route only checks the post's own AuthorID OR EditorID. Creation stays nested.
+	router.RegisterRoutes[Post](b, "/posts",
+		router.AuthConfig{
+			Methods: []string{router.MethodGet, router.MethodList, router.MethodPut, router.MethodPatch},
+			Ownership: &router.OwnershipConfig{
+				Fields:       []string{"AuthorID", "EditorID"},
+				BypassScopes: []string{"admin"},
+			},
+		},
+	)
+
 	// ModeratorAction - requires "moderator" scope
 	router.RegisterRoutes[ModeratorAction](b, "/moderator-actions",
 		router.AllScoped("moderator"),
@@ -358,9 +371,11 @@ func main() {
 	fmt.Println("   PUT    /blogs/{id}         (owner or admin only)")
 	fmt.Println("   DELETE /blogs/{id}         (owner or admin only)")
 	fmt.Println("\n4. Posts - Multiple ownership (author OR editor), admin bypass")
-	fmt.Println("   POST   /blogs/{blogId}/posts        (owned by author)")
-	fmt.Println("   GET    /blogs/{blogId}/posts/{id}   (author, editor, or admin)")
-	fmt.Println("   PUT    /blogs/{blogId}/posts/{id}   (author, editor, or admin)")
+	fmt.Println("   POST   /blogs/{blogId}/posts        (owned by author, blog owner only)")
+	fmt.Println("   GET    /blogs/{blogId}/posts/{id}   (author or editor who owns the blog, or admin)")
+	fmt.Println("   PUT    /blogs/{blogId}/posts/{id}   (author or editor who owns the blog, or admin)")
+	fmt.Println("   GET    /posts/{id}                  (author or editor of the post, or admin)")
+	fmt.Println("   PATCH  /posts/{id}                  (author or editor of the post, or admin)")
 	fmt.Println("\n5. Comments - MethodAll override (default auth, GET public)")
 	fmt.Println("   GET    /blogs/{blogId}/posts/{postId}/comments     (public)")
 	fmt.Println("   POST   /blogs/{blogId}/posts/{postId}/comments     (requires auth)")

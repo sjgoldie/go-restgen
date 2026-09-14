@@ -1,0 +1,19 @@
+meta {
+  name: Posts (Root) - Neither Author Nor Editor Gets 404
+  type: http
+  seq: 57
+}
+
+get {
+  url: {{baseUrl}}/posts/{{alicePostId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:charlie:user,publisher
+}
+
+assert {
+  res.status: eq 404
+}

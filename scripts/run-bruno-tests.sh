@@ -1,6 +1,6 @@
 #!/bin/bash
 # Bruno API test runner for go-restgen examples
-# Usage: ./scripts/run-bruno-tests.sh [simple|nested|auth|validator|audit|uuid|custom|relations|files-proxy|files-signed|actions|batch|query|custom-join|tenant|anything|all]
+# Usage: ./scripts/run-bruno-tests.sh [simple|nested|auth|validator|audit|uuid|custom|relations|files-proxy|files-signed|actions|batch|query|custom-join|tenant|scoped|anything|all]
 # Set PORT env var to override the default port (8080), e.g.: PORT=9090 ./scripts/run-bruno-tests.sh all
 
 set -e
@@ -184,6 +184,9 @@ case "$TEST_SUITE" in
     tenant)
         run_tests "Tenant Example" "examples/tenant" "tenant-example" || FAILED=1
         ;;
+    scoped)
+        run_tests "Scoped Roles Example" "examples/scoped" "scoped-example" || FAILED=1
+        ;;
     anything)
         run_tests "Anything Funcs Example" "examples/anything" "anything-example" || FAILED=1
         ;;
@@ -203,10 +206,11 @@ case "$TEST_SUITE" in
         run_tests "Query Example" "examples/query" "query-example" || FAILED=1
         run_tests "Custom Join Example" "examples/custom_join" "custom-join-example" || FAILED=1
         run_tests "Tenant Example" "examples/tenant" "tenant-example" || FAILED=1
+        run_tests "Scoped Roles Example" "examples/scoped" "scoped-example" || FAILED=1
         run_tests "Anything Funcs Example" "examples/anything" "anything-example" || FAILED=1
         ;;
     *)
-        echo "Usage: $0 [simple|nested|auth|validator|audit|uuid|custom|relations|files-proxy|files-signed|actions|batch|query|custom-join|tenant|anything|all]"
+        echo "Usage: $0 [simple|nested|auth|validator|audit|uuid|custom|relations|files-proxy|files-signed|actions|batch|query|custom-join|tenant|scoped|anything|all]"
         exit 1
         ;;
 esac

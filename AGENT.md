@@ -151,6 +151,11 @@ router.RegisterRoutes[Model](builder, "/path",
     router.WithTenantScope("OrgID", true),  // also enable PostgreSQL Row-Level Security (set_config app.tenant_id)
     router.IsTenantTable(),                 // marks route as the tenant entity (PK = tenant ID)
 
+    // Scoped roles (partitioned access)
+    router.WithPartition("region", "Region"), // narrow scopes by AuthInfo.Grants; children inherit
+
+    // Sharing (per method): router.AuthConfig{..., Share: &router.ShareConfig{Model: (*ProjectShare)(nil), TargetField: "ProjectID", UserField: "UserID"}}
+
     // Custom actions
     router.WithAction("publish", publishFn, router.AuthConfig{Scopes: []string{"user"}}),
 
@@ -299,6 +304,73 @@ router.WithTenantScope("OrgID", true)
 When enabled, each request runs in a transaction with `SELECT set_config('app.tenant_id', '<id>', true)` so PostgreSQL RLS policies can scope queries. Application-level filtering still applies — RLS is purely additive. Configure RLS policies on your tables yourself (e.g., `CREATE POLICY tenant_isolation ON projects USING (org_id = current_setting('app.tenant_id'))`). The RLS middleware uses PostgreSQL-specific SQL — pointing it at SQLite will cause requests to fail with 500. Children inherit the parent's RLS setting.
 
 **Audit + RLS**: Audit inserts run in the same RLS transaction as the CRUD operation, so RLS policies on your audit table apply to the audit insert. Either leave audit tables without RLS (typical for global audit logs), or ensure your auditor builds records that satisfy the audit table's policies (e.g., set the tenant column to match `current_setting('app.tenant_id')`). Misconfigured RLS on the audit table will fail the audit insert and roll back the whole transaction.
+
+## Pattern: Scoped Roles
+
+```go
+type Project struct {
+    bun.BaseModel `bun:"table:projects"`
+    ID            int    `bun:"id,pk,autoincrement" json:"id"`
+    Region        string `bun:"region,notnull" json:"region"` // partition field
+    Name          string `bun:"name,notnull" json:"name"`
+}
+
+router.RegisterRoutes[Project](b, "/projects",
+    router.WithPartition("region", "Region"),
+    router.AuthConfig{Methods: []string{router.MethodGet, router.MethodList}, Scopes: []string{"project:read"}},
+    router.AuthConfig{Methods: []string{router.MethodPost, router.MethodPut, router.MethodPatch, router.MethodDelete}, Scopes: []string{"project:write"}},
+    func(b *router.Builder) {
+        // Child inherits the partition through its parent row
+        router.RegisterRoutes[Task](b, "/tasks", router.AllScoped("task:read"), router.WithRelationName("Tasks"))
+    },
+)
+```
+
+Auth middleware grants scopes within partition values:
+```go
+authInfo := &router.AuthInfo{
+    UserID: userID,
+    Scopes: []string{"order:read"}, // global: unrestricted
+    Grants: []router.ScopedGrant{
+        {Scope: "project:read", Partition: "region", Values: []string{"emea", "apac"}},
+        {Scope: "project:write", Partition: "region", Values: []string{"emea"}},
+    },
+}
+```
+
+Behaviour: a required scope in `Scopes` is unrestricted; a grant for a required scope narrows to its values; neither returns 403. GET/LIST filter to visible rows (404 outside). CREATE requires the partition field (400) within access (403). UPDATE/PATCH require the row (404) and the new value (403) within access. Includes, counts, and relation filters use the related route's own scopes. Every method on a partitioned route needs explicit scopes (public, auth-only, and scope-less configs are blocked). `OwnershipConfig.BypassScopes` accepts scoped grants, lifting ownership only within the grant's values. Declare `WithPartition` with the same name on a child to use its own field. The partition field cannot be the primary key.
+
+## Pattern: Sharing
+
+```go
+type ProjectShare struct {
+    bun.BaseModel `bun:"table:project_shares"`
+    ID            int    `bun:"id,pk,autoincrement" json:"id"`
+    ProjectID     int    `bun:"project_id,notnull" json:"project_id"`
+    UserID        string `bun:"user_id,notnull" json:"user_id"`
+    Level         string `bun:"level,notnull" json:"level"`
+}
+
+viewers := &router.ShareConfig{Model: (*ProjectShare)(nil), TargetField: "ProjectID", UserField: "UserID"}
+editors := &router.ShareConfig{Model: (*ProjectShare)(nil), TargetField: "ProjectID", UserField: "UserID", LevelField: "Level", Levels: []string{"editor"}}
+taskViewers := &router.ShareConfig{Model: (*ProjectShare)(nil), Target: (*Project)(nil), TargetField: "ProjectID", UserField: "UserID"}
+owned := &router.OwnershipConfig{Fields: []string{"OwnerID"}}
+
+router.RegisterRoutes[Project](b, "/projects",
+    router.AuthConfig{Methods: []string{router.MethodGet, router.MethodList}, Ownership: owned, Share: viewers},
+    router.AuthConfig{Methods: []string{router.MethodPut, router.MethodPatch}, Ownership: owned, Share: editors},
+    router.AuthConfig{Methods: []string{router.MethodPost, router.MethodDelete}, Ownership: owned},
+    func(b *router.Builder) {
+        // Child routes accept parent shares only when their own config says so
+        router.RegisterRoutes[Task](b, "/tasks",
+            router.AuthConfig{Methods: []string{router.MethodGet, router.MethodList}, Scopes: []string{router.ScopeAuthOnly}, Share: taskViewers},
+            router.WithRelationName("Tasks"),
+        )
+    },
+)
+```
+
+Behaviour: a method accepts shares only when its `AuthConfig` has `Share`, at its `Levels` (none = any). A row is accessible to its owner or anyone it is shared with, and within the caller's partitions or shared with them; tenant scope and required scopes always apply. Shared rows outside the caller's partitions can be edited but their partition value cannot change. `Target` is nil for the route's own model or an ancestor's model on child routes. Requires `AuthInfo.UserID` (401). Shares are read on every request; the middleware loads nothing.
 
 ## Pattern: Custom Handlers
 
@@ -587,6 +659,7 @@ Single-item responses (Get, Create, Update, Patch, Delete) return the raw object
 - Count operators: `count_eq`, `count_neq`, `count_gt`, `count_gte`, `count_lt`, `count_lte`
 - All relation filters require the child route to use `WithRelationName` (same as includes)
 - Auth: relation filters respect AllowedIncludes — unauthorized relations are silently skipped
+- Parent field: `?filter[Blog.Status]=published` on `/blogs/{id}/posts` — the parent route must list the field in `WithFilters`, and the caller must be authorized to include the parent, otherwise the filter is skipped
 
 **Nested includes (dot notation):**
 - Child direction: `?include=Posts.Comments` — each level needs `WithRelationName` on its route
@@ -645,6 +718,7 @@ For each resource:
 - [ ] Nested routes validate parent exists
 - [ ] Query params (filter, sort, limit) work
 - [ ] Tenant isolation prevents cross-tenant access (if using WithTenantScope/IsTenantTable)
+- [ ] Scoped grants see and write only their partition values (if using WithPartition)
 
 ## External Database Connections
 

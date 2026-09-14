@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/uptrace/bun"
@@ -25,6 +27,22 @@ type partReview struct {
 	ID            int             `bun:"id,pk,autoincrement"`
 	AssessmentID  int             `bun:"assessment_id"`
 	Assessment    *partAssessment `bun:"rel:belongs-to,join:assessment_id=id"`
+}
+
+type partPair struct {
+	bun.BaseModel `bun:"table:part_pairs"`
+	A             int `bun:"a,pk"`
+	B             int `bun:"b,pk"`
+}
+
+type partPairRef struct {
+	bun.BaseModel `bun:"table:part_pair_refs"`
+	ID            int           `bun:"id,pk,autoincrement"`
+	PairA         int           `bun:"pair_a"`
+	PairB         int           `bun:"pair_b"`
+	Pair          *partPair     `bun:"rel:belongs-to,join:pair_a=a,join:pair_b=b"`
+	First         *partPair     `bun:"rel:belongs-to,join:pair_a=a"`
+	Reviews       []*partReview `bun:"rel:has-many,join:id=assessment_id"`
 }
 
 type relationPathFixture struct {
@@ -104,6 +122,20 @@ func TestResolveRelationPath(t *testing.T) {
 	}
 	if got := PrimaryKeyField(reflect.TypeFor[partProject]()); got != "ID" {
 		t.Errorf("primary key field: got %q", got)
+	}
+	if got := PrimaryKeyField(reflect.TypeFor[partPair]()); got != "" {
+		t.Errorf("composite primary key: got %q, want none", got)
+	}
+
+	invalid := map[string]string{
+		"Reviews": "is not belongs-to",
+		"Pair":    "must join on a single column",
+		"First":   "must have a single primary key",
+	}
+	for relation, want := range invalid {
+		if _, _, err := ResolveRelationPath(reflect.TypeFor[partPairRef](), []string{relation}); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: got %v, want an error containing %q", relation, err, want)
+		}
 	}
 }
 
@@ -222,6 +254,112 @@ func TestEnforcePartitionWrite_RelationPath(t *testing.T) {
 			t.Errorf("got %v, want ErrForbidden", err)
 		}
 	})
+}
+
+func TestEnforcePartitionWrite_RelationPathFailures(t *testing.T) {
+	f := setupRelationPathFixture(t)
+	assessments := &Wrapper[partAssessment]{Store: f.db}
+	ctx := context.WithValue(context.Background(), metadata.IncludePartitionScopesKey, map[string]metadata.PartitionScope{})
+	ctx = context.WithValue(ctx, metadata.PartitionScopeKey, metadata.PartitionScope{"region": {Values: []string{"emea"}}})
+
+	t.Run("unknown reference column", func(t *testing.T) {
+		via := slices.Clone(f.assessmentMeta.Partitions[0].Via)
+		via[0].FKColumn = "missing"
+		meta := *f.assessmentMeta
+		meta.Partitions = []metadata.Partition{{Name: "region", Field: "Region", Via: via}}
+		if err := assessments.enforcePartitionWrite(ctx, &meta, nil, &partAssessment{ProjectID: 1}); !errors.Is(err, apperrors.ErrForbidden) {
+			t.Errorf("got %v, want ErrForbidden", err)
+		}
+	})
+
+	t.Run("metadata for another model fails closed", func(t *testing.T) {
+		if err := assessments.enforcePartitionWrite(ctx, f.reviewMeta, nil, &partAssessment{ProjectID: 1}); !errors.Is(err, apperrors.ErrForbidden) {
+			t.Errorf("got %v, want ErrForbidden", err)
+		}
+	})
+
+	t.Run("share lookup errors are returned", func(t *testing.T) {
+		share := projectShare()
+		share.BaseType = reflect.TypeFor[partAssessment]()
+		share.Via = slices.Clone(f.assessmentMeta.Partitions[0].Via)
+		share.Via[0].Table = "missing"
+		shareCtx := context.WithValue(context.WithValue(ctx, metadata.AuthInfoKey, &metadata.AuthInfo{UserID: "bob"}), metadata.ShareKey, share)
+		if err := assessments.enforcePartitionWrite(shareCtx, f.assessmentMeta, nil, &partAssessment{ProjectID: 2}); err == nil || errors.Is(err, apperrors.ErrForbidden) {
+			t.Errorf("got %v, want a database error", err)
+		}
+	})
+
+	t.Run("database errors are returned", func(t *testing.T) {
+		if _, err := f.db.GetDB().NewDropTable().Model((*partProject)(nil)).Exec(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := assessments.enforcePartitionWrite(ctx, f.assessmentMeta, nil, &partAssessment{ProjectID: 1}); err == nil || errors.Is(err, apperrors.ErrForbidden) {
+			t.Errorf("create: got %v, want a database error", err)
+		}
+		if err := assessments.enforcePartitionWrite(ctx, f.assessmentMeta, &partAssessment{ID: 1, ProjectID: 1}, &partAssessment{ID: 1, ProjectID: 3}); err == nil || errors.Is(err, apperrors.ErrForbidden) {
+			t.Errorf("update: got %v, want a database error", err)
+		}
+	})
+}
+
+func TestItemShared(t *testing.T) {
+	f := setupRelationPathFixture(t)
+	w := &Wrapper[partAssessment]{Store: f.db}
+
+	share := projectShare()
+	share.BaseType = reflect.TypeFor[partAssessment]()
+	share.Via = f.assessmentMeta.Partitions[0].Via
+	withShare := func(ctx context.Context, s *metadata.Share) context.Context {
+		return context.WithValue(ctx, metadata.ShareKey, s)
+	}
+
+	if shared, err := w.itemShared(withShare(asUser("bob"), share), f.assessmentMeta, &partAssessment{ProjectID: 2}); err != nil || !shared {
+		t.Errorf("shared project: got %v, %v", shared, err)
+	}
+	if shared, err := w.itemShared(withShare(asUser("bob"), share), f.assessmentMeta, &partAssessment{ProjectID: 1}); err != nil || shared {
+		t.Errorf("project not shared: got %v, %v", shared, err)
+	}
+	if shared, _ := w.itemShared(withShare(context.Background(), share), f.assessmentMeta, &partAssessment{ProjectID: 2}); shared {
+		t.Error("no caller: expected not shared")
+	}
+	if shared, _ := w.itemShared(withShare(asUser("bob"), share), f.assessmentMeta, &partAssessment{}); shared {
+		t.Error("no reference: expected not shared")
+	}
+
+	unknownColumn := *share
+	unknownColumn.Via = slices.Clone(share.Via)
+	unknownColumn.Via[0].FKColumn = "missing"
+	if shared, _ := w.itemShared(withShare(asUser("bob"), &unknownColumn), f.assessmentMeta, &partAssessment{ProjectID: 2}); shared {
+		t.Error("unknown reference column: expected not shared")
+	}
+
+	reviewShare := *share
+	reviewShare.BaseType = reflect.TypeFor[partReview]()
+	reviewShare.Via = f.reviewMeta.Partitions[0].Via
+	if shared, err := w.itemShared(withShare(asUser("bob"), &reviewShare), f.reviewMeta, &partAssessment{ProjectID: 2}); err != nil || shared {
+		t.Errorf("metadata for another model: got %v, %v", shared, err)
+	}
+
+	invalidFields := *share
+	invalidFields.UserField = "Missing"
+	if shared, err := w.itemShared(withShare(asUser("bob"), &invalidFields), f.assessmentMeta, &partAssessment{ProjectID: 2}); err != nil || shared {
+		t.Errorf("invalid share fields: got %v, %v", shared, err)
+	}
+
+	missingTable := *share
+	missingTable.Via = slices.Clone(share.Via)
+	missingTable.Via[0].Table = "missing"
+	if _, err := w.itemShared(withShare(asUser("bob"), &missingTable), f.assessmentMeta, &partAssessment{ProjectID: 2}); err == nil {
+		t.Error("database error: expected an error")
+	}
+}
+
+func TestParentChanged_NoParent(t *testing.T) {
+	f := setupRelationPathFixture(t)
+	w := &Wrapper[partAssessment]{Store: f.db}
+	if w.parentChanged(f.assessmentMeta, &partAssessment{ProjectID: 1}, &partAssessment{ProjectID: 2}) {
+		t.Error("a route with no parent never changes parent")
+	}
 }
 
 func TestShareClause_RelationPath(t *testing.T) {

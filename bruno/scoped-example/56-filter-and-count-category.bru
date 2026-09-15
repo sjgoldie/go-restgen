@@ -1,0 +1,38 @@
+meta {
+  name: Filter and Count by Category
+  type: http
+  seq: 56
+}
+
+get {
+  url: {{baseUrl}}/projects?filter[Category][exists]=true&include_count=Category
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Grants: project:read@region=emea|apac;category:read@region=emea
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Only the project whose category is visible is listed", function() {
+    expect(res.body.data.length).to.equal(1);
+    expect(res.body.data[0].id).to.equal(bru.getVar("apolloId"));
+  });
+  test("Only the visible category is counted", function() {
+    expect(res.body.counts.Category[String(bru.getVar("apolloId"))]).to.equal(1);
+    expect(res.body.counts.Category[String(bru.getVar("borealisId"))]).to.be.undefined;
+  });
+}
+
+docs {
+  # Filters and Counts Use the Same Access as Includes
+  Alice reads projects in EMEA and APAC but categories only in EMEA. Borealis's category is
+  reached only through an APAC project, so it neither satisfies the filter nor is counted.
+}

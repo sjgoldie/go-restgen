@@ -329,7 +329,7 @@ router.WithAfterCommit(func(ac metadata.AfterCommitContext[T]) error {
 Cursor mode: `has_more`, `next_cursor`, `prev_cursor`, `total_count`. Offset mode: `limit`, `offset`, `total_count`.
 Batch responses: `{"data": [...]}`. Single-item responses: raw object (no envelope).
 
-**Nested includes:** child direction needs `WithRelationName` at each level. Parent direction (e.g., `?include=Author`) auto-derived from `rel:belongs-to` tags. Auth is cumulative AND, ownership is cumulative OR.
+**Nested includes:** child direction needs `WithRelationName` at each level. Parent direction (e.g., `?include=Author`) auto-derived from `rel:belongs-to` tags. Auth is cumulative AND, ownership is cumulative OR. A child route's ownership applies to its include whether or not the parent route is owned. A lookup nested with `AsSingleRoute` can be included; if the caller may not see it, it is omitted and the row is still returned.
 
 **Relation filters and counts:** `filter[Relation][exists]` and `filter[Relation][count_*]` use correlated subqueries and require the relation to be in `AllowedIncludes`. `include_count` returns `counts: {"Relation": {"pk": count}}` in the response. Unauthorized relations are silently skipped.
 

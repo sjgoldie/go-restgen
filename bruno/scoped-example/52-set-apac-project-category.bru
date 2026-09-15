@@ -1,0 +1,32 @@
+meta {
+  name: Set APAC Project Category
+  type: http
+  seq: 52
+}
+
+patch {
+  url: {{baseUrl}}/projects/{{borealisId}}
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: admin
+  X-Scopes: project:read,project:write
+}
+
+body:json {
+  {
+    "category_id": {{categoryId}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("Borealis points at Research", function() {
+    expect(res.body.category_id).to.equal(bru.getVar("categoryId"));
+  });
+}

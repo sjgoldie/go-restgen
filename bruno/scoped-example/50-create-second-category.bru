@@ -1,0 +1,37 @@
+meta {
+  name: Create Second Category
+  type: http
+  seq: 50
+}
+
+post {
+  url: {{baseUrl}}/categories
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: admin
+  X-Scopes: category:write
+}
+
+body:json {
+  {
+    "name": "Design"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isDefined
+}
+
+script:post-response {
+  bru.setVar("designId", res.body.id);
+}
+
+docs {
+  # IDs That Differ From the Projects'
+  Apollo points at Design and Borealis at Research, so no project shares its ID with its
+  category and a condition comparing the wrong columns cannot match by accident.
+}

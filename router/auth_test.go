@@ -785,11 +785,9 @@ func TestAuth_ChildAuthPopulated(t *testing.T) {
 		t.Errorf("expected author name 'Test Author', got %v", response.Name)
 	}
 
-	// The ChildAuth path is exercised - AllowedIncludes is set with ApplyOwnership=true
-	// Since parent is public and doesn't set ownership context, filtering is a no-op
-	// The key test is that the include works at all (relation is authorized)
-	if len(response.Posts) != 2 {
-		t.Errorf("expected 2 posts (parent is public, no ownership context), got %d", len(response.Posts))
+	// The child route's ownership applies to the include even though the parent is public
+	if len(response.Posts) != 1 || response.Posts[0].OwnerID != "alice" {
+		t.Errorf("expected only alice's post, got %+v", response.Posts)
 	}
 }
 

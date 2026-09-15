@@ -1,0 +1,38 @@
+meta {
+  name: Include Category - Outside the Category Grant
+  type: http
+  seq: 54
+}
+
+get {
+  url: {{baseUrl}}/projects?include=Category
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Grants: project:read@region=emea;category:read@region=apac
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("The EMEA project is still listed", function() {
+    const apollo = res.body.data.find(p => p.id === bru.getVar("apolloId"));
+    expect(apollo).to.not.be.undefined;
+  });
+  test("Its category is left out", function() {
+    const apollo = res.body.data.find(p => p.id === bru.getVar("apolloId"));
+    expect(apollo.category).to.be.undefined;
+  });
+}
+
+docs {
+  # A Hidden Lookup Leaves the Row
+  Alice reads categories only in APAC, and Design is only reached through an EMEA project.
+  The category is left out; the project is not.
+}

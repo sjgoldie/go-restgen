@@ -24,9 +24,18 @@ type Project struct {
 	ID            int       `bun:"id,pk,autoincrement" json:"id"`
 	Region        string    `bun:"region,notnull" json:"region"`
 	Name          string    `bun:"name,notnull" json:"name"`
+	CategoryID    int       `bun:"category_id,nullzero" json:"category_id,omitempty"`
+	Category      *Category `bun:"rel:belongs-to,join:category_id=id" json:"category,omitempty"`
 	CreatedAt     time.Time `bun:"created_at,notnull,skipupdate" json:"created_at,omitempty"`
 	UpdatedAt     time.Time `bun:"updated_at,notnull" json:"updated_at,omitempty"`
 	Tasks         []*Task   `bun:"rel:has-many,join:id=project_id" json:"tasks,omitempty"`
+}
+
+// Category model - an org-wide lookup a project points at
+type Category struct {
+	bun.BaseModel `bun:"table:categories"`
+	ID            int    `bun:"id,pk,autoincrement" json:"id"`
+	Name          string `bun:"name,notnull" json:"name"`
 }
 
 func (p *Project) BeforeAppendModel(_ context.Context, query bun.Query) error {
@@ -210,6 +219,7 @@ func main() {
 
 	ctx := context.Background()
 	models := []interface{}{
+		(*Category)(nil),
 		(*Project)(nil),
 		(*Task)(nil),
 		(*Assessment)(nil),
@@ -276,7 +286,22 @@ func main() {
 				},
 				router.WithRelationName("Tasks"),
 			)
+
+			// Category - the lookup a project points at, nested so ?include=Category is authorized.
+			// It inherits the region through its project like any child; a category the caller
+			// may not see is left out of the include without hiding the project.
+			router.RegisterRoutes[Category](b, "/category",
+				router.AsSingleRoute("CategoryID"),
+				router.AllScoped("category:read"),
+				router.WithRelationName("Category"),
+			)
 		},
+	)
+
+	// Categories - org-wide lookups, managed at the top level
+	router.RegisterRoutes[Category](b, "/categories",
+		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodList}, Scopes: []string{"category:read"}},
+		router.AuthConfig{Methods: []string{router.MethodPost, router.MethodPut, router.MethodPatch, router.MethodDelete}, Scopes: []string{"category:write"}},
 	)
 
 	// Assessment - a top-level route across all projects, partitioned by its project's region
@@ -331,15 +356,18 @@ func main() {
 	fmt.Println("   POST   /projects                  (project:write, region must be within access)")
 	fmt.Println("   PATCH  /projects/{id}             (project:write, or an editor share)")
 	fmt.Println("   GET    /projects?include=Tasks    (tasks narrowed by task:read access)")
+	fmt.Println("   GET    /projects?include=Category (category narrowed by category:read access, projects unaffected)")
 	fmt.Println("\n2. Tasks - child of Project, inherits the region")
 	fmt.Println("   GET    /projects/{id}/tasks       (task:read, or any share on the project)")
 	fmt.Println("   POST   /projects/{id}/tasks       (task:write, or an editor share on the project)")
 	fmt.Println("\n3. Assessments - top level, region taken from each assessment's project")
 	fmt.Println("   GET    /assessments               (assessment:read, narrowed by the project's region, plus shared projects)")
 	fmt.Println("   POST   /assessments               (assessment:write, project must be within access or editor-shared)")
-	fmt.Println("\n4. Project shares")
+	fmt.Println("\n4. Categories - org-wide lookups")
+	fmt.Println("   POST   /categories                (category:write)")
+	fmt.Println("\n5. Project shares")
 	fmt.Println("   POST   /project-shares            (project:share)")
-	fmt.Println("\n5. Orders - partitioned by region, owned by the customer")
+	fmt.Println("\n6. Orders - partitioned by region, owned by the customer")
 	fmt.Println("   GET    /orders                    (own orders; a support grant adds its regions)")
 	fmt.Println("   POST   /orders                    (customer_id auto-set)")
 

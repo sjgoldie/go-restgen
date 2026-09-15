@@ -1,0 +1,38 @@
+meta {
+  name: Include Category - Global Category Scope
+  type: http
+  seq: 55
+}
+
+get {
+  url: {{baseUrl}}/projects?include=Category
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Scopes: category:read
+  X-Grants: project:read@region=emea
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Only EMEA projects are listed", function() {
+    expect(res.body.data.every(p => p.region === "emea")).to.equal(true);
+  });
+  test("The category is included", function() {
+    const apollo = res.body.data.find(p => p.id === bru.getVar("apolloId"));
+    expect(apollo.category.name).to.equal("Design");
+  });
+}
+
+docs {
+  # Org-Wide Lookups Take a Global Scope
+  Categories are org-wide, so the middleware grants category:read globally while projects
+  stay narrowed to EMEA.
+}

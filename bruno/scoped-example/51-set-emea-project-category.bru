@@ -1,0 +1,32 @@
+meta {
+  name: Set EMEA Project Category
+  type: http
+  seq: 51
+}
+
+patch {
+  url: {{baseUrl}}/projects/{{apolloId}}
+  body: json
+  auth: none
+}
+
+headers {
+  X-User: admin
+  X-Scopes: project:read,project:write
+}
+
+body:json {
+  {
+    "category_id": {{designId}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("Apollo points at Design", function() {
+    expect(res.body.category_id).to.equal(bru.getVar("designId"));
+  });
+}

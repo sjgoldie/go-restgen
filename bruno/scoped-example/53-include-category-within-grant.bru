@@ -1,0 +1,39 @@
+meta {
+  name: Include Category - Within the Category Grant
+  type: http
+  seq: 53
+}
+
+get {
+  url: {{baseUrl}}/projects?include=Category
+  body: none
+  auth: none
+}
+
+headers {
+  X-User: alice
+  X-Grants: project:read@region=emea;category:read@region=emea
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("The EMEA project is listed with its category", function() {
+    const apollo = res.body.data.find(p => p.id === bru.getVar("apolloId"));
+    expect(apollo).to.not.be.undefined;
+    expect(apollo.category.name).to.equal("Design");
+  });
+  test("Only EMEA projects are listed", function() {
+    expect(res.body.data.every(p => p.region === "emea")).to.equal(true);
+  });
+}
+
+docs {
+  # Lookups Are Included Without Narrowing the List
+  The category route is nested under projects with AsSingleRoute, so it inherits the region
+  through the project. The category's access is checked in the join, so it decides whether the
+  category is included, never whether the project is listed.
+}

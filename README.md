@@ -342,8 +342,10 @@ GET /authors/1?include=Posts,Comments
 **Includes respect the child route's auth configuration.** The same security rules that apply when accessing the child route directly also apply when including it:
 
 - **Unauthorized relations are silently omitted** - no error, just not included
-- **Ownership filtering applies** - users only see their own child records
+- **Ownership filtering applies** - users only see their own child records, whether or not the parent route has ownership
 - **Bypass scopes work** - admins see all child records if configured
+- **A hidden single relation leaves the row** - a belongs-to or has-one relation the caller may not see, such as a lookup registered with `AsSingleRoute`, is omitted from the row; the row itself is still returned
+- **Counts and relation filters match** - `?include_count=` and `?filter[Relation][exists|count_*]` see the same related rows as `?include=`
 
 ```go
 // Parent is public, child has ownership
@@ -459,6 +461,8 @@ router.RegisterRoutes[Post](b, "/posts",
     },
 )
 ```
+
+Registering the single route under the parent also authorizes `?include=Author` on posts, using the single route's auth. It inherits the parent's partitions like any child route: the author is included when it is referenced by a post within the caller's access for the author route, and left out otherwise without hiding the post.
 
 To also allow PUT and PATCH on the single route:
 
@@ -2969,7 +2973,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 go tool cover -func=/tmp/coverage.out
 ```
 
-For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 396 API tests across 17 example applications.
+For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 404 API tests across 17 example applications.
 
 You can override the default port (8080) using the `PORT` environment variable:
 

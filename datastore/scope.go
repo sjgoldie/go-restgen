@@ -124,6 +124,22 @@ func (w *Wrapper[T]) enforceTenantTablePK(ctx context.Context, meta *metadata.Ty
 	}
 }
 
+// relationOwnershipClauses returns the ownership condition for rows of a related type at ref,
+// such as an included, counted, or filtered relation, from that type's own ownership fields and
+// the caller's user ID. Nil when the type has no ownership fields or the caller holds a bypass
+// scope; no rows when there is no caller.
+func (w *Wrapper[T]) relationOwnershipClauses(ctx context.Context, meta *metadata.TypeMetadata, ref columnRef) []clause {
+	if len(meta.OwnershipFields) == 0 || hasBypassScope(ctx, meta.BypassScopes) {
+		return nil
+	}
+	authInfo, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
+	if authInfo == nil || authInfo.UserID == "" {
+		return []clause{noRows}
+	}
+	bypass := w.scopedBypassClauses(ctx, meta, ref, meta.BypassScopes)
+	return []clause{w.ownedClause(meta, ref, meta.OwnershipFields, authInfo.UserID, bypass)}
+}
+
 // applyChildScopeFilters narrows a relation subquery on tableName to the rows
 // the caller may see: the child's ownership fields when applyOwnership is set
 // (unless the caller holds a bypass scope), the child's tenant field when the
@@ -135,13 +151,8 @@ func (w *Wrapper[T]) applyChildScopeFilters(ctx context.Context, q *bun.SelectQu
 	ref := columnRef{table: tableName}
 
 	var restrict []clause
-	if applyOwnership && len(childMeta.OwnershipFields) > 0 && !hasBypassScope(ctx, childMeta.BypassScopes) {
-		authInfo, _ := ctx.Value(metadata.AuthInfoKey).(*metadata.AuthInfo)
-		if authInfo == nil || authInfo.UserID == "" {
-			return q.Where(noRows.query)
-		}
-		bypass := w.scopedBypassClauses(ctx, childMeta, ref, childMeta.BypassScopes)
-		restrict = append(restrict, w.ownedClause(childMeta, ref, childMeta.OwnershipFields, authInfo.UserID, bypass))
+	if applyOwnership {
+		restrict = w.relationOwnershipClauses(ctx, childMeta, ref)
 	}
 
 	if enforced, ok := ctx.Value(metadata.TenantScopedKey).(bool); ok && enforced && childMeta.TenantField != "" {

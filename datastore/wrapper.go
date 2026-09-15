@@ -1724,9 +1724,9 @@ func (w *Wrapper[T]) applyRelationIncludes(ctx context.Context, query *bun.Selec
 			continue
 		}
 
-		// Simple child include (has-many)
+		// Simple child include
 		if childMeta, exists := meta.ChildMeta[relationName]; exists {
-			query = query.Relation(relationName, w.childIncludeAccess(ctx, childMeta, relationName, applyOwnership))
+			query = w.childRelationsWithAccess(ctx, query, meta, []string{relationName}, []*metadata.TypeMetadata{childMeta}, func(*metadata.TypeMetadata) bool { return applyOwnership })
 			continue
 		}
 
@@ -1746,14 +1746,48 @@ func (w *Wrapper[T]) childIncludeAccess(ctx context.Context, childMeta *metadata
 	return func(q *bun.SelectQuery) *bun.SelectQuery {
 		restrict := w.partitionRestrict(ctx, childMeta, columnRef{}, path)
 		if applyOwnership {
-			owned, err := w.ownershipClauses(ctx, childMeta)
-			if err != nil {
-				return q.Where(noRows.query)
-			}
-			restrict = append(restrict, owned...)
+			restrict = append(restrict, w.relationOwnershipClauses(ctx, childMeta, columnRef{})...)
 		}
 		return accessQuery(q, restrict, w.shareClause(ctx, childMeta, columnRef{}, shareFor(ctx, path)))
 	}
+}
+
+// childRelationsWithAccess adds a child relation path, one relation per level, each scoped to the
+// access for its own path, with ownership where applyOwnership reports it for the level. A
+// has-many level is loaded by its own query and narrowed there. A joined level (belongs-to or
+// has-one, such as a lookup registered with AsSingleRoute) is narrowed in its JOIN ON condition
+// against the join's alias, so a joined row the caller may not see is left empty rather than
+// narrowing the query it is joined to.
+func (w *Wrapper[T]) childRelationsWithAccess(ctx context.Context, query *bun.SelectQuery, baseMeta *metadata.TypeMetadata, parts []string, chain []*metadata.TypeMetadata, applyOwnership func(*metadata.TypeMetadata) bool) *bun.SelectQuery {
+	alias := ""
+	current := baseMeta
+	for i, childMeta := range chain {
+		path := strings.Join(parts[:i+1], ".")
+		ownership := applyOwnership(childMeta)
+
+		rel := w.Store.GetDB().Table(derefType(current.ModelType)).Relations[parts[i]]
+		if rel == nil || (rel.Type != schema.BelongsToRelation && rel.Type != schema.HasOneRelation) {
+			alias = ""
+			query = query.Relation(path, w.childIncludeAccess(ctx, childMeta, path, ownership))
+			current = childMeta
+			continue
+		}
+
+		if alias != "" {
+			alias += "__"
+		}
+		alias += rel.Field.Name
+		ref := columnRef{table: alias}
+
+		restrict := w.partitionRestrict(ctx, childMeta, ref, path)
+		if ownership {
+			restrict = append(restrict, w.relationOwnershipClauses(ctx, childMeta, ref)...)
+		}
+		conditions := accessJoinConditions(restrict, w.shareClause(ctx, childMeta, ref, shareFor(ctx, path)))
+		query = query.RelationWithOpts(path, bun.RelationOpts{AdditionalJoinOnConditions: conditions})
+		current = childMeta
+	}
+	return query
 }
 
 // relationWithAccess adds a belongs-to relation path (one join per level) with each joined
@@ -1828,13 +1862,10 @@ func (w *Wrapper[T]) applyNestedChildInclude(ctx context.Context, query *bun.Sel
 		return query
 	}
 
-	// Add .Relation() for each level, applying partitions, shares and, where configured, ownership
-	for i, childMeta := range chain {
-		path := strings.Join(parts[:i+1], ".")
-		query = query.Relation(path, w.childIncludeAccess(ctx, childMeta, path, applyOwnership && len(childMeta.OwnershipFields) > 0))
-	}
-
-	return query
+	// Add a relation for each level, applying partitions, shares and, where configured, ownership
+	return w.childRelationsWithAccess(ctx, query, meta, parts, chain, func(childMeta *metadata.TypeMetadata) bool {
+		return applyOwnership && len(childMeta.OwnershipFields) > 0
+	})
 }
 
 // applyNestedParentInclude handles nested parent includes like "Account.User"
@@ -2370,6 +2401,17 @@ func (w *Wrapper[T]) applyRelationFilter(ctx context.Context, query *bun.SelectQ
 	}
 }
 
+// childLink returns the columns linking a child relation level to its parent, as the child's
+// column and the parent's column that must be equal. The foreign key is on the child for
+// has-many and has-one children, and on the parent for a lookup the parent points at.
+func (w *Wrapper[T]) childLink(child *metadata.TypeMetadata) (childCol, parentCol string) {
+	joinCol := defaultParentJoinCol(child.ParentJoinCol)
+	if w.hasColumn(child.ModelType, child.ForeignKeyCol) {
+		return child.ForeignKeyCol, joinCol
+	}
+	return joinCol, child.ForeignKeyCol
+}
+
 // buildCountChain builds a correlated COUNT(*) subquery for a child relation chain.
 // For single-level chains, returns a direct COUNT. For multi-level chains, uses nested
 // subqueries to resolve intermediate IDs before counting at the leaf level.
@@ -2386,11 +2428,12 @@ func (w *Wrapper[T]) buildCountChain(ctx context.Context, baseMeta *metadata.Typ
 	leaf := chain[len(chain)-1]
 	leafPath := strings.Join(relations[:len(chain)], ".")
 
+	leafCol, leafParentCol := w.childLink(leaf)
 	if len(chain) == 1 {
 		q := db.NewSelect().
 			Table(leaf.TableName).
 			ColumnExpr("COUNT(*)").
-			Where("?.? = ?.?", bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol), bun.Ident(baseAlias), bun.Ident(defaultParentJoinCol(leaf.ParentJoinCol)))
+			Where("?.? = ?.?", bun.Ident(leaf.TableName), bun.Ident(leafCol), bun.Ident(baseAlias), bun.Ident(leafParentCol))
 		return w.applyChildScopeFilters(ctx, q, leaf, leaf.TableName, leafPath, applyOwnership)
 	}
 
@@ -2398,21 +2441,19 @@ func (w *Wrapper[T]) buildCountChain(ctx context.Context, baseMeta *metadata.Typ
 	var subq *bun.SelectQuery
 	for i := 0; i < len(chain)-1; i++ {
 		child := chain[i]
-		childParentJoinCol := defaultParentJoinCol(child.ParentJoinCol)
-
-		nextChild := chain[i+1]
-		selectCol := defaultParentJoinCol(nextChild.ParentJoinCol)
+		childCol, parentCol := w.childLink(child)
+		_, selectCol := w.childLink(chain[i+1])
 
 		if i == 0 {
 			subq = db.NewSelect().
 				Table(child.TableName).
 				ColumnExpr("?.?", bun.Ident(child.TableName), bun.Ident(selectCol)).
-				Where("?.? = ?.?", bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(baseAlias), bun.Ident(childParentJoinCol))
+				Where("?.? = ?.?", bun.Ident(child.TableName), bun.Ident(childCol), bun.Ident(baseAlias), bun.Ident(parentCol))
 		} else {
 			subq = db.NewSelect().
 				Table(child.TableName).
 				ColumnExpr("?.?", bun.Ident(child.TableName), bun.Ident(selectCol)).
-				Where("?.? IN (?)", bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), subq)
+				Where("?.? IN (?)", bun.Ident(child.TableName), bun.Ident(childCol), subq)
 		}
 		subq = w.applyChildScopeFilters(ctx, subq, child, child.TableName, strings.Join(relations[:i+1], "."), applyOwnership)
 	}
@@ -2420,7 +2461,7 @@ func (w *Wrapper[T]) buildCountChain(ctx context.Context, baseMeta *metadata.Typ
 	q := db.NewSelect().
 		Table(leaf.TableName).
 		ColumnExpr("COUNT(*)").
-		Where("?.? IN (?)", bun.Ident(leaf.TableName), bun.Ident(leaf.ForeignKeyCol), subq)
+		Where("?.? IN (?)", bun.Ident(leaf.TableName), bun.Ident(leafCol), subq)
 	return w.applyChildScopeFilters(ctx, q, leaf, leaf.TableName, leafPath, applyOwnership)
 }
 
@@ -2462,7 +2503,7 @@ func (w *Wrapper[T]) ComputeIncludeCounts(ctx context.Context, items []*T, inclu
 		}
 
 		// Same ownership scoping ?include= applies, so counts cannot reveal rows the caller cannot list
-		counts, err := w.queryRelationCounts(ctx, childChain, relations, pks, allowedIncludes[relPath])
+		counts, err := w.queryRelationCounts(ctx, meta, childChain, relations, pks, allowedIncludes[relPath])
 		if err != nil {
 			slog.WarnContext(ctx, "failed to compute include count", "relation", relPath, "error", err)
 			continue
@@ -2483,7 +2524,7 @@ func (w *Wrapper[T]) ComputeIncludeCounts(ctx context.Context, items []*T, inclu
 // Returns a map of parent PK (as string) → count of matching child records.
 // Every level is scoped to rows the caller may see (ownership when applyOwnership, tenant and
 // partitions always, each level using the access for its own relation path).
-func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, chain []*metadata.TypeMetadata, relations []string, pks []interface{}, applyOwnership bool) (map[string]int, error) {
+func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, baseMeta *metadata.TypeMetadata, chain []*metadata.TypeMetadata, relations []string, pks []interface{}, applyOwnership bool) (map[string]int, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.Store.GetTimeout())
 	defer cancel()
 
@@ -2491,27 +2532,33 @@ func (w *Wrapper[T]) queryRelationCounts(ctx context.Context, chain []*metadata.
 
 	firstChild := chain[0]
 	leaf := chain[len(chain)-1]
-	query := db.NewSelect().
-		Table(leaf.TableName).
-		ColumnExpr("?.? AS parent_ref", bun.Ident(firstChild.TableName), bun.Ident(firstChild.ForeignKeyCol)).
-		ColumnExpr("COUNT(*) AS cnt")
+	query := db.NewSelect().Table(leaf.TableName)
 
 	// Add JOINs for intermediate levels (from leaf back to first child)
 	for i := len(chain) - 1; i > 0; i-- {
 		child := chain[i]
 		parent := chain[i-1]
-		query = query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(parent.TableName), bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parent.TableName), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
+		childCol, parentCol := w.childLink(child)
+		query = query.Join("JOIN ? ON ?.? = ?.?", bun.Ident(parent.TableName), bun.Ident(child.TableName), bun.Ident(childCol), bun.Ident(parent.TableName), bun.Ident(parentCol))
 	}
+
+	// Counts are grouped by the base row they belong to. A first level holding the foreign key
+	// carries that value itself; for a lookup the base row holds it, so the base table is joined.
+	refTable, refCol := firstChild.TableName, firstChild.ForeignKeyCol
+	if firstCol, baseCol := w.childLink(firstChild); firstCol != firstChild.ForeignKeyCol {
+		refTable, refCol = "restgen_base", w.pkColumn(baseMeta)
+		query = query.Join("JOIN ? AS ? ON ?.? = ?.?", bun.Ident(baseMeta.TableName), bun.Ident(refTable), bun.Ident(refTable), bun.Ident(baseCol), bun.Ident(firstChild.TableName), bun.Ident(firstCol))
+	}
+	query = query.
+		ColumnExpr("?.? AS parent_ref", bun.Ident(refTable), bun.Ident(refCol)).
+		ColumnExpr("COUNT(*) AS cnt")
 
 	for i, level := range chain {
 		query = w.applyChildScopeFilters(ctx, query, level, level.TableName, strings.Join(relations[:i+1], "."), applyOwnership)
 	}
 
-	// WHERE first_child.fk IN (pks)
-	query = query.Where("?.? IN (?)", bun.Ident(firstChild.TableName), bun.Ident(firstChild.ForeignKeyCol), bun.List(pks))
-
-	// GROUP BY first_child.fk
-	query = query.GroupExpr("?.?", bun.Ident(firstChild.TableName), bun.Ident(firstChild.ForeignKeyCol))
+	query = query.Where("?.? IN (?)", bun.Ident(refTable), bun.Ident(refCol), bun.List(pks))
+	query = query.GroupExpr("?.?", bun.Ident(refTable), bun.Ident(refCol))
 
 	rows, err := query.Rows(ctx)
 	if err != nil {
@@ -2553,11 +2600,12 @@ func (w *Wrapper[T]) buildExistsChain(ctx context.Context, baseMeta *metadata.Ty
 	var innerSubq *bun.SelectQuery
 	for i := len(chain) - 1; i >= 0; i-- {
 		child := chain[i]
+		childCol, parentCol := w.childLink(child)
 
 		subq := db.NewSelect().
 			Table(child.TableName).
 			ColumnExpr("1").
-			Where("?.? = ?.?", bun.Ident(child.TableName), bun.Ident(child.ForeignKeyCol), bun.Ident(parents[i]), bun.Ident(defaultParentJoinCol(child.ParentJoinCol)))
+			Where("?.? = ?.?", bun.Ident(child.TableName), bun.Ident(childCol), bun.Ident(parents[i]), bun.Ident(parentCol))
 		subq = w.applyChildScopeFilters(ctx, subq, child, child.TableName, strings.Join(relations[:i+1], "."), applyOwnership)
 
 		if i == len(chain)-1 && innerFilter != nil {

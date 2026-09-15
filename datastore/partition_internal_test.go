@@ -14,11 +14,13 @@ import (
 
 type partProject struct {
 	bun.BaseModel `bun:"table:part_projects"`
-	ID            int    `bun:"id,pk,autoincrement"`
-	Region        string `bun:"region" json:"region"`
-	Level         int    `bun:"level"`
-	Untagged      string `bun:"untagged" json:"-"`
-	ManagerID     int    `bun:"manager_id"`
+	ID            int          `bun:"id,pk,autoincrement"`
+	Region        string       `bun:"region" json:"region"`
+	Level         int          `bun:"level"`
+	Untagged      string       `bun:"untagged" json:"-"`
+	ManagerID     int          `bun:"manager_id"`
+	Manager       *partManager `bun:"rel:belongs-to,join:manager_id=id"`
+	Tasks         []*partTask  `bun:"rel:has-many,join:id=project_id"`
 }
 
 type partTask struct {
@@ -37,6 +39,14 @@ type partComment struct {
 
 type partManager struct {
 	bun.BaseModel `bun:"table:part_managers"`
+	ID            int       `bun:"id,pk,autoincrement"`
+	Name          string    `bun:"name"`
+	DeskID        int       `bun:"desk_id,nullzero"`
+	Desk          *partDesk `bun:"rel:belongs-to,join:desk_id=id"`
+}
+
+type partDesk struct {
+	bun.BaseModel `bun:"table:part_desks"`
 	ID            int    `bun:"id,pk,autoincrement"`
 	Name          string `bun:"name"`
 }

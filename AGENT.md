@@ -676,6 +676,8 @@ Single-item responses (Get, Create, Update, Patch, Delete) return the raw object
 - Parent direction: `?include=Author` — auto-derived from `rel:belongs-to` tags, no `WithRelationName` needed
 - Auth is cumulative AND (deeper levels blocked if parent fails), ownership is cumulative OR
 - Middle-level auth failure silently omits everything below
+- A child route's ownership applies to its include, count, and relation filter whether or not the parent route has ownership
+- A single route nested under its parent (`AsSingleRoute`) authorizes `?include=` of that lookup; a lookup the caller may not see is omitted from the row without hiding the row
 
 ## Error Handling
 

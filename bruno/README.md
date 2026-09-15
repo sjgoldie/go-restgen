@@ -373,7 +373,7 @@ cd examples/scoped
 go run main.go
 ```
 
-**Tests cover (48 tests):**
+**Tests cover (56 tests):**
 - Global scope sees every region; a scoped grant sees only its regions, with matching `total_count`
 - A grant for two regions; a grant for another scope is 403; no auth is 401
 - Get outside access is 404
@@ -388,6 +388,7 @@ go run main.go
 - A shared project cannot be moved to another region; deletes never go through a share
 - Top-level assessments partitioned through `Project.Region`: list and get narrowed, create outside access 403, missing project 400, re-pointing to an APAC project 403
 - Shares through `Via: "Project"`: a viewer lists the shared project's assessments, an editor updates and creates them, a shared assessment cannot be re-pointed, deletes never go through a share
+- A category lookup nested with `AsSingleRoute`: `?include=Category` within the category grant, outside it (category omitted, project still listed), with a global category scope, and `filter[Category][exists]` with `include_count=Category` seeing only visible categories
 
 **Test users (headers):**
 - `X-User` - user ID
@@ -396,7 +397,7 @@ go run main.go
 
 ## Test Coverage
 
-**Total: 396 end-to-end API tests** across 17 example applications.
+**Total: 404 end-to-end API tests** across 17 example applications.
 
 These Bruno tests provide **end-to-end API coverage** for the example applications. They complement the unit tests by:
 

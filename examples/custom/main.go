@@ -25,7 +25,7 @@ import (
 // Global db reference for custom handlers
 var db datastore.Store
 
-// User model - demonstrates custom Get handler for /me endpoint
+// User model - keyed by an internal ID, with the auth user ID in ExternalID; served at /me
 type User struct {
 	bun.BaseModel `bun:"table:users"`
 	ID            int       `bun:"id,pk,autoincrement" json:"id"`
@@ -185,38 +185,6 @@ func authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Custom handler: Get current user from auth token instead of URL param
-func customGetMe(ctx context.Context, svc *service.Common[User], _ *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string) (*User, error) {
-	if auth == nil {
-		return nil, fmt.Errorf("not authenticated")
-	}
-	// Find user by external_id (auth UserID) instead of primary key
-	var user User
-	err := db.GetDB().NewSelect().Model(&user).Where("external_id = ?", auth.UserID).Scan(ctx)
-	if err != nil {
-		return nil, err
-	}
-	_ = svc
-	return &user, nil
-}
-
-// Custom handler: Update current user from auth token
-func customUpdateMe(ctx context.Context, svc *service.Common[User], _ *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string, item User) (*User, error) {
-	if auth == nil {
-		return nil, fmt.Errorf("not authenticated")
-	}
-	// Find existing user
-	var existing User
-	err := db.GetDB().NewSelect().Model(&existing).Where("external_id = ?", auth.UserID).Scan(ctx)
-	if err != nil {
-		return nil, err
-	}
-	// Update using the existing user's ID
-	item.ID = existing.ID
-	item.ExternalID = existing.ExternalID // Can't change external ID
-	return svc.Update(ctx, fmt.Sprintf("%d", existing.ID), item)
-}
-
 // Custom handler: GetAll tasks filtered by current user
 func customGetMyTasks(ctx context.Context, svc *service.Common[Task], _ *metadata.TypeMetadata, auth *metadata.AuthInfo) ([]*Task, int, map[string]float64, *metadata.CursorInfo, error) {
 	if auth == nil {
@@ -319,13 +287,11 @@ func main() {
 
 	b := router.NewBuilder(r)
 
-	// /me endpoint - single route with custom Get and Update using auth token
-	// AsSingleRouteWithUpdate("") creates GET, PUT, and PATCH /me (no {id} parameter)
+	// /me - the caller's own user. Users are keyed by an internal ID; the auth user ID is held in
+	// ExternalID, so the user is found by that field.
 	router.RegisterRoutes[User](b, "/me",
-		router.AsSingleRouteWithUpdate(""), // Empty string = no parent FK, ID from custom logic
-		router.IsAuthenticated(),
-		router.WithCustomGet(customGetMe),
-		router.WithCustomUpdate(customUpdateMe),
+		router.AsCurrentUserExternal("ExternalID"),
+		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut}, Scopes: []string{router.ScopeAuthOnly}},
 	)
 
 	// /users - standard CRUD for admin
@@ -365,7 +331,7 @@ func main() {
 	fmt.Println("Use fake bearer tokens: user:<userID>:<scope1>,<scope2>,...")
 	fmt.Println("Example: Bearer user:alice:user")
 	fmt.Println("\n=== Custom Handler Examples ===")
-	fmt.Println("\n1. /me - Single route with custom Get/Update using auth token")
+	fmt.Println("\n1. /me - The caller's own user, found by ExternalID (AsCurrentUserExternal)")
 	fmt.Println("   GET  /me  -> Returns current user from auth token")
 	fmt.Println("   PUT  /me  -> Updates current user from auth token")
 	fmt.Println("\n2. /my-tasks - Custom GetAll/Create with auto-owner")

@@ -167,7 +167,7 @@ go run main.go
 - Open the `auth-example` folder
 - Click "Run Collection" to run all tests in sequence
 
-**Tests cover (58 tests):**
+**Tests cover (70 tests):**
 1. **Articles** - Public reads, publisher-only writes
 2. **Blogs** - Ownership filtering with query parameters:
    - Users see only their blogs, admin sees all
@@ -184,7 +184,10 @@ go run main.go
    - Owner includes child/parent relations
    - Admin bypasses ownership on includes
    - No auth blocked (401)
-   - Nested includes through ownership chain
+. **Current user** - `/me` with `AsCurrentUser`:
+   - Each caller gets their own profile; no auth 401, no profile 404
+   - A PATCH body cannot redirect the update to another user; PUT has no auth config (401)
+   - `/me/blogs` lists only the caller's blogs and creates blogs owned by the caller; `?include=Blogs`
 
 **Test users (bearer tokens):**
 - `user:alice:user` - Regular user
@@ -288,14 +291,16 @@ cd examples/relations
 go run main.go
 ```
 
-**Tests cover (23 tests):**
+**Tests cover (46 tests):**
 - Include child relations (has-many)
 - Include parent relations (belongs-to)
 - Multiple includes, invalid includes (silently ignored)
 - Ownership filtering on includes
 - Single routes (GET/PUT) for belongs-to relations
-- `/me` endpoint with custom get/update
-- Method restrictions on single routes (no POST/DELETE)
+- `/me` with `AsCurrentUserExternal("ExternalID")`: get and update the caller's own user; the external ID cannot be changed; no POST, DELETE has no auth config
+- A top-level single route (`/broken-me`) is not registered (404)
+- Routes nested under the author single route (`/posts/{id}/author/posts`): scoped to the post's author, create under it, nothing through a post the caller does not own, `?include=Posts`
+- Relation filters (`exists`, `count_*`) and `include_count`, with ownership
 
 ### Files Proxy Example Tests
 
@@ -397,7 +402,7 @@ go run main.go
 
 ## Test Coverage
 
-**Total: 404 end-to-end API tests** across 17 example applications.
+**Total: 422 end-to-end API tests** across 17 example applications.
 
 These Bruno tests provide **end-to-end API coverage** for the example applications. They complement the unit tests by:
 

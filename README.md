@@ -238,6 +238,7 @@ go-restgen automatically handles parent-child relationships with full chain vali
 - IDs in JSON body are ignored (path takes precedence)
 - Parent chain is validated at database level with JOINs
 - Returns 404 if resource doesn't belong to parent chain
+- A request that reaches a nested type without its parent's ID matches no rows, rather than every row
 
 See the [nested routes example](./examples/nested_routes) for a complete working example with 3-level nesting.
 
@@ -428,14 +429,14 @@ type Post struct {
 
 See the [relations example](./examples/relations) for a complete working example.
 
-## Single Routes (Belongs-To Relations)
+## Single Routes and the Current User
 
-go-restgen supports single-object routes for belongs-to relationships. Unlike collection routes that return arrays, single routes return a single object and only support GET (and optionally PUT and/or PATCH).
+Single routes serve one object instead of a collection, at a path with no `{id}` segment.
 
 ### Use Cases
 
-- **Nested belongs-to**: `/posts/{id}/author` - Get the author of a post
-- **Current user endpoint**: `/me` - Get/update the authenticated user
+- **Nested belongs-to**: `/posts/{id}/author` - Get the author of a post (`AsSingleRoute`)
+- **Current user**: `/me` - The caller's own row (`AsCurrentUser`, `AsCurrentUserExternal`)
 
 ### Nested Single Route (Parent FK Field)
 
@@ -464,6 +465,8 @@ router.RegisterRoutes[Post](b, "/posts",
 
 Registering the single route under the parent also authorizes `?include=Author` on posts, using the single route's auth. It inherits the parent's partitions like any child route: the author is included when it is referenced by a post within the caller's access for the author route, and left out otherwise without hiding the post.
 
+Routes nested under a single route are scoped to the row the parent points at. With books nested under `/posts/{id}/author`, `GET /posts/1/author/books` lists the books of post 1's author, and a book created there belongs to that author. The author's key is read from the post once per request on those routes; a post with no author returns `404`, and access to the post still applies.
+
 To also allow PUT and PATCH on the single route:
 
 ```go
@@ -473,48 +476,69 @@ router.RegisterRoutes[User](b, "/author",
 )
 ```
 
-### Root-Level Single Route (Custom Logic)
+A single route must be nested under its parent and name the parent's field. A top-level `AsSingleRoute`, or one with an empty field, is logged as a warning at registration and not registered, together with its nested routes. Use `AsCurrentUser` for the caller's own row.
 
-For routes like `/me` where the ID comes from authentication context rather than a URL parameter, pass an empty string and provide custom handlers:
+### Current User (`AsCurrentUser`)
+
+`AsCurrentUser()` serves the caller's own row at the route's path: the row whose primary key is `AuthInfo.UserID`. Use it when users are keyed by the ID your auth middleware puts in `AuthInfo.UserID` (`WithAlternatePK` when the key field is not `ID`).
 
 ```go
-// Custom get - ID from auth context
-func getMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string) (*User, error) {
-    if auth == nil {
-        return nil, fmt.Errorf("not authenticated")
-    }
-    // Look up user by external ID from auth
-    return lookupUserByExternalID(ctx, auth.UserID)
+type Profile struct {
+    bun.BaseModel `bun:"table:profiles"`
+    ID            string  `bun:"id,pk" json:"id"` // The auth user ID
+    DisplayName   string  `bun:"display_name,notnull" json:"display_name"`
+    Blogs         []*Blog `bun:"rel:has-many,join:id=author_id" json:"blogs,omitempty"`
 }
 
-// Custom update - must set ID to prevent fake ID in request body
-func updateMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string, item User) (*User, error) {
-    if auth == nil {
-        return nil, fmt.Errorf("not authenticated")
-    }
-    userID := lookupUserIDByExternalID(auth.UserID)
-    item.ID = userID  // Prevent client from setting fake ID
-    return svc.Update(ctx, strconv.Itoa(userID), item)
-}
-
-router.RegisterRoutes[User](b, "/me",
-    router.AsSingleRouteWithUpdate(""),  // Empty string = no parent FK
-    router.IsAuthenticated(),
-    router.WithCustomGet(getMe),
-    router.WithCustomUpdate(updateMe),
+router.RegisterRoutes[Profile](b, "/me",
+    router.AsCurrentUser(),
+    router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPatch}, Scopes: []string{router.ScopeAuthOnly}},
+    func(b *router.Builder) {
+        // GET /me/blogs, POST /me/blogs - the caller's blogs
+        router.RegisterRoutes[Blog](b, "/blogs", router.IsAuthenticated(), router.WithRelationName("Blogs"))
+    },
 )
 ```
 
-**Important**: Without custom handlers on root-level single routes, GET/PUT/PATCH will fail because there's no way to determine the ID.
+- The route's item routes (GET, PUT, PATCH, DELETE, actions, endpoints, SSE) are mounted at the path itself instead of under `/{id}`, and the route's auth configs decide which methods are allowed. Collection routes (list, create, batch) are not mounted.
+- The row's ID always comes from `AuthInfo`, never from the path or the body. `/me/{id}` matches no route, and an `id` in a PUT or PATCH body is overwritten.
+- Nested routes are scoped to the caller's row as they would be under `/{id}`: `/me/blogs` lists only the caller's blogs, and a blog created there belongs to the caller.
+- No user ID returns `401`; no row for the caller returns `404`.
+- The route can be nested under a parent: `/businessunits/{id}/user` serves the caller's row only if it belongs to that business unit, and `404` otherwise.
+
+### Current User by Another Field (`AsCurrentUserExternal`)
+
+When users are keyed by their own ID and `AuthInfo.UserID` is held in another field, such as an identity provider's subject, use `AsCurrentUserExternal` with that field:
+
+```go
+type User struct {
+    bun.BaseModel `bun:"table:users"`
+    ID            int    `bun:"id,pk,autoincrement" json:"id"`
+    ExternalID    string `bun:"external_id,unique,notnull" json:"external_id"` // The auth user ID
+    Name          string `bun:"name,notnull" json:"name"`
+}
+
+router.RegisterRoutes[User](b, "/me",
+    router.AsCurrentUserExternal("ExternalID"),
+    router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut}, Scopes: []string{router.ScopeAuthOnly}},
+)
+```
+
+It behaves like `AsCurrentUser`, with these additions:
+
+- The caller's row is the one whose field equals `AuthInfo.UserID`, looked up once per request on the route and its nested routes. On a tenant route the lookup is scoped to the caller's tenant (and runs in a tenant transaction on RLS routes), and a request without a tenant ID returns `401`.
+- Updates always write `AuthInfo.UserID` to the field, so the caller cannot change which user the row belongs to.
+- The field must be unique. A field not declared `unique` is logged as a warning at registration; if more than one row matches the caller, the request returns `404`.
+- A field that is not a column, or is the primary key, is logged as a warning at registration and the route is not registered.
 
 ### Key Differences from Collection Routes
 
-| Feature | Collection Route | Single Route |
-|---------|-----------------|--------------|
-| Response | Array `[...]` | Single object `{...}` |
-| Endpoints | GET, POST, PUT, PATCH, DELETE | GET only (or GET + PUT + PATCH with `WithUpdate`) |
-| ID source | URL parameter | Parent's FK field or custom logic |
-| Use case | Has-many relations | Belongs-to relations |
+| Feature | Collection Route | Single Route | Current User |
+|---------|-----------------|--------------|--------------|
+| Response | Array `[...]` | Single object `{...}` | Single object `{...}` |
+| Endpoints | GET, POST, PUT, PATCH, DELETE | GET only (or GET + PUT + PATCH with `WithUpdate`) | Item routes, allowed by auth config |
+| ID source | URL parameter | Parent's FK field | `AuthInfo.UserID` |
+| Use case | Has-many relations | Belongs-to relations | The caller's own row |
 
 ### Security
 
@@ -1812,7 +1836,6 @@ go-restgen allows you to override the default CRUD behavior with custom handler 
 
 ### Use Cases
 
-- **`/me` endpoint**: Get the current user from auth token instead of URL parameter
 - **Auto-set ownership**: Automatically set `owner_id` from authenticated user on create
 - **Custom filtering**: Filter GetAll results based on the authenticated user
 - **Custom validation**: Add business logic validation in the handler
@@ -1883,29 +1906,6 @@ type CustomDeleteFunc[T any] func(
     auth *metadata.AuthInfo,
     id string,
 ) error
-```
-
-### Example: /me Endpoint
-
-Get the current user from auth token instead of URL parameter:
-
-```go
-// Custom Get that uses auth.UserID instead of URL id
-func customGetMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, id string) (*User, error) {
-    if auth == nil {
-        return nil, fmt.Errorf("not authenticated")
-    }
-    // Find user by external_id (auth UserID) instead of primary key
-    var user User
-    err := db.GetDB().NewSelect().Model(&user).Where("external_id = ?", auth.UserID).Scan(ctx)
-    return &user, err
-}
-
-router.RegisterRoutes[User](b, "/me",
-    router.AsSingleRouteWithUpdate(""),  // Empty string = no parent FK, ID from custom logic
-    router.IsAuthenticated(),
-    router.WithCustomGet(customGetMe),
-)
 ```
 
 ### Example: Auto-Set Owner on Create
@@ -2973,7 +2973,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 go tool cover -func=/tmp/coverage.out
 ```
 
-For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 404 API tests across 17 example applications.
+For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 422 API tests across 17 example applications.
 
 You can override the default port (8080) using the `PORT` environment variable:
 
@@ -3000,6 +3000,7 @@ go-restgen builds on these excellent projects:
 - [x] UUID primary key support
 - [x] Relation includes via `?include=` with auth enforcement
 - [x] Single routes for belongs-to relations (`AsSingleRoute`)
+- [x] Current user routes (`AsCurrentUser`, `AsCurrentUserExternal`)
 - [x] File upload/download with pluggable storage (proxy and signed URL modes)
 - [x] Action endpoints for custom operations (`POST /resource/{id}/action`)
 - [x] Batch operations for bulk create/update/patch/delete (`/resource/batch`)

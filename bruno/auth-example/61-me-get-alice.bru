@@ -1,0 +1,27 @@
+meta {
+  name: Me - Alice Gets Her Profile
+  type: http
+  seq: 61
+}
+
+get {
+  url: {{baseUrl}}/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq alice
+  res.body.display_name: eq Alice
+}
+
+docs {
+  # AsCurrentUser
+  /me is registered with AsCurrentUser, so it serves the profile whose ID is the caller's
+  user ID. There is no {id} in the path.
+}

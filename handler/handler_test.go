@@ -3551,3 +3551,30 @@ func TestHandler_GetAll_IncludeCounts_NoAuth(t *testing.T) {
 		t.Errorf("Expected no counts (Posts not authorized), got %v", envelope.Counts)
 	}
 }
+
+func TestHandler_Get_CurrentUser(t *testing.T) {
+	cleanTable(t)
+	db, _ := datastore.Get()
+	if _, err := db.GetDB().NewInsert().Model(&TestUser{Name: "Me", Email: "me@example.com"}).Exec(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := *userMeta
+	meta.CurrentUser = true
+	serve := func(ctx context.Context) *httptest.ResponseRecorder {
+		r := chi.NewRouter()
+		r.Use(withMeta(&meta))
+		r.Get("/me", handler.Get[TestUser](handler.StandardGet[TestUser]))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/me", nil).WithContext(ctx))
+		return w
+	}
+
+	ctx := context.WithValue(context.Background(), metadata.ParentIDsKey, map[string]string{"id": "1"})
+	if w := serve(ctx); w.Code != http.StatusOK {
+		t.Errorf("ID from the context: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if w := serve(context.Background()); w.Code != http.StatusUnauthorized {
+		t.Errorf("no ID in the context: expected 401, got %d", w.Code)
+	}
+}

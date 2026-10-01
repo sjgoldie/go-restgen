@@ -15,9 +15,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/sjgoldie/go-restgen/datastore"
-	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/router"
-	"github.com/sjgoldie/go-restgen/service"
 )
 
 // User model - top level resource
@@ -139,30 +137,6 @@ func authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// getMe is a custom get function that returns the authenticated user
-// Used for /me endpoint where there's no parent FK - the ID comes from auth context
-func getMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string) (*User, error) {
-	db, _ := datastore.Get()
-	var user User
-	err := db.GetDB().NewSelect().Model(&user).Where("external_id = ?", auth.UserID).Scan(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &user, nil
-}
-
-// updateMe is a custom update function that updates the authenticated user
-func updateMe(ctx context.Context, svc *service.Common[User], meta *metadata.TypeMetadata, auth *metadata.AuthInfo, _ string, item User) (*User, error) {
-	db, _ := datastore.Get()
-	var user User
-	err := db.GetDB().NewSelect().Model(&user).Where("external_id = ?", auth.UserID).Scan(ctx)
-	if err != nil {
-		return nil, err
-	}
-	item.ID = user.ID
-	return svc.Update(ctx, fmt.Sprintf("%d", user.ID), item)
-}
-
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelWarn,
@@ -208,17 +182,14 @@ func main() {
 		router.AllPublic(),
 	)
 
-	// /me - single route with custom get/put/patch that returns current user from auth
-	// This demonstrates AsSingleRouteWithUpdate("") with no parent FK - ID comes from auth context
+	// /me - the caller's own user, found by ExternalID, which holds the auth user ID
 	router.RegisterRoutes[User](b, "/me",
-		router.AsSingleRouteWithUpdate(""),
-		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut, router.MethodPatch}, Scopes: []string{"user"}},
-		router.WithCustomGet(getMe),
-		router.WithCustomUpdate(updateMe),
+		router.AsCurrentUserExternal("ExternalID"),
+		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut}, Scopes: []string{"user"}},
 	)
 
-	// /broken-me - single route without custom get/put/patch (should return 500)
-	// This demonstrates what happens when AsSingleRouteWithUpdate("") is used without custom handlers
+	// /broken-me - a single route with no parent to resolve its row from. It is logged as a
+	// warning at startup and not registered, so the path returns 404.
 	router.RegisterRoutes[User](b, "/broken-me",
 		router.AsSingleRouteWithUpdate(""),
 		router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut, router.MethodPatch}, Scopes: []string{"user"}},
@@ -235,6 +206,14 @@ func main() {
 				router.WithRelationName("Author"),
 				router.AsSingleRouteWithUpdate("AuthorID"),
 				router.AllPublic(),
+				func(b *router.Builder) {
+					// The author's posts (GET/POST /posts/{id}/author/posts), scoped to the author the
+					// post points at. Also enables ?include=Posts on the author.
+					router.RegisterRoutes[Post](b, "/posts",
+						router.AllWithOwnershipUnless([]string{"OwnerID"}, "admin"),
+						router.WithRelationName("Posts"),
+					)
+				},
 			)
 			// Comments - has-many collection route (GET /posts/{id}/comments)
 			// Also enables ?include=Comments on Post

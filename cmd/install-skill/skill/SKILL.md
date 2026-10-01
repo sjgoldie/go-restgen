@@ -132,6 +132,31 @@ Response with `include_count`:
 
 Unauthorized relations are silently skipped (filter ignored, count excluded).
 
+## Current User
+
+```go
+// Users keyed by the auth user ID: GET/PATCH /me, plus the caller's blogs
+router.RegisterRoutes[Profile](b, "/me",
+    router.AsCurrentUser(),
+    router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPatch}, Scopes: []string{router.ScopeAuthOnly}},
+    func(b *router.Builder) {
+        router.RegisterRoutes[Blog](b, "/blogs", router.IsAuthenticated(), router.WithRelationName("Blogs"))
+    },
+)
+
+// Users keyed by an internal ID, with the auth user ID in a unique field
+router.RegisterRoutes[User](b, "/me",
+    router.AsCurrentUserExternal("ExternalID"),
+    router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut}, Scopes: []string{router.ScopeAuthOnly}},
+)
+```
+
+- Item routes (GET, PUT, PATCH, DELETE, actions, endpoints, SSE) are mounted at the path; the auth configs decide which methods are allowed. No list, create or batch.
+- The ID always comes from `AuthInfo`: `/me/{id}` matches nothing and a body `id` is overwritten. No user ID = 401, no row = 404.
+- Nested routes are scoped to the caller's row, like children under `/{id}`.
+- `AsCurrentUserExternal` finds the row by the field (tenant-scoped on tenant routes) and writes `AuthInfo.UserID` to it on every update.
+- Don't use `AsSingleRoute("")` for `/me`: a single route must be nested under its parent with the parent's field, or it is not registered.
+
 ## Custom Endpoints (Anything Funcs)
 
 ```go

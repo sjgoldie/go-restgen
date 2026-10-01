@@ -15,12 +15,12 @@ auth:bearer {
 }
 
 assert {
-  res.status: eq 405
+  res.status: eq 401
 }
 
 docs {
-  # DELETE Not Allowed on Single Route
+  # Methods Without an Auth Config Are Blocked
 
-  Single routes only support GET (and optionally PUT).
-  DELETE should return 405 Method Not Allowed.
+  AsCurrentUser mounts the item routes at /me, including DELETE. The route's auth config only
+  lists GET and PUT, so DELETE is blocked like any unconfigured method.
 }

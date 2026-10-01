@@ -12,10 +12,14 @@ import (
 	"github.com/sjgoldie/go-restgen/metadata"
 )
 
-// ResolveKeyByField returns the primary key, as a string, of the one row of meta's type in store
-// whose field equals value. On a tenant route the row must belong to tenantID, and on an RLS route
+// ResolveKeyByField returns the primary key, as a string, of the one row of meta's type whose
+// field equals value. On a tenant route the row must belong to tenantID, and on an RLS route
 // the lookup runs in a transaction scoped to it. ErrNotFound when no row, or more than one, matches.
-func ResolveKeyByField(ctx context.Context, store Store, meta *metadata.TypeMetadata, field, value, tenantID string) (string, error) {
+func ResolveKeyByField(ctx context.Context, meta *metadata.TypeMetadata, field, value, tenantID string) (string, error) {
+	store, err := Get()
+	if err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeout(ctx, store.GetTimeout())
 	defer cancel()
 

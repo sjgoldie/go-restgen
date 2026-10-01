@@ -16,10 +16,14 @@ import (
 // parent's ParentFKField on the parent row whose key is parentID, as a string. ErrNotFound when
 // the parent row does not exist or does not point at a row. Access to the parent is not checked
 // here; requests that use the key still scope every level of the parent chain.
-func ResolveSingleRouteKey(ctx context.Context, store Store, meta *metadata.TypeMetadata, parentID string) (string, error) {
+func ResolveSingleRouteKey(ctx context.Context, meta *metadata.TypeMetadata, parentID string) (string, error) {
 	parent := meta.ParentMeta
 	if parent == nil || meta.ParentFKField == "" {
 		return "", fmt.Errorf("type %s is not a nested single route", meta.TypeName)
+	}
+	store, err := Get()
+	if err != nil {
+		return "", err
 	}
 	ctx, cancel := context.WithTimeout(ctx, store.GetTimeout())
 	defer cancel()

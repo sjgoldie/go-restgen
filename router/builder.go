@@ -634,13 +634,7 @@ func createCurrentUserMiddleware(meta *metadata.TypeMetadata) func(http.Handler)
 
 			key := authInfo.UserID
 			if meta.CurrentUserField != "" {
-				store, err := datastore.Get()
-				if err != nil {
-					slog.ErrorContext(ctx, "failed to get datastore", "error", err)
-					handler.WriteError(w, http.StatusInternalServerError, handler.ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
-					return
-				}
-				resolved, err := datastore.ResolveKeyByField(ctx, store, meta, meta.CurrentUserField, authInfo.UserID, authInfo.TenantID)
+				resolved, err := datastore.ResolveKeyByField(ctx, meta, meta.CurrentUserField, authInfo.UserID, authInfo.TenantID)
 				if errors.Is(err, apperrors.ErrNotFound) {
 					handler.WriteError(w, http.StatusNotFound, handler.ErrCodeNotFound, http.StatusText(http.StatusNotFound))
 					return
@@ -677,13 +671,7 @@ func createSingleRouteKeyMiddleware(meta *metadata.TypeMetadata) func(http.Handl
 				return
 			}
 
-			store, err := datastore.Get()
-			if err != nil {
-				slog.ErrorContext(ctx, "failed to get datastore", "error", err)
-				handler.WriteError(w, http.StatusInternalServerError, handler.ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
-				return
-			}
-			key, err := datastore.ResolveSingleRouteKey(ctx, store, meta, parentID)
+			key, err := datastore.ResolveSingleRouteKey(ctx, meta, parentID)
 			if errors.Is(err, apperrors.ErrNotFound) {
 				handler.WriteError(w, http.StatusNotFound, handler.ErrCodeNotFound, http.StatusText(http.StatusNotFound))
 				return

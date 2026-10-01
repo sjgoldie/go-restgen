@@ -195,3 +195,35 @@ func TestCurrentUserExternal_UnusableFieldIsNotRegistered(t *testing.T) {
 		})
 	}
 }
+
+// CUNoTable has no table, so looking up the caller fails.
+type CUNoTable struct {
+	bun.BaseModel `bun:"table:cu_no_table"`
+	ID            int    `bun:"id,pk,autoincrement" json:"id"`
+	Subject       string `bun:"subject,unique" json:"subject"`
+}
+
+type CUPairKey struct {
+	bun.BaseModel `bun:"table:cu_pair_keys"`
+	A             int    `bun:"a,pk" json:"a"`
+	B             int    `bun:"b,pk" json:"b"`
+	Subject       string `bun:"subject" json:"subject"`
+}
+
+func TestCurrentUserExternal_LookupErrorIs500(t *testing.T) {
+	r := scopedRouter(&router.AuthInfo{UserID: "alice"}, func(b *router.Builder) {
+		router.RegisterRoutes[CUNoTable](b, "/me", router.AsCurrentUserExternal("Subject"), router.IsAuthenticated())
+	})
+	if w := hardRequest(t, r, "GET", "/me", ""); w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCurrentUserExternal_CompositeKeyIsNotRegistered(t *testing.T) {
+	r := scopedRouter(&router.AuthInfo{UserID: "alice"}, func(b *router.Builder) {
+		router.RegisterRoutes[CUPairKey](b, "/me", router.AsCurrentUserExternal("Subject"), router.IsAuthenticated())
+	})
+	if w := hardRequest(t, r, "GET", "/me", ""); w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}

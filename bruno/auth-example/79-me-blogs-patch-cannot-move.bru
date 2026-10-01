@@ -1,0 +1,34 @@
+meta {
+  name: Me - Patching a Blog Cannot Move It to Another User
+  type: http
+  seq: 79
+}
+
+patch {
+  url: {{baseUrl}}/me/blogs/{{meBlogId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "author_id": "bob",
+    "name": "Still mine"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.author_id: eq alice
+  res.body.name: eq Still mine
+}
+
+docs {
+  # The Parent Link Comes From the Path
+  A blog under /me belongs to the caller. An author_id in the body is ignored on update, as on
+  create, so it cannot move the blog to another user.
+}

@@ -1,0 +1,25 @@
+meta {
+  name: Profiles - Link Alice's Settings
+  type: http
+  seq: 73
+}
+
+patch {
+  url: {{baseUrl}}/profiles/alice
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user,admin
+}
+
+body:json {
+  {
+    "settings_id": {{aliceSettingsId}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}

@@ -78,9 +78,18 @@ type Blog struct {
 // Profile model - one per user, keyed by the auth user ID and served at /me
 type Profile struct {
 	bun.BaseModel `bun:"table:profiles"`
-	ID            string  `bun:"id,pk" json:"id"` // The auth user ID
-	DisplayName   string  `bun:"display_name,notnull" json:"display_name"`
-	Blogs         []*Blog `bun:"rel:has-many,join:id=author_id" json:"blogs,omitempty"`
+	ID            string    `bun:"id,pk" json:"id"` // The auth user ID
+	DisplayName   string    `bun:"display_name,notnull" json:"display_name"`
+	SettingsID    int       `bun:"settings_id,nullzero" json:"settings_id,omitempty"`
+	Settings      *Settings `bun:"rel:belongs-to,join:settings_id=id" json:"settings,omitempty"`
+	Blogs         []*Blog   `bun:"rel:has-many,join:id=author_id" json:"blogs,omitempty"`
+}
+
+// Settings model - a profile points at its settings, served at /me/settings
+type Settings struct {
+	bun.BaseModel `bun:"table:settings"`
+	ID            int    `bun:"id,pk,autoincrement" json:"id"`
+	Theme         string `bun:"theme,notnull" json:"theme"`
 }
 
 func (b *Blog) BeforeAppendModel(ctx context.Context, query bun.Query) error {
@@ -260,6 +269,7 @@ func main() {
 		(*Author)(nil),
 		(*Blog)(nil),
 		(*Profile)(nil),
+		(*Settings)(nil),
 		(*Post)(nil),
 		(*Comment)(nil),
 		(*ModeratorAction)(nil),
@@ -300,6 +310,11 @@ func main() {
 		router.AllScoped("admin"),
 	)
 
+	// Settings - managed by admins, linked to a profile by its settings_id
+	router.RegisterRoutes[Settings](b, "/settings",
+		router.AllScoped("admin"),
+	)
+
 	// Profiles - one per user, managed by admins
 	router.RegisterRoutes[Profile](b, "/profiles",
 		router.AllScoped("admin"),
@@ -317,6 +332,12 @@ func main() {
 			router.RegisterRoutes[Blog](b, "/blogs",
 				router.IsAuthenticated(),
 				router.WithRelationName("Blogs"),
+			)
+			// The settings the caller's profile points at (GET/PUT/PATCH /me/settings)
+			router.RegisterRoutes[Settings](b, "/settings",
+				router.AsSingleRouteWithUpdate("SettingsID"),
+				router.IsAuthenticated(),
+				router.WithRelationName("Settings"),
 			)
 		},
 	)
@@ -424,6 +445,8 @@ func main() {
 	fmt.Println("   PATCH  /me                 (requires auth)")
 	fmt.Println("   GET    /me/blogs           (requires auth - the caller's blogs)")
 	fmt.Println("   POST   /me/blogs           (requires auth - author set to the caller)")
+	fmt.Println("   GET    /me/settings        (requires auth - the settings the caller's profile points at)")
+	fmt.Println("   PATCH  /me/settings        (requires auth)")
 	fmt.Println("\nSee README.md for complete curl examples")
 
 	port := os.Getenv("PORT")

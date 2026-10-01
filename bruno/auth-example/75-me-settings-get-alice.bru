@@ -1,0 +1,25 @@
+meta {
+  name: Me - Alice Gets Her Settings
+  type: http
+  seq: 75
+}
+
+get {
+  url: {{baseUrl}}/me/settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{aliceSettingsId}}
+}
+
+docs {
+  # A Single Route Under the Current User
+  /me/settings is a single route nested under /me: the settings Alice's profile points at.
+}

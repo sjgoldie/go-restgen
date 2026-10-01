@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -402,8 +403,8 @@ func TestPartition_ChildrenInheritThroughTheirParent(t *testing.T) {
 		t.Errorf("create under EMEA project: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	body := `{"project_id":` + strconv.Itoa(f.apacA) + `,"title":"moved"}`
-	if w := hardRequest(t, r, "PUT", emea+"/"+strconv.Itoa(f.emeaTask), body); w.Code != http.StatusForbidden {
-		t.Errorf("move task to another project: expected 403, got %d: %s", w.Code, w.Body.String())
+	if w := hardRequest(t, r, "PUT", emea+"/"+strconv.Itoa(f.emeaTask), body); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"project_id":`+strconv.Itoa(f.emeaA)) {
+		t.Errorf("a project_id in the body cannot move the task: expected 200 under its project, got %d: %s", w.Code, w.Body.String())
 	}
 
 	if got := listCount(emea + "/" + strconv.Itoa(f.emeaTask) + "/comments"); got != 1 {

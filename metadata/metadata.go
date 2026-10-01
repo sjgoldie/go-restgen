@@ -318,9 +318,11 @@ type TypeMetadata struct {
 	ChildMeta map[string]*TypeMetadata // relation name -> child type metadata
 
 	// Single route configuration (for belongs-to relations like /posts/{id}/author)
-	IsSingleRoute bool   // True for AsSingleRoute registrations, where the path ID identifies the parent, not this item
-	RelationName  string // Field name on parent for relation loading (e.g., "Author")
-	ParentFKField string // Field name on parent that holds this object's ID (e.g., "AuthorID")
+	IsSingleRoute    bool   // True for AsSingleRoute registrations, where the path ID identifies the parent, not this item
+	RelationName     string // Field name on parent for relation loading (e.g., "Author")
+	ParentFKField    string // Field name on parent that holds this object's ID (e.g., "AuthorID")
+	CurrentUser      bool   // True for AsCurrentUser routes: the row is the caller's own, identified from AuthInfo
+	CurrentUserField string // For AsCurrentUserExternal routes: the field matched against AuthInfo.UserID
 
 	// Query options for GetAll
 	FilterableFields []string       // Field names allowed for filtering (empty = no filtering)
@@ -355,34 +357,36 @@ type TypeMetadata struct {
 // Slices and maps are fully copied; pointer fields (ParentMeta) reference the same object.
 func (m *TypeMetadata) Clone() *TypeMetadata {
 	result := &TypeMetadata{
-		TypeID:          m.TypeID,
-		TypeName:        m.TypeName,
-		TableName:       m.TableName,
-		URLParamUUID:    m.URLParamUUID,
-		PKField:         m.PKField,
-		ModelType:       m.ModelType,
-		ParentType:      m.ParentType,
-		ParentMeta:      m.ParentMeta, // Intentionally shared - parent is not owned by this metadata
-		ForeignKeyCol:   m.ForeignKeyCol,
-		ParentJoinCol:   m.ParentJoinCol,
-		ParentJoinField: m.ParentJoinField,
-		IsSingleRoute:   m.IsSingleRoute,
-		RelationName:    m.RelationName,
-		ParentFKField:   m.ParentFKField,
-		DefaultSort:     m.DefaultSort,
-		DefaultLimit:    m.DefaultLimit,
-		MaxLimit:        m.MaxLimit,
-		Pagination:      m.Pagination,
-		Validator:       m.Validator,
-		Auditor:         m.Auditor,
-		AfterCommit:     m.AfterCommit,
-		IsFileResource:  m.IsFileResource,
-		BatchLimit:      m.BatchLimit,
-		MaxBodySize:     m.MaxBodySize,
-		MaxUploadSize:   m.MaxUploadSize,
-		TenantField:     m.TenantField,
-		IsTenantTable:   m.IsTenantTable,
-		UseRLS:          m.UseRLS,
+		TypeID:           m.TypeID,
+		TypeName:         m.TypeName,
+		TableName:        m.TableName,
+		URLParamUUID:     m.URLParamUUID,
+		PKField:          m.PKField,
+		ModelType:        m.ModelType,
+		ParentType:       m.ParentType,
+		ParentMeta:       m.ParentMeta, // Intentionally shared - parent is not owned by this metadata
+		ForeignKeyCol:    m.ForeignKeyCol,
+		ParentJoinCol:    m.ParentJoinCol,
+		ParentJoinField:  m.ParentJoinField,
+		IsSingleRoute:    m.IsSingleRoute,
+		RelationName:     m.RelationName,
+		ParentFKField:    m.ParentFKField,
+		CurrentUser:      m.CurrentUser,
+		CurrentUserField: m.CurrentUserField,
+		DefaultSort:      m.DefaultSort,
+		DefaultLimit:     m.DefaultLimit,
+		MaxLimit:         m.MaxLimit,
+		Pagination:       m.Pagination,
+		Validator:        m.Validator,
+		Auditor:          m.Auditor,
+		AfterCommit:      m.AfterCommit,
+		IsFileResource:   m.IsFileResource,
+		BatchLimit:       m.BatchLimit,
+		MaxBodySize:      m.MaxBodySize,
+		MaxUploadSize:    m.MaxUploadSize,
+		TenantField:      m.TenantField,
+		IsTenantTable:    m.IsTenantTable,
+		UseRLS:           m.UseRLS,
 	}
 
 	// Deep copy slices

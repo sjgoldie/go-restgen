@@ -349,6 +349,11 @@ func (w *Wrapper[T]) updateWithOp(ctx context.Context, id string, item T, op met
 	// Re-enforce ownership fields on update (prevents reassigning or orphaning the row)
 	w.reassertOwnership(ctx, meta, existing, &item)
 
+	// The identity field of the caller's own row always holds the caller's user ID
+	if err := setCurrentUserField(ctx, meta, &item); err != nil {
+		return nil, err
+	}
+
 	// Partition fields must stay within the caller's access (prevents moving the row out of it)
 	if err := w.enforcePartitionWrite(ctx, meta, existing, &item); err != nil {
 		return nil, err
@@ -575,9 +580,13 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 		return query, nil, nil
 	}
 
-	// Extract parent IDs from context
-	parentIDs, ok := ctx.Value(metadata.ParentIDsKey).(map[string]string)
-	if !ok || parentIDs == nil {
+	// On a request evaluated by the auth middleware, a nested type is only reachable through its
+	// parent: a level without its parent's ID matches no rows rather than every row. Callers
+	// without a request context (internal service use) are not scoped by parent, as with
+	// partitions.
+	parentIDs, _ := ctx.Value(metadata.ParentIDsKey).(map[string]string)
+	_, enforced := ctx.Value(metadata.IncludePartitionScopesKey).(map[string]metadata.PartitionScope)
+	if parentIDs == nil && !enforced {
 		return query, nil, nil
 	}
 
@@ -632,9 +641,11 @@ func (w *Wrapper[T]) applyParentFiltersWithMeta(ctx context.Context, query *bun.
 	var restrict []clause
 	baseType := currentMeta.ModelType
 	for _, join := range joins {
-		// Check if we have a parent ID for this level
 		parentID, exists := parentIDs[join.parentURLUUID]
 		if !exists {
+			if enforced {
+				return query, []clause{noRows}, nil
+			}
 			continue
 		}
 
@@ -1847,7 +1858,7 @@ func (w *Wrapper[T]) applyNestedInclude(ctx context.Context, query *bun.SelectQu
 		parentName := w.getRelationNameForParent(meta, meta.ParentMeta)
 		if strings.EqualFold(firstRel, parentName) {
 			// Nested parent include (e.g., Account.User)
-			return w.applyNestedParentInclude(ctx, query, meta, parts, applyOwnership)
+			return w.applyNestedParentInclude(ctx, query, meta, parts)
 		}
 	}
 
@@ -1868,8 +1879,9 @@ func (w *Wrapper[T]) applyNestedChildInclude(ctx context.Context, query *bun.Sel
 	})
 }
 
-// applyNestedParentInclude handles nested parent includes like "Account.User"
-func (w *Wrapper[T]) applyNestedParentInclude(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, parts []string, applyOwnership bool) *bun.SelectQuery {
+// applyNestedParentInclude handles nested parent includes like "Account.User". Parents are
+// ancestors in the URL, whose ownership the parent chain already enforces.
+func (w *Wrapper[T]) applyNestedParentInclude(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, parts []string) *bun.SelectQuery {
 	// Validate the entire chain exists in ParentMeta
 	chain := make([]*metadata.TypeMetadata, 0, len(parts))
 	currentMeta := meta

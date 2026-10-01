@@ -1,0 +1,19 @@
+meta {
+  name: Me - Caller Without a Profile Gets 404
+  type: http
+  seq: 64
+}
+
+get {
+  url: {{baseUrl}}/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:charlie:user
+}
+
+assert {
+  res.status: eq 404
+}

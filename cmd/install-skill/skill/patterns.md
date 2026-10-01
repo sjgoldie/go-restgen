@@ -23,9 +23,14 @@ router.RegisterRoutes[Model](builder, "/path",
     // Ownership
     router.AllWithOwnershipUnless([]string{"UserID"}, "admin"),
 
-    // Single resource (belongs-to or /me)
+    // Single resource for a belongs-to relation (nested under the parent only)
     router.AsSingleRoute("AuthorID"),
-    router.AsSingleRouteWithUpdate(""),
+    router.AsSingleRouteWithUpdate("AuthorID"),
+    // Routes nested under a single route are scoped to the row the parent points at
+
+    // The caller's own row (e.g. /me): item routes at the path, ID from AuthInfo
+    router.AsCurrentUser(),                     // primary key = AuthInfo.UserID
+    router.AsCurrentUserExternal("ExternalID"), // unique field = AuthInfo.UserID
 
     // Query options (individual)
     router.WithFilters("Status", "Name"),

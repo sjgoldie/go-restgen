@@ -2,13 +2,16 @@ package router
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"reflect"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/sjgoldie/go-restgen/datastore"
+	apperrors "github.com/sjgoldie/go-restgen/errors"
 	"github.com/sjgoldie/go-restgen/handler"
 	"github.com/sjgoldie/go-restgen/metadata"
 )
@@ -109,6 +112,7 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 	var relationName string
 	var nested NestedFunc
 	var singleRoute *SingleRouteConfig
+	var currentUser *CurrentUserConfig
 	var isFileResource bool
 	var pkField string
 	var joinOn *JoinOnConfig
@@ -161,6 +165,8 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 			sses = append(sses, sseEntry[T]{name: v.Name, fn: v.Fn, auth: v.Auth})
 		case RelationConfig:
 			relationName = v.Name
+		case CurrentUserConfig:
+			currentUser = &v
 		case SingleRouteConfig:
 			singleRoute = &v
 		case FileResourceConfig:
@@ -190,7 +196,7 @@ func RegisterRoutes[T any](b *Builder, path string, options ...interface{}) {
 		}
 	}
 
-	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, afterCommit, custom, batch, batchLimit, actions, endpoints, sses, relationName, singleRoute, isFileResource, pkField, joinOn, tenantField, useRLS, isTenantTable, partitions, maxBodySize, maxUploadSize)
+	registerRoutesWithBuilder[T](b, path, nested, authConfigs, queryConfigs, validator, auditor, afterCommit, custom, batch, batchLimit, actions, endpoints, sses, relationName, singleRoute, currentUser, isFileResource, pkField, joinOn, tenantField, useRLS, isTenantTable, partitions, maxBodySize, maxUploadSize)
 }
 
 // prepareMetadata assembles type metadata and auth configuration before route registration.
@@ -367,12 +373,9 @@ func prepareMetadata[T any](b *Builder, path string, authConfigs []AuthConfig, q
 }
 
 // registerSingleRoutes registers GET (and optionally PUT/PATCH) for single-object routes.
-func registerSingleRoutes[T any](r chi.Router, b *Builder, meta *metadata.TypeMetadata, singleRoute *SingleRouteConfig, relationName string, custom customHandlers[T], authMap map[string]*AuthConfig) {
-	// Use parent's URL param UUID so handler gets parent ID, or empty for root-level
-	meta.URLParamUUID = ""
-	if b.parentMeta != nil {
-		meta.URLParamUUID = b.parentMeta.URLParamUUID
-	}
+// The route keeps its own URL param UUID: its handlers read the parent's ID from the parent's
+// parameter, and nested routes find this row's key under its own entry.
+func registerSingleRoutes[T any](r chi.Router, meta *metadata.TypeMetadata, singleRoute *SingleRouteConfig, relationName string, custom customHandlers[T], authMap map[string]*AuthConfig) {
 	meta.IsSingleRoute = true
 	meta.RelationName = relationName
 	meta.ParentFKField = singleRoute.ParentFKField
@@ -399,7 +402,11 @@ func registerSingleRoutes[T any](r chi.Router, b *Builder, meta *metadata.TypeMe
 }
 
 // registerRoutesWithBuilder is the internal implementation
-func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], afterCommit metadata.AfterCommitFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, useRLS bool, isTenantTable bool, partitions []PartitionConfig, maxBodySize int64, maxUploadSize int64) {
+func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc, authConfigs []AuthConfig, queryConfigs []QueryConfig, validator metadata.ValidatorFunc[T], auditor metadata.AuditFunc[T], afterCommit metadata.AfterCommitFunc[T], custom customHandlers[T], batch batchHandlers[T], batchLimit int, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T], relationName string, singleRoute *SingleRouteConfig, currentUser *CurrentUserConfig, isFileResource bool, pkField string, joinOn *JoinOnConfig, tenantField string, useRLS bool, isTenantTable bool, partitions []PartitionConfig, maxBodySize int64, maxUploadSize int64) {
+	if !singleRouteUsable[T](b, path, singleRoute, currentUser) {
+		return
+	}
+
 	path, setup := prepareMetadata[T](b, path, authConfigs, queryConfigs, validator, auditor, afterCommit, batchLimit, relationName, isFileResource, pkField, joinOn, tenantField, useRLS, isTenantTable, partitions, maxBodySize, maxUploadSize)
 	meta := setup.meta
 	authMap := setup.authMap
@@ -426,7 +433,15 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 		var nestedRouter chi.Router
 
 		if singleRoute != nil {
-			registerSingleRoutes[T](r, b, meta, singleRoute, relationName, custom, authMap)
+			registerSingleRoutes[T](r, meta, singleRoute, relationName, custom, authMap)
+			// Nested routes need this row's own key, resolved from the parent's field
+			nestedRouter = r.With(createSingleRouteKeyMiddleware(meta))
+		} else if currentUser != nil {
+			// Item routes at the path itself, for the caller's own row
+			meta.CurrentUser = true
+			meta.CurrentUserField = currentUser.Field
+			r.Use(createCurrentUserMiddleware(meta))
+			registerItemRoutes[T](r, setup, custom, isFileResource, actions, endpoints, sses)
 			nestedRouter = r
 		} else {
 			// Standard CRUD routes
@@ -493,79 +508,7 @@ func registerRoutesWithBuilder[T any](b *Builder, path string, nested NestedFunc
 				if nested != nil {
 					r.Use(createParentIDMiddleware(meta.URLParamUUID))
 				}
-
-				// Get endpoint - GET /resources/{id}
-				getFunc := custom.get
-				if getFunc == nil {
-					getFunc = handler.StandardGet[T]
-				}
-				r.Method("GET", "/", wrapHandler(handler.Get[T](getFunc), authMap[MethodGet]))
-
-				// Update endpoint - PUT /resources/{id}
-				// File resources don't support update (you delete and re-upload)
-				if !isFileResource {
-					updateFunc := custom.update
-					if updateFunc == nil {
-						updateFunc = handler.StandardUpdate[T]
-					}
-					r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), authMap[MethodPut]))
-				}
-
-				// Patch endpoint - PATCH /resources/{id}
-				// File resources don't support patch (you delete and re-upload)
-				if !isFileResource {
-					patchFunc := custom.patch
-					if patchFunc == nil {
-						patchFunc = handler.StandardPatch[T]
-					}
-					r.Method("PATCH", "/", wrapHandler(handler.Patch[T](patchFunc, handler.StandardGet[T]), authMap[MethodPatch]))
-				}
-
-				// Delete endpoint - DELETE /resources/{id}
-				deleteFunc := custom.delete
-				if deleteFunc == nil {
-					deleteFunc = handler.StandardDelete[T]
-				}
-				r.Method("DELETE", "/", wrapHandler(handler.Delete[T](deleteFunc), authMap[MethodDelete]))
-
-				// Download endpoint - GET /resources/{id}/download (file resources)
-				// For proxy mode: streams the file
-				// For signed URL mode: redirects to signed URL
-				if isFileResource {
-					r.Method("GET", "/download", wrapHandler(handler.Download[T](), authMap[MethodGet]))
-				}
-
-				// Register action endpoints - POST /resources/{id}/{action-name}
-				for i := range actions {
-					// Assign shared auth references to action's auth config for ?include= support
-					actions[i].auth.ChildAuth = setup.childRelationAuth
-					if parentGetAuth := setup.authMap[MethodGet]; parentGetAuth != nil {
-						actions[i].auth.ParentAuth = parentGetAuth.ParentAuth
-						actions[i].auth.ParentIncludeName = parentGetAuth.ParentIncludeName
-					}
-					r.Method("POST", "/"+actions[i].name, wrapHandler(handler.Action[T](actions[i].fn), &actions[i].auth))
-				}
-
-				// Register endpoint handlers - METHOD /resources/{id}/{endpoint-name}
-				for i := range endpoints {
-					endpoints[i].auth.ChildAuth = setup.childRelationAuth
-					if parentGetAuth := setup.authMap[MethodGet]; parentGetAuth != nil {
-						endpoints[i].auth.ParentAuth = parentGetAuth.ParentAuth
-						endpoints[i].auth.ParentIncludeName = parentGetAuth.ParentIncludeName
-					}
-					r.Method(endpoints[i].method, "/"+endpoints[i].name, wrapHandler(handler.Endpoint[T](endpoints[i].fn), &endpoints[i].auth))
-				}
-
-				// Register SSE endpoints - GET /resources/{id}/{sse-name}
-				for i := range sses {
-					sses[i].auth.ChildAuth = setup.childRelationAuth
-					if parentGetAuth := setup.authMap[MethodGet]; parentGetAuth != nil {
-						sses[i].auth.ParentAuth = parentGetAuth.ParentAuth
-						sses[i].auth.ParentIncludeName = parentGetAuth.ParentIncludeName
-					}
-					r.Method("GET", "/"+sses[i].name, wrapHandler(handler.SSE[T](sses[i].fn), &sses[i].auth))
-				}
-
+				registerItemRoutes[T](r, setup, custom, isFileResource, actions, endpoints, sses)
 				nestedRouter = r
 			})
 		}
@@ -674,10 +617,131 @@ func wrapHandler(h http.Handler, authConfig *AuthConfig) http.Handler {
 	return blockUnauthorized(h)
 }
 
+// createCurrentUserMiddleware identifies the caller's own row for an AsCurrentUser route and
+// records its key under the route's parent-ID entry, which the item handlers read as the row's
+// ID and nested routes read as their parent's ID. The key is AuthInfo.UserID or, for
+// AsCurrentUserExternal, the key of the row whose field equals AuthInfo.UserID. A request
+// without a user ID (or without a tenant ID on a tenant route) gets 401; no matching row gets 404.
+func createCurrentUserMiddleware(meta *metadata.TypeMetadata) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+			authInfo, _ := ctx.Value(AuthInfoKey).(*AuthInfo)
+			if authInfo == nil || authInfo.UserID == "" || (meta.TenantField != "" && authInfo.TenantID == "") {
+				handler.WriteError(w, http.StatusUnauthorized, handler.ErrCodeUnauthorized, http.StatusText(http.StatusUnauthorized))
+				return
+			}
+
+			key := authInfo.UserID
+			if meta.CurrentUserField != "" {
+				resolved, err := datastore.ResolveKeyByField(ctx, meta, meta.CurrentUserField, authInfo.UserID, authInfo.TenantID)
+				if errors.Is(err, apperrors.ErrNotFound) {
+					handler.WriteError(w, http.StatusNotFound, handler.ErrCodeNotFound, http.StatusText(http.StatusNotFound))
+					return
+				}
+				if err != nil {
+					slog.ErrorContext(ctx, "failed to resolve current user", "type", meta.TypeName, "error", err)
+					handler.WriteError(w, http.StatusInternalServerError, handler.ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
+					return
+				}
+				key = resolved
+			}
+
+			parentIDs := make(map[string]string)
+			if existing, ok := ctx.Value(metadata.ParentIDsKey).(map[string]string); ok {
+				maps.Copy(parentIDs, existing)
+			}
+			parentIDs[meta.URLParamUUID] = key
+			next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, metadata.ParentIDsKey, parentIDs)))
+		})
+	}
+}
+
+// createSingleRouteKeyMiddleware records the key of a nested single route's row under the route's
+// own parent-ID entry, so nested routes are scoped to that row: for /posts/{id}/author/books, the
+// key of the author the post points at. A parent with no such row gets 404.
+func createSingleRouteKeyMiddleware(meta *metadata.TypeMetadata) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+			parentIDs, _ := ctx.Value(metadata.ParentIDsKey).(map[string]string)
+			parentID := parentIDs[meta.ParentMeta.URLParamUUID]
+			if parentID == "" {
+				handler.WriteError(w, http.StatusBadRequest, handler.ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))
+				return
+			}
+
+			key, err := datastore.ResolveSingleRouteKey(ctx, meta, parentID)
+			if errors.Is(err, apperrors.ErrNotFound) {
+				handler.WriteError(w, http.StatusNotFound, handler.ErrCodeNotFound, http.StatusText(http.StatusNotFound))
+				return
+			}
+			if err != nil {
+				slog.ErrorContext(ctx, "failed to resolve single route row", "type", meta.TypeName, "error", err)
+				handler.WriteError(w, http.StatusInternalServerError, handler.ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
+				return
+			}
+
+			ids := make(map[string]string, len(parentIDs)+1)
+			maps.Copy(ids, parentIDs)
+			ids[meta.URLParamUUID] = key
+			next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, metadata.ParentIDsKey, ids)))
+		})
+	}
+}
+
 // createParentIDMiddleware creates middleware that extracts a parent ID from URL
 // and adds it to the context for child queries
 // paramUUID is the UUID used in the URL parameter name
 // Parent IDs are stored as strings to support both integer and UUID primary keys
+
+// singleRouteUsable reports whether a single-object or current-user route can be registered.
+// A single route needs a parent and the parent's field holding its ID; the two options cannot
+// be combined. An unusable route is logged as a warning and not registered, so neither it nor
+// its nested routes are reachable.
+func singleRouteUsable[T any](b *Builder, path string, singleRoute *SingleRouteConfig, currentUser *CurrentUserConfig) bool {
+	var reason string
+	switch {
+	case singleRoute != nil && currentUser != nil:
+		reason = "AsSingleRoute and AsCurrentUser cannot be combined"
+	case currentUser != nil && currentUser.Field != "":
+		reason = currentUserFieldProblem(reflect.TypeFor[T](), currentUser.Field)
+		if reason == "" {
+			return true
+		}
+	case singleRoute != nil && b.parentMeta == nil:
+		reason = "AsSingleRoute must be nested under its parent route; use AsCurrentUser for the caller's own row"
+	case singleRoute != nil && singleRoute.ParentFKField == "":
+		reason = "AsSingleRoute requires the parent's field holding this row's ID"
+	default:
+		return true
+	}
+	slog.WarnContext(context.Background(), "route not registered: "+reason, "path", path)
+	return false
+}
+
+// currentUserFieldProblem describes why field cannot identify the caller's row on an
+// AsCurrentUserExternal route of tType, or returns "" when it can. A field not declared unique
+// is usable but logged as a warning, since only one row may match the caller.
+func currentUserFieldProblem(tType reflect.Type, field string) string {
+	if _, err := datastore.ColumnName(tType, field); err != nil {
+		return "AsCurrentUserExternal field is not a column on the model"
+	}
+	pk := datastore.PrimaryKeyField(tType)
+	if pk == "" {
+		return "AsCurrentUserExternal requires a model with a single primary key"
+	}
+	if pk == field {
+		return "AsCurrentUserExternal field is the primary key; use AsCurrentUser"
+	}
+	if !datastore.FieldIsUnique(tType, field) {
+		slog.WarnContext(context.Background(), "AsCurrentUserExternal field is not declared unique; a caller matching several rows gets 404",
+			"type", tType.Name(),
+			"field", field)
+	}
+	return ""
+}
+
 func createParentIDMiddleware(paramUUID string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -787,4 +851,80 @@ func RegisterRootEndpoint(b *Builder, method, path string, fn handler.RootEndpoi
 // Root SSE funcs have no parent model. Always registered as GET.
 func RegisterRootSSE(b *Builder, path string, fn handler.RootSSEFunc, auth AuthConfig) {
 	b.router.Method("GET", path, wrapHandler(handler.RootSSE(fn), &auth))
+}
+
+// registerItemRoutes registers the routes for a single row of T: GET, PUT, PATCH, DELETE, file
+// download, actions, endpoints, and SSE. The row's id is the URL parameter meta.URLParamUUID.
+func registerItemRoutes[T any](r chi.Router, setup *metadataSetup, custom customHandlers[T], isFileResource bool, actions []actionEntry[T], endpoints []endpointEntry[T], sses []sseEntry[T]) {
+	// Get endpoint - GET /resources/{id}
+	getFunc := custom.get
+	if getFunc == nil {
+		getFunc = handler.StandardGet[T]
+	}
+	r.Method("GET", "/", wrapHandler(handler.Get[T](getFunc), setup.authMap[MethodGet]))
+
+	// Update endpoint - PUT /resources/{id}
+	// File resources don't support update (you delete and re-upload)
+	if !isFileResource {
+		updateFunc := custom.update
+		if updateFunc == nil {
+			updateFunc = handler.StandardUpdate[T]
+		}
+		r.Method("PUT", "/", wrapHandler(handler.Update[T](updateFunc), setup.authMap[MethodPut]))
+	}
+
+	// Patch endpoint - PATCH /resources/{id}
+	// File resources don't support patch (you delete and re-upload)
+	if !isFileResource {
+		patchFunc := custom.patch
+		if patchFunc == nil {
+			patchFunc = handler.StandardPatch[T]
+		}
+		r.Method("PATCH", "/", wrapHandler(handler.Patch[T](patchFunc, handler.StandardGet[T]), setup.authMap[MethodPatch]))
+	}
+
+	// Delete endpoint - DELETE /resources/{id}
+	deleteFunc := custom.delete
+	if deleteFunc == nil {
+		deleteFunc = handler.StandardDelete[T]
+	}
+	r.Method("DELETE", "/", wrapHandler(handler.Delete[T](deleteFunc), setup.authMap[MethodDelete]))
+
+	// Download endpoint - GET /resources/{id}/download (file resources)
+	// For proxy mode: streams the file
+	// For signed URL mode: redirects to signed URL
+	if isFileResource {
+		r.Method("GET", "/download", wrapHandler(handler.Download[T](), setup.authMap[MethodGet]))
+	}
+
+	// Register action endpoints - POST /resources/{id}/{action-name}
+	for i := range actions {
+		// Assign shared auth references to action's auth config for ?include= support
+		actions[i].auth.ChildAuth = setup.childRelationAuth
+		if parentGetAuth := setup.authMap[MethodGet]; parentGetAuth != nil {
+			actions[i].auth.ParentAuth = parentGetAuth.ParentAuth
+			actions[i].auth.ParentIncludeName = parentGetAuth.ParentIncludeName
+		}
+		r.Method("POST", "/"+actions[i].name, wrapHandler(handler.Action[T](actions[i].fn), &actions[i].auth))
+	}
+
+	// Register endpoint handlers - METHOD /resources/{id}/{endpoint-name}
+	for i := range endpoints {
+		endpoints[i].auth.ChildAuth = setup.childRelationAuth
+		if parentGetAuth := setup.authMap[MethodGet]; parentGetAuth != nil {
+			endpoints[i].auth.ParentAuth = parentGetAuth.ParentAuth
+			endpoints[i].auth.ParentIncludeName = parentGetAuth.ParentIncludeName
+		}
+		r.Method(endpoints[i].method, "/"+endpoints[i].name, wrapHandler(handler.Endpoint[T](endpoints[i].fn), &endpoints[i].auth))
+	}
+
+	// Register SSE endpoints - GET /resources/{id}/{sse-name}
+	for i := range sses {
+		sses[i].auth.ChildAuth = setup.childRelationAuth
+		if parentGetAuth := setup.authMap[MethodGet]; parentGetAuth != nil {
+			sses[i].auth.ParentAuth = parentGetAuth.ParentAuth
+			sses[i].auth.ParentIncludeName = parentGetAuth.ParentIncludeName
+		}
+		r.Method("GET", "/"+sses[i].name, wrapHandler(handler.SSE[T](sses[i].fn), &sses[i].auth))
+	}
 }

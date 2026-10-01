@@ -1,0 +1,31 @@
+meta {
+  name: Me - Alice Creates a Blog Under Her Profile
+  type: http
+  seq: 69
+}
+
+post {
+  url: {{baseUrl}}/me/blogs
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+body:json {
+  {
+    "name": "Alice via me",
+    "author_id": "bob"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.author_id: eq alice
+}
+
+docs {
+  # Created Under the Caller
+  The author is set from the parent, the caller's profile, not from the body.
+}

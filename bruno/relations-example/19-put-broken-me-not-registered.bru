@@ -1,0 +1,27 @@
+meta {
+  name: PUT /broken-me - single route without a parent is not registered
+  type: http
+  seq: 19
+}
+
+put {
+  url: {{baseUrl}}/broken-me
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "name": "Should Fail",
+    "email": "fail@example.com",
+    "external_id": "alice"
+  }
+}
+
+assert {
+  res.status: eq 404
+}

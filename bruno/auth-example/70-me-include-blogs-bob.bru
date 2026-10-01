@@ -1,0 +1,27 @@
+meta {
+  name: Me - Bob Includes His Blogs
+  type: http
+  seq: 70
+}
+
+get {
+  url: {{baseUrl}}/me?include=Blogs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq bob
+}
+
+tests {
+  test("Only Bob's blogs are included", function() {
+    expect(res.body.blogs.length).to.be.above(0);
+    expect(res.body.blogs.every(b => b.author_id === "bob")).to.equal(true);
+  });
+}

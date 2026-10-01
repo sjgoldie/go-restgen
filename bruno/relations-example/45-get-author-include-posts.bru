@@ -1,0 +1,27 @@
+meta {
+  name: GET /posts/{id}/author?include=Posts
+  type: http
+  seq: 45
+}
+
+get {
+  url: {{baseUrl}}/posts/{{alicePostId}}/author?include=Posts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{aliceUserId}}
+}
+
+tests {
+  test("The author's posts are included", function() {
+    expect(res.body.posts.length).to.be.above(0);
+    expect(res.body.posts.every(p => p.author_id === bru.getVar("aliceUserId"))).to.equal(true);
+  });
+}

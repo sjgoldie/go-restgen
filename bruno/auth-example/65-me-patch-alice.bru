@@ -1,0 +1,33 @@
+meta {
+  name: Me - Alice Patches Her Profile
+  type: http
+  seq: 65
+}
+
+patch {
+  url: {{baseUrl}}/me
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+body:json {
+  {
+    "id": "bob",
+    "display_name": "Alice A"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq alice
+  res.body.display_name: eq Alice A
+}
+
+docs {
+  # The Row Is Always the Caller's
+  The ID comes from the auth user ID, never the path or the body, so the id in the body
+  does not point the update at Bob.
+}

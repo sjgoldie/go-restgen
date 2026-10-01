@@ -1,0 +1,36 @@
+meta {
+  name: PUT /me - external ID cannot be changed
+  type: http
+  seq: 40
+}
+
+put {
+  url: {{baseUrl}}/me
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "name": "Alice Updated",
+    "email": "alice-updated@example.com",
+    "external_id": "bob"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{aliceUserId}}
+  res.body.external_id: eq alice
+}
+
+docs {
+  # The Identity Field Is Written From Auth
+
+  ExternalID is the field AsCurrentUserExternal matches against the caller, so restgen writes
+  it from the auth user ID on every update. Alice sending "bob" cannot take over Bob's identity.
+}

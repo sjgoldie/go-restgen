@@ -349,6 +349,9 @@ func (w *Wrapper[T]) updateWithOp(ctx context.Context, id string, item T, op met
 	// Re-enforce ownership fields on update (prevents reassigning or orphaning the row)
 	w.reassertOwnership(ctx, meta, existing, &item)
 
+	// Re-enforce the parent link (prevents moving the row to another parent or orphaning it)
+	w.reassertParentKey(meta, existing, &item)
+
 	// The identity field of the caller's own row always holds the caller's user ID
 	if err := setCurrentUserField(ctx, meta, &item); err != nil {
 		return nil, err
@@ -2066,6 +2069,7 @@ func (w *Wrapper[T]) batchUpdateWithOp(ctx context.Context, items []T, op metada
 				return err
 			}
 			w.reassertOwnership(ctx, meta, preFetch.existingItems[i], item)
+			w.reassertParentKey(meta, preFetch.existingItems[i], item)
 
 			// Partition fields must stay within the caller's access
 			if err := w.enforcePartitionWrite(txCtx, meta, preFetch.existingItems[i], item); err != nil {

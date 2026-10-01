@@ -237,7 +237,7 @@ router.RegisterRoutes[User](b, "/me",
 )
 ```
 
-Behaviour: item routes (GET, PUT, PATCH, DELETE, actions, endpoints, SSE) are mounted at the path, with methods allowed by the auth configs; no list, create or batch. The ID always comes from `AuthInfo` (`/me/{id}` matches nothing; a body `id` is overwritten). Nested routes are scoped to the caller's row. No user ID = 401, no row = 404. `AsCurrentUserExternal` looks the row up by the field (tenant-scoped on tenant routes), writes `AuthInfo.UserID` to it on every update, and needs a unique field. `AsSingleRoute` must be nested under its parent with the parent's field; otherwise it is not registered.
+Behaviour: item routes (GET, PUT, PATCH, DELETE, actions, endpoints, SSE) are mounted at the path, with methods allowed by the auth configs; no list, create or batch. The ID always comes from `AuthInfo` (`/me/{id}` matches nothing; a body `id` is overwritten). Nested routes, including single routes, are scoped to the caller's row. No user ID = 401, no row = 404. `AsCurrentUserExternal` looks the row up by the field (tenant-scoped on tenant routes), writes `AuthInfo.UserID` to it on every update, and needs a unique field. `AsSingleRoute` must be nested under its parent with the parent's field; otherwise it is not registered.
 
 The framework automatically validates parent exists and sets `BlogID` on create.
 

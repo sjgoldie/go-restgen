@@ -25,6 +25,10 @@ assert {
   res.body.author_id: eq alice
 }
 
+script:post-response {
+  bru.setVar("meBlogId", res.body.id);
+}
+
 docs {
   # Created Under the Caller
   The author is set from the parent, the caller's profile, not from the body.

@@ -167,7 +167,7 @@ go run main.go
 - Open the `auth-example` folder
 - Click "Run Collection" to run all tests in sequence
 
-**Tests cover (70 tests):**
+**Tests cover (80 tests):**
 1. **Articles** - Public reads, publisher-only writes
 2. **Blogs** - Ownership filtering with query parameters:
    - Users see only their blogs, admin sees all
@@ -188,6 +188,8 @@ go run main.go
    - Each caller gets their own profile; no auth 401, no profile 404
    - A PATCH body cannot redirect the update to another user; PUT has no auth config (401)
    - `/me/blogs` lists only the caller's blogs and creates blogs owned by the caller; `?include=Blogs`
+   - `/me/settings`, a single route under `/me`: get and patch the caller's settings, a body `id` cannot redirect the update, 404 without a profile
+   - A PATCH body cannot move a blog under `/me` to another user, and another user cannot reach it through their `/me/blogs`
 
 **Test users (bearer tokens):**
 - `user:alice:user` - Regular user
@@ -402,7 +404,7 @@ go run main.go
 
 ## Test Coverage
 
-**Total: 422 end-to-end API tests** across 17 example applications.
+**Total: 432 end-to-end API tests** across 17 example applications.
 
 These Bruno tests provide **end-to-end API coverage** for the example applications. They complement the unit tests by:
 

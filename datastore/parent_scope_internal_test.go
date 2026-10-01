@@ -44,3 +44,27 @@ func TestApplyParentFilters_MissingParentID(t *testing.T) {
 		t.Errorf("internal use without a request: got %d tasks, want every task", got)
 	}
 }
+
+func TestReassertParentKey(t *testing.T) {
+	f := setupPartitionFixture(t)
+	tasks := &Wrapper[partTask]{Store: f.db}
+
+	item := &partTask{ProjectID: 2, Title: "moved"}
+	tasks.reassertParentKey(f.taskMeta, &partTask{ProjectID: 1}, item)
+	if item.ProjectID != 1 || item.Title != "moved" {
+		t.Errorf("the parent link must come from the existing row: got %+v", item)
+	}
+
+	root := &partTask{ProjectID: 2}
+	tasks.reassertParentKey(&metadata.TypeMetadata{ModelType: f.taskMeta.ModelType}, &partTask{ProjectID: 1}, root)
+	if root.ProjectID != 2 {
+		t.Errorf("a route with no parent is unchanged: got %+v", root)
+	}
+
+	managers := &Wrapper[partManager]{Store: f.db}
+	manager := &partManager{ID: 2, Name: "renamed"}
+	managers.reassertParentKey(f.managerMeta, &partManager{ID: 1}, manager)
+	if manager.ID != 2 {
+		t.Errorf("a row whose parent holds the link is unchanged: got %+v", manager)
+	}
+}

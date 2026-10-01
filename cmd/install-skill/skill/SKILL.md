@@ -153,7 +153,7 @@ router.RegisterRoutes[User](b, "/me",
 
 - Item routes (GET, PUT, PATCH, DELETE, actions, endpoints, SSE) are mounted at the path; the auth configs decide which methods are allowed. No list, create or batch.
 - The ID always comes from `AuthInfo`: `/me/{id}` matches nothing and a body `id` is overwritten. No user ID = 401, no row = 404.
-- Nested routes are scoped to the caller's row, like children under `/{id}`.
+- Nested routes are scoped to the caller's row, like children under `/{id}`, including single routes (`/me/settings` with `AsSingleRouteWithUpdate("SettingsID")`).
 - `AsCurrentUserExternal` finds the row by the field (tenant-scoped on tenant routes) and writes `AuthInfo.UserID` to it on every update.
 - Don't use `AsSingleRoute("")` for `/me`: a single route must be nested under its parent with the parent's field, or it is not registered.
 

@@ -1,0 +1,32 @@
+meta {
+  name: GET /posts/{id}/author/posts - post the caller does not own
+  type: http
+  seq: 44
+}
+
+get {
+  url: {{baseUrl}}/posts/{{bobPostId}}/author/posts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Nothing is returned through a post Alice does not own", function() {
+    expect(res.body.data.length).to.equal(0);
+  });
+}
+
+docs {
+  # The Parent Chain Is Still Scoped
+
+  Posts are owned, and Alice does not own Bob's post, so nothing under it is returned.
+}

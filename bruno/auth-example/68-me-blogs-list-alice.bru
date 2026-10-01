@@ -1,0 +1,33 @@
+meta {
+  name: Me - Alice Lists Her Blogs
+  type: http
+  seq: 68
+}
+
+get {
+  url: {{baseUrl}}/me/blogs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Every blog is Alice's", function() {
+    expect(res.body.data.length).to.be.above(0);
+    expect(res.body.data.every(b => b.author_id === "alice")).to.equal(true);
+  });
+}
+
+docs {
+  # Children of the Current User
+  Blogs nested under /me are scoped to the caller the same way children are scoped to a
+  parent in the URL.
+}

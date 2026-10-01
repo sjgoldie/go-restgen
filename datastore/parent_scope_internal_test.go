@@ -1,0 +1,46 @@
+package datastore
+
+import (
+	"context"
+	"testing"
+
+	"github.com/sjgoldie/go-restgen/metadata"
+)
+
+func TestApplyParentFilters_MissingParentID(t *testing.T) {
+	f := setupPartitionFixture(t)
+	f.projectMeta.URLParamUUID = "project"
+	f.projectMeta.Partitions = nil
+	f.taskMeta.Partitions = nil
+	w := &Wrapper[partTask]{Store: f.db}
+
+	count := func(t *testing.T, ctx context.Context) int {
+		t.Helper()
+		q := f.db.GetDB().NewSelect().Model((*partTask)(nil))
+		q, restrict, err := w.applyParentFiltersWithMeta(ctx, q, f.taskMeta)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := accessQuery(q, restrict, nil).Count(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	request := context.WithValue(context.Background(), metadata.IncludePartitionScopesKey, map[string]metadata.PartitionScope{})
+
+	if got := count(t, request); got != 0 {
+		t.Errorf("request without the parent's ID: got %d tasks, want 0", got)
+	}
+	other := context.WithValue(request, metadata.ParentIDsKey, map[string]string{"another-route": "1"})
+	if got := count(t, other); got != 0 {
+		t.Errorf("request with another route's ID only: got %d tasks, want 0", got)
+	}
+	scoped := context.WithValue(request, metadata.ParentIDsKey, map[string]string{"project": "1"})
+	if got := count(t, scoped); got != 1 {
+		t.Errorf("request with the parent's ID: got %d tasks, want 1", got)
+	}
+	if got := count(t, context.Background()); got != 2 {
+		t.Errorf("internal use without a request: got %d tasks, want every task", got)
+	}
+}

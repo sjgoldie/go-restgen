@@ -1,0 +1,34 @@
+meta {
+  name: POST /posts/{id}/author/posts - created for the post's author
+  type: http
+  seq: 43
+}
+
+post {
+  url: {{baseUrl}}/posts/{{alicePostId}}/author/posts
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "author_id": {{bobUserId}},
+    "title": "Via the author",
+    "content": "Created under the author route"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.author_id: eq {{aliceUserId}}
+}
+
+docs {
+  # Created Under the Resolved Author
+
+  The author ID comes from the author the post points at, not from the body.
+}

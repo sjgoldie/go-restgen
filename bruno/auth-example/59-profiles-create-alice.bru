@@ -1,0 +1,25 @@
+meta {
+  name: Profiles - Admin Creates Alice's Profile
+  type: http
+  seq: 59
+}
+
+post {
+  url: {{baseUrl}}/profiles
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user,admin
+}
+body:json {
+  {
+    "id": "alice",
+    "display_name": "Alice"
+  }
+}
+
+assert {
+  res.status: eq 201
+}

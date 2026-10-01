@@ -1,0 +1,28 @@
+meta {
+  name: Get /me - current user by external ID
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{aliceUserId}}
+  res.body.name: eq Alice
+}
+
+docs {
+  # Get the Current User via /me
+
+  /me is registered with AsCurrentUserExternal("ExternalID"): users are keyed by an internal ID,
+  and the user whose ExternalID equals the caller's auth user ID is returned.
+}

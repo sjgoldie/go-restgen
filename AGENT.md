@@ -110,8 +110,12 @@ router.RegisterRoutes[Model](builder, "/path",
         Scopes:  []string{"admin"},
     },
 
-    // Single resource (for belongs-to relations or /me endpoints)
-    router.AsSingleRouteWithUpdate(""),        // GET, PUT, and PATCH — ID from parent FK or custom handler
+    // Single resource for a belongs-to relation (nested under the parent only)
+    router.AsSingleRouteWithUpdate("AuthorID"), // GET, PUT, and PATCH — ID from the parent's field
+
+    // The caller's own row (e.g. /me), item routes at the path
+    router.AsCurrentUser(),                      // row whose primary key is AuthInfo.UserID
+    router.AsCurrentUserExternal("ExternalID"),  // row whose ExternalID is AuthInfo.UserID
 
     // Ownership (users only see their data, admins bypass)
     router.AllWithOwnershipUnless([]string{"UserID"}, "admin"),
@@ -213,6 +217,27 @@ Creates routes:
 - `GET/PUT/PATCH/DELETE /blogs/{blogId}`
 - `GET/POST /blogs/{blogId}/posts`
 - `GET/PUT/PATCH/DELETE /blogs/{blogId}/posts/{postId}`
+
+## Pattern: Current User
+
+```go
+// Users keyed by the auth user ID
+router.RegisterRoutes[Profile](b, "/me",
+    router.AsCurrentUser(),
+    router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPatch}, Scopes: []string{router.ScopeAuthOnly}},
+    func(b *router.Builder) {
+        router.RegisterRoutes[Blog](b, "/blogs", router.IsAuthenticated(), router.WithRelationName("Blogs"))
+    },
+)
+
+// Users keyed by an internal ID, with the auth user ID in a unique field
+router.RegisterRoutes[User](b, "/me",
+    router.AsCurrentUserExternal("ExternalID"),
+    router.AuthConfig{Methods: []string{router.MethodGet, router.MethodPut}, Scopes: []string{router.ScopeAuthOnly}},
+)
+```
+
+Behaviour: item routes (GET, PUT, PATCH, DELETE, actions, endpoints, SSE) are mounted at the path, with methods allowed by the auth configs; no list, create or batch. The ID always comes from `AuthInfo` (`/me/{id}` matches nothing; a body `id` is overwritten). Nested routes are scoped to the caller's row. No user ID = 401, no row = 404. `AsCurrentUserExternal` looks the row up by the field (tenant-scoped on tenant routes), writes `AuthInfo.UserID` to it on every update, and needs a unique field. `AsSingleRoute` must be nested under its parent with the parent's field; otherwise it is not registered.
 
 The framework automatically validates parent exists and sets `BlogID` on create.
 
@@ -678,6 +703,7 @@ Single-item responses (Get, Create, Update, Patch, Delete) return the raw object
 - Middle-level auth failure silently omits everything below
 - A child route's ownership applies to its include, count, and relation filter whether or not the parent route has ownership
 - A single route nested under its parent (`AsSingleRoute`) authorizes `?include=` of that lookup; a lookup the caller may not see is omitted from the row without hiding the row
+- Routes nested under a single route are scoped to the row the parent points at (`/posts/{id}/author/books` = the books of the post's author)
 
 ## Error Handling
 

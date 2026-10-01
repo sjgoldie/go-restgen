@@ -1,0 +1,29 @@
+meta {
+  name: Me - PUT Is Not Configured
+  type: http
+  seq: 67
+}
+
+put {
+  url: {{baseUrl}}/me
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+body:json {
+  {
+    "display_name": "Nope"
+  }
+}
+
+assert {
+  res.status: eq 401
+}
+
+docs {
+  # Methods Come From the Auth Config
+  AsCurrentUser mounts the item routes at /me; the auth config only lists GET and PATCH.
+}

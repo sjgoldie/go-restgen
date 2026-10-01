@@ -1,0 +1,35 @@
+meta {
+  name: GET /posts/{id}/author/posts - the post's author's posts
+  type: http
+  seq: 41
+}
+
+get {
+  url: {{baseUrl}}/posts/{{alicePostId}}/author/posts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Every post is by Alice, the post's author", function() {
+    expect(res.body.data.length).to.be.above(0);
+    expect(res.body.data.every(p => p.author_id === bru.getVar("aliceUserId"))).to.equal(true);
+  });
+}
+
+docs {
+  # Routes Nested Under a Single Route
+
+  /posts/{id}/author is a single route, so it has no ID of its own in the URL. Routes nested
+  under it are scoped to the author the post points at, not to the post's ID. User IDs are
+  offset from post IDs by the dummy user, so the two cannot match by accident.
+}

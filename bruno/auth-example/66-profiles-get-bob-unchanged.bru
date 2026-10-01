@@ -1,0 +1,20 @@
+meta {
+  name: Profiles - Bob's Profile Is Unchanged
+  type: http
+  seq: 66
+}
+
+get {
+  url: {{baseUrl}}/profiles/bob
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.display_name: eq Bob
+}

@@ -100,6 +100,20 @@ func PrimaryKeyField(tType reflect.Type) string {
 	return table.PKs[0].GoName
 }
 
+// FieldIsUnique reports whether a model's field is declared unique in its bun tag.
+func FieldIsUnique(tType reflect.Type, fieldName string) bool {
+	store, err := Get()
+	if err != nil {
+		return false
+	}
+	for _, field := range store.GetDB().Table(derefType(tType)).Fields {
+		if field.GoName == fieldName {
+			return field.Tag.HasOption("unique")
+		}
+	}
+	return false
+}
+
 // TableName returns the SQL table name for a model type using Bun's schema.
 func TableName(tType reflect.Type) string {
 	store, err := Get()

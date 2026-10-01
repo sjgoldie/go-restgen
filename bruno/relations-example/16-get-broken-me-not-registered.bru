@@ -1,0 +1,28 @@
+meta {
+  name: Get /broken-me - single route without a parent is not registered
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/broken-me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+assert {
+  res.status: eq 404
+}
+
+docs {
+  # Single Routes Need a Parent
+
+  /broken-me is registered with AsSingleRouteWithUpdate("") and no parent route, so there is
+  no row it can resolve. It is logged as a warning at startup and not registered, rather than
+  serving a route whose nested routes could not be scoped. Use AsCurrentUser for the caller's
+  own row.
+}

@@ -27,8 +27,8 @@ assert {
 }
 
 docs {
-  # POST Not Allowed on Single Route
+  # No Collection Routes on the Current User
 
-  Single routes only support GET (and optionally PUT).
-  POST should return 405 Method Not Allowed.
+  AsCurrentUser mounts only the item routes at /me, so there is no create.
+  POST returns 405 Method Not Allowed.
 }

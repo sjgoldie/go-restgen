@@ -1858,7 +1858,7 @@ func (w *Wrapper[T]) applyNestedInclude(ctx context.Context, query *bun.SelectQu
 		parentName := w.getRelationNameForParent(meta, meta.ParentMeta)
 		if strings.EqualFold(firstRel, parentName) {
 			// Nested parent include (e.g., Account.User)
-			return w.applyNestedParentInclude(ctx, query, meta, parts, applyOwnership)
+			return w.applyNestedParentInclude(ctx, query, meta, parts)
 		}
 	}
 
@@ -1879,8 +1879,9 @@ func (w *Wrapper[T]) applyNestedChildInclude(ctx context.Context, query *bun.Sel
 	})
 }
 
-// applyNestedParentInclude handles nested parent includes like "Account.User"
-func (w *Wrapper[T]) applyNestedParentInclude(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, parts []string, applyOwnership bool) *bun.SelectQuery {
+// applyNestedParentInclude handles nested parent includes like "Account.User". Parents are
+// ancestors in the URL, whose ownership the parent chain already enforces.
+func (w *Wrapper[T]) applyNestedParentInclude(ctx context.Context, query *bun.SelectQuery, meta *metadata.TypeMetadata, parts []string) *bun.SelectQuery {
 	// Validate the entire chain exists in ParentMeta
 	chain := make([]*metadata.TypeMetadata, 0, len(parts))
 	currentMeta := meta

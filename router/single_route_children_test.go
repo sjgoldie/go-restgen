@@ -194,3 +194,17 @@ func TestSingleRouteChildren_SingleRouteUnchanged(t *testing.T) {
 		t.Errorf("a post with no author: expected 404, got %d", w.Code)
 	}
 }
+
+func TestSingleRouteChildren_KeyLookupErrorIs500(t *testing.T) {
+	f := seedSingleRouteChildren(t)
+	r := scopedRouter(asCaller("alice"), func(b *router.Builder) {
+		router.RegisterRoutes[SRPost](b, "/posts", router.IsAuthenticated(), func(b *router.Builder) {
+			router.RegisterRoutes[SRAuthor](b, "/author", router.AsSingleRoute("Missing"), router.IsAuthenticated(), func(b *router.Builder) {
+				router.RegisterRoutes[SRBook](b, "/books", router.IsAuthenticated(), router.WithRelationName("Books"))
+			})
+		})
+	})
+	if code, _ := listBooks(t, r, postPath(f.alicePost, "/author/books")); code != http.StatusInternalServerError {
+		t.Errorf("a parent field that is not a column: expected 500, got %d", code)
+	}
+}

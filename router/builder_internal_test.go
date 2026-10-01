@@ -800,3 +800,20 @@ func TestRegisterRoutes_UnrecognizedOption(t *testing.T) {
 		}
 	})
 }
+
+func TestSingleRouteKeyMiddleware_MissingParentID(t *testing.T) {
+	meta := &metadata.TypeMetadata{
+		TypeName:      "child",
+		URLParamUUID:  "child",
+		ParentMeta:    &metadata.TypeMetadata{URLParamUUID: "parent"},
+		ParentFKField: "ChildID",
+	}
+	called := false
+	h := createSingleRouteKeyMiddleware(meta)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusBadRequest || called {
+		t.Errorf("no parent ID in context: expected 400 without calling the handler, got %d (called %v)", w.Code, called)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"reflect"
 
 	"github.com/sjgoldie/go-restgen/metadata"
 	"github.com/sjgoldie/go-restgen/service"
@@ -13,7 +14,8 @@ import (
 
 // EndpointHandler is the signature for item-level endpoint handlers.
 // Unlike ActionFunc which returns (*T, error), EndpointHandler returns (any, int, error)
-// allowing any response type and explicit HTTP status code.
+// allowing any response type and explicit HTTP status code. A result implementing Responder
+// writes its own response (any content type or body); any other result is encoded as JSON.
 // The item is pre-fetched by the framework (validates existence and permissions).
 type EndpointHandler[T any] func(
 	ctx context.Context,
@@ -27,6 +29,7 @@ type EndpointHandler[T any] func(
 
 // RootEndpointHandler is the signature for root-level endpoint handlers.
 // Root endpoints have no parent model — they receive the raw request for maximum flexibility.
+// Like EndpointHandler, a result implementing Responder writes its own response.
 type RootEndpointHandler func(
 	ctx context.Context,
 	auth *metadata.AuthInfo,
@@ -77,11 +80,32 @@ func RootEndpoint(fn RootEndpointHandler) http.HandlerFunc {
 	}
 }
 
-// writeEndpointResponse writes the JSON response for endpoint handlers.
-// nil result -> 204 No Content. Status code 0 defaults to 200.
+// Responder is implemented by endpoint results that write their own response: headers, status,
+// and body, in any format. Endpoint and root endpoint handlers can return one instead of a value
+// to encode as JSON. The status code returned alongside it is not used. An error from
+// WriteResponse is logged; by then the response may already be partly written.
+type Responder interface {
+	WriteResponse(w http.ResponseWriter) error
+}
+
+// writeEndpointResponse writes the response for endpoint handlers. A Responder writes its own
+// response; any other result is encoded as JSON. nil result -> 204 No Content. Status code 0
+// defaults to 200.
 func writeEndpointResponse(ctx context.Context, w http.ResponseWriter, result any, statusCode int) {
 	if result == nil {
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if responder, ok := result.(Responder); ok {
+		if v := reflect.ValueOf(responder); v.Kind() == reflect.Pointer && v.IsNil() {
+			slog.ErrorContext(ctx, "endpoint returned a nil Responder", "type", v.Type().String())
+			WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, http.StatusText(http.StatusInternalServerError))
+			return
+		}
+		if err := responder.WriteResponse(w); err != nil {
+			slog.ErrorContext(ctx, "failed to write endpoint response", "error", err)
+		}
 		return
 	}
 

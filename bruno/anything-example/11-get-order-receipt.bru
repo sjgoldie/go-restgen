@@ -1,0 +1,32 @@
+meta {
+  name: Get Order Receipt - CSV (Responder)
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/orders/{{orderId}}/receipt
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.headers["content-type"]: eq text/csv
+}
+
+tests {
+  test("The receipt is a CSV download, not JSON", function() {
+    expect(res.headers["content-disposition"]).to.equal('attachment; filename="order-' + bru.getVar("orderId") + '.csv"');
+    expect(res.body).to.be.a("string");
+    expect(res.body).to.contain("order,customer,total,status");
+    expect(res.body).to.contain("Alice,49.99");
+  });
+}
+
+docs {
+  # Endpoints That Write Their Own Response
+
+  The receipt handler returns a value implementing handler.Responder, which sets its own
+  headers and writes the CSV body. Any other return value is encoded as JSON.
+}

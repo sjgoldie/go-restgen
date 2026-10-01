@@ -1,0 +1,23 @@
+meta {
+  name: Get Receipt - Missing Order Is 404
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/orders/999/receipt
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+  res.body.error: eq not_found
+}
+
+docs {
+  # The Item Is Fetched First
+
+  The order is fetched and authorized before the handler runs, so a missing order is the normal
+  JSON 404 and the Responder is never reached.
+}

@@ -2127,6 +2127,46 @@ router.RegisterRootEndpoint(b, "GET", "/system/info", getSystemInfo, router.AllP
 router.RegisterRootEndpoint(b, "POST", "/webhooks/notify", handleWebhook, router.AllScoped("admin"))
 ```
 
+### Custom Responses (`handler.Responder`)
+
+Endpoint and root endpoint results are encoded as JSON. To return anything else — a file, CSV, an image, a redirect, a stream — return a value implementing `handler.Responder`. It is given the response writer and sets its own headers, status, and body:
+
+```go
+type Responder interface {
+    WriteResponse(w http.ResponseWriter) error
+}
+```
+
+```go
+type csvResponse struct {
+    filename string
+    rows     [][]string
+}
+
+func (c csvResponse) WriteResponse(w http.ResponseWriter) error {
+    w.Header().Set("Content-Type", "text/csv")
+    w.Header().Set("Content-Disposition", `attachment; filename="`+c.filename+`"`)
+    w.WriteHeader(http.StatusOK)
+    return csv.NewWriter(w).WriteAll(c.rows)
+}
+
+func getReceipt(ctx context.Context, svc *service.Common[Order], meta *metadata.TypeMetadata,
+    auth *metadata.AuthInfo, id string, item *Order, payload []byte) (any, int, error) {
+    return csvResponse{filename: "order-" + id + ".csv", rows: receiptRows(item)}, 0, nil
+}
+
+router.RegisterRoutes[Order](b, "/orders",
+    router.AllPublic(),
+    router.WithEndpoint("GET", "receipt", getReceipt, router.AllPublic()),
+)
+```
+
+- The item is fetched, scoped, and authorized before the handler runs, exactly as for JSON results.
+- An error returned by the handler is the normal JSON error response: nothing has been written yet.
+- The status code returned alongside a `Responder` is not used; it sets its own.
+- An error from `WriteResponse` is logged. By then the response may be partly written, so do work that can fail (rendering, queries) before returning the `Responder`, or write to a buffer first.
+- A nil pointer `Responder` returns `500`.
+
 ### Item-Level SSE (`WithSSE`)
 
 SSE endpoints stream events to the client. The framework handles all SSE protocol details (headers, event formatting, flushing, client disconnect). Always registered as GET.
@@ -2973,7 +3013,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 go tool cover -func=/tmp/coverage.out
 ```
 
-For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 432 API tests across 17 example applications.
+For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 434 API tests across 17 example applications.
 
 You can override the default port (8080) using the `PORT` environment variable:
 

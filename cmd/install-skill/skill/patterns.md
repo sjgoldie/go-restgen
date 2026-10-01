@@ -216,6 +216,7 @@ Endpoint response rules:
 - `(result, 0, nil)` -> 200 OK + JSON (0 defaults to 200)
 - `(nil, _, nil)` -> 204 No Content
 - `(_, _, error)` -> error response
+- `(responder, _, nil)` where the result implements `handler.Responder` (`WriteResponse(w http.ResponseWriter) error`) -> it writes its own headers, status, and body (files, CSV, streams); the returned status is not used, and a `WriteResponse` error is logged because the response may be partly written
 
 ### SSE Handlers
 

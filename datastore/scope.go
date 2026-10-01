@@ -95,6 +95,22 @@ func (w *Wrapper[T]) reassertOwnership(ctx context.Context, meta *metadata.TypeM
 	}
 }
 
+// reassertParentKey copies the column linking a nested row to its parent from the existing row
+// onto the incoming item, so an update or patch cannot move the row to another parent or orphan
+// it. As on create, the parent in the path decides a nested row's parent. Rows whose parent holds
+// the link (the foreign key is on the parent) are unaffected.
+func (w *Wrapper[T]) reassertParentKey(meta *metadata.TypeMetadata, existing, item *T) {
+	if meta.ParentMeta == nil || meta.ForeignKeyCol == "" || existing == nil || item == nil || !w.hasColumn(meta.ModelType, meta.ForeignKeyCol) {
+		return
+	}
+	name := w.goNameFromColumn(meta.ModelType, meta.ForeignKeyCol)
+	from := reflect.ValueOf(existing).Elem().FieldByName(name)
+	to := reflect.ValueOf(item).Elem().FieldByName(name)
+	if from.IsValid() && to.IsValid() && to.CanSet() {
+		to.Set(from)
+	}
+}
+
 // enforceTenantTablePK makes a create on the tenant entity itself target the
 // caller's own tenant. An empty primary key is filled with the tenant ID; a
 // different one is rejected, so a tenant cannot pre-create another tenant's row.

@@ -234,7 +234,7 @@ go-restgen automatically handles parent-child relationships with full chain vali
 
 **Security Features:**
 - Foreign keys are automatically set from the URL path
-- Foreign keys in JSON body are ignored (path takes precedence)
+- Foreign keys in JSON body are ignored on create and update (path takes precedence), so a nested row cannot be moved to another parent or orphaned
 - IDs in JSON body are ignored (path takes precedence)
 - Parent chain is validated at database level with JOINs
 - Returns 404 if resource doesn't belong to parent chain
@@ -502,7 +502,7 @@ router.RegisterRoutes[Profile](b, "/me",
 
 - The route's item routes (GET, PUT, PATCH, DELETE, actions, endpoints, SSE) are mounted at the path itself instead of under `/{id}`, and the route's auth configs decide which methods are allowed. Collection routes (list, create, batch) are not mounted.
 - The row's ID always comes from `AuthInfo`, never from the path or the body. `/me/{id}` matches no route, and an `id` in a PUT or PATCH body is overwritten.
-- Nested routes are scoped to the caller's row as they would be under `/{id}`: `/me/blogs` lists only the caller's blogs, and a blog created there belongs to the caller.
+- Nested routes are scoped to the caller's row as they would be under `/{id}`: `/me/blogs` lists only the caller's blogs, and a blog created there belongs to the caller. Single routes nest too: `/me/settings` with `AsSingleRouteWithUpdate("SettingsID")` serves the settings the caller's row points at.
 - No user ID returns `401`; no row for the caller returns `404`.
 - The route can be nested under a parent: `/businessunits/{id}/user` serves the caller's row only if it belongs to that business unit, and `404` otherwise.
 
@@ -1056,7 +1056,7 @@ This user reads projects in EMEA and APAC, but writes EMEA only.
 | **Get outside access** | Returns 404 (doesn't leak existence) |
 | **CREATE** | The partition field must be set (`400 validation_error` when missing — it is never filled in for the caller) and within access (`403` otherwise) |
 | **CREATE (child)** | The parent must be within access (`404` otherwise) |
-| **UPDATE/PATCH** | The row must be within access (`404` otherwise) and the new partition value must be too (`403` otherwise); a restricted caller cannot move a child to another parent |
+| **UPDATE/PATCH** | The row must be within access (`404` otherwise) and the new partition value must be too (`403` otherwise); a child's parent comes from the path, so it cannot be moved to another parent |
 | **DELETE** | The row must be within access (`404` otherwise) |
 | **Batch operations** | Every item is checked; the batch is all-or-nothing |
 | **Actions, endpoints, SSE** | The item is fetched with the access of the endpoint's own scopes |
@@ -2973,7 +2973,7 @@ go test ./metadata ./datastore ./router ./service ./handler ./errors ./filestore
 go tool cover -func=/tmp/coverage.out
 ```
 
-For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 422 API tests across 17 example applications.
+For end-to-end API testing, see the [Bruno tests](./bruno/README.md) with 432 API tests across 17 example applications.
 
 You can override the default port (8080) using the `PORT` environment variable:
 

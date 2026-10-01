@@ -1,0 +1,29 @@
+meta {
+  name: Settings - Admin Creates Alice's Settings
+  type: http
+  seq: 71
+}
+
+post {
+  url: {{baseUrl}}/settings
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user,admin
+}
+
+body:json {
+  {
+    "theme": "light"
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+script:post-response {
+  bru.setVar("aliceSettingsId", res.body.id);
+}

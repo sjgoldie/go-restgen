@@ -1,0 +1,19 @@
+meta {
+  name: Me - Bob Cannot Reach Alice's Blog Through /me
+  type: http
+  seq: 80
+}
+
+get {
+  url: {{baseUrl}}/me/blogs/{{meBlogId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user,admin
+}
+
+assert {
+  res.status: eq 404
+}

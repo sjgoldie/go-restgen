@@ -255,8 +255,11 @@ func setupRequest[T any](w http.ResponseWriter, r *http.Request, getFunc CustomG
 			return zero, fmt.Errorf("current user ID missing from context")
 		}
 	} else if meta.IsSingleRoute && meta.ParentMeta != nil {
-		// A single route's handlers receive the parent's ID and resolve the row through it
-		id = chi.URLParam(r, meta.ParentMeta.URLParamUUID)
+		// A single route's handlers receive the parent's ID and resolve the row through it. The
+		// parent's ID is in context however the parent was identified: from its URL segment, or
+		// from AuthInfo for a current user route.
+		parentIDs, _ := ctx.Value(metadata.ParentIDsKey).(map[string]string)
+		id = parentIDs[meta.ParentMeta.URLParamUUID]
 		if id == "" {
 			slog.DebugContext(ctx, "missing parent id parameter", "paramUUID", meta.ParentMeta.URLParamUUID)
 			WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, http.StatusText(http.StatusBadRequest))

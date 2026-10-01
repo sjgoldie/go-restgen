@@ -1,0 +1,33 @@
+meta {
+  name: Me - Alice Patches Her Settings
+  type: http
+  seq: 76
+}
+
+patch {
+  url: {{baseUrl}}/me/settings
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:alice:user
+}
+
+body:json {
+  {
+    "id": {{bobSettingsId}},
+    "theme": "dark"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{aliceSettingsId}}
+  res.body.theme: eq dark
+}
+
+docs {
+  # The Row Comes From the Profile
+  The id in the body does not point the update at Bob's settings.
+}

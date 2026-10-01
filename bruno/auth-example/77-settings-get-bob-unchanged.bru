@@ -1,0 +1,20 @@
+meta {
+  name: Settings - Bob's Settings Are Unchanged
+  type: http
+  seq: 77
+}
+
+get {
+  url: {{baseUrl}}/settings/{{bobSettingsId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user,admin
+}
+
+assert {
+  res.status: eq 200
+  res.body.theme: eq light
+}

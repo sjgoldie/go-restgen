@@ -3593,3 +3593,24 @@ func TestHandler_Get_SingleRouteNeedsParentID(t *testing.T) {
 		t.Errorf("no parent ID in the path: expected 400, got %d", w.Code)
 	}
 }
+
+func TestHandler_Get_SingleRouteReadsParentIDFromContext(t *testing.T) {
+	meta := *userMeta
+	meta.IsSingleRoute = true
+	meta.ParentMeta = &metadata.TypeMetadata{URLParamUUID: "parent"}
+
+	var gotID string
+	get := func(_ context.Context, _ *service.Common[TestUser], _ *metadata.TypeMetadata, _ *metadata.AuthInfo, id string) (*TestUser, error) {
+		gotID = id
+		return &TestUser{Name: "Author"}, nil
+	}
+	r := chi.NewRouter()
+	r.Use(withMeta(&meta))
+	r.Get("/author", handler.Get[TestUser](get))
+	ctx := context.WithValue(context.Background(), metadata.ParentIDsKey, map[string]string{"parent": "1"})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/author", nil).WithContext(ctx))
+	if w.Code != http.StatusOK || gotID != "1" {
+		t.Errorf("expected the parent's ID from context, got %q and %d: %s", gotID, w.Code, w.Body.String())
+	}
+}

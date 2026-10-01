@@ -1,0 +1,25 @@
+meta {
+  name: Profiles - Link Bob's Settings
+  type: http
+  seq: 74
+}
+
+patch {
+  url: {{baseUrl}}/profiles/bob
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: user:bob:user,admin
+}
+
+body:json {
+  {
+    "settings_id": {{bobSettingsId}}
+  }
+}
+
+assert {
+  res.status: eq 200
+}

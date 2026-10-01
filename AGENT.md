@@ -565,6 +565,7 @@ URL: `POST /posts/{id}/publish`
 ## Pattern: Custom Endpoints (Anything Funcs)
 
 Custom endpoints support any HTTP method and any return type. SSE variants stream events.
+Results are encoded as JSON, unless the result implements `handler.Responder` (`WriteResponse(w http.ResponseWriter) error`): then it writes its own headers, status and body — a file, CSV, image or stream. The item is fetched and authorized first; a handler error is the normal JSON error; a `WriteResponse` error is logged, since the response may be partly written.
 
 ```go
 // Item-level endpoint: METHOD /resource/{id}/{name}

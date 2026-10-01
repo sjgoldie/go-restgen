@@ -173,6 +173,8 @@ router.WithSSE("events", sseFn, router.AuthConfig{...})
 router.RegisterRootSSE(b, "/events/system", sseFn, router.AllPublic())
 ```
 
+Endpoint results are encoded as JSON. To return a file, CSV, stream or anything else, return a value implementing `handler.Responder` (`WriteResponse(w http.ResponseWriter) error`): it sets its own headers, status and body, after the framework has fetched and authorized the item.
+
 ## Mutation Hooks
 
 ```go

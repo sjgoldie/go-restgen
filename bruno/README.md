@@ -51,6 +51,7 @@ PORT=9090 ./scripts/run-bruno-tests.sh all
 ./scripts/run-bruno-tests.sh batch
 ./scripts/run-bruno-tests.sh query
 ./scripts/run-bruno-tests.sh scoped
+./scripts/run-bruno-tests.sh anything
 ```
 
 The script automatically:
@@ -400,11 +401,28 @@ go run main.go
 **Test users (headers):**
 - `X-User` - user ID
 - `X-Scopes` - global scopes, e.g. `project:read,project:write`
-- `X-Grants` - scoped grants, e.g. `project:read@region=emea|apac;project:write@region=emea` (`project:read@region=` grants the scope with no regions)
+- `X-Grants` - scoped grants, e.g. `project:read@region=emea
+### Anything Funcs Example Tests
+
+Tests custom endpoints, root endpoints, and SSE.
+
+**Start the server:**
+```bash
+cd examples/anything
+go run main.go
+```
+
+**Tests cover (12 tests):**
+- Item-level endpoints (`GET /orders/{id}/wf-status`, `POST /orders/{id}/pay`), with the item fetched first (404 when missing)
+- An endpoint returning a `handler.Responder`: `GET /orders/{id}/receipt` is a CSV download with its own content type and filename; a missing order is the normal JSON 404
+- Root-level endpoints (`GET /system/info`, `POST /webhooks/notify`)
+- Item-level and root-level SSE streams
+- Standard CRUD alongside the custom endpoints
+|apac;project:write@region=emea` (`project:read@region=` grants the scope with no regions)
 
 ## Test Coverage
 
-**Total: 432 end-to-end API tests** across 17 example applications.
+**Total: 434 end-to-end API tests** across 17 example applications.
 
 These Bruno tests provide **end-to-end API coverage** for the example applications. They complement the unit tests by:
 

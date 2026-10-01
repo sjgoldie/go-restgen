@@ -3,12 +3,14 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -68,6 +70,44 @@ var startTime = time.Now()
 
 // getWorkflowStatus is an item-level endpoint — GET /orders/{id}/wf-status
 // Returns a WorkflowStatus (not an Order), demonstrating non-model return types.
+// csvResponse is a handler.Responder: it writes its own response, here a CSV file download,
+// instead of being encoded as JSON.
+type csvResponse struct {
+	filename string
+	rows     [][]string
+}
+
+func (c csvResponse) WriteResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+c.filename+`"`)
+	w.WriteHeader(http.StatusOK)
+	cw := csv.NewWriter(w)
+	if err := cw.WriteAll(c.rows); err != nil {
+		return err
+	}
+	return cw.Error()
+}
+
+// getReceipt returns the order's receipt as a CSV file. The order is fetched and authorized by
+// the framework before the handler runs.
+func getReceipt(
+	ctx context.Context,
+	svc *service.Common[Order],
+	meta *metadata.TypeMetadata,
+	auth *metadata.AuthInfo,
+	id string,
+	item *Order,
+	payload []byte,
+) (any, int, error) {
+	return csvResponse{
+		filename: "order-" + id + ".csv",
+		rows: [][]string{
+			{"order", "customer", "total", "status"},
+			{id, item.CustomerName, strconv.FormatFloat(item.Total, 'f', 2, 64), item.Status},
+		},
+	}, 0, nil
+}
+
 func getWorkflowStatus(
 	ctx context.Context,
 	svc *service.Common[Order],
@@ -220,6 +260,9 @@ func main() {
 		router.WithEndpoint("POST", "pay", processPayment, router.AuthConfig{
 			Scopes: []string{router.ScopePublic},
 		}),
+		router.WithEndpoint("GET", "receipt", getReceipt, router.AuthConfig{
+			Scopes: []string{router.ScopePublic},
+		}),
 		router.WithSSE("events", streamOrderEvents, router.AuthConfig{
 			Scopes: []string{router.ScopePublic},
 		}),
@@ -238,6 +281,7 @@ func main() {
 	fmt.Println("  CRUD   /orders                        Standard CRUD")
 	fmt.Println("  GET    /orders/{id}/wf-status          Workflow status (endpoint)")
 	fmt.Println("  POST   /orders/{id}/pay                Process payment (endpoint)")
+	fmt.Println("  GET    /orders/{id}/receipt            Receipt as a CSV download (endpoint returning a Responder)")
 	fmt.Println("  GET    /orders/{id}/events              SSE event stream")
 	fmt.Println("  GET    /system/info                    System info (root endpoint)")
 	fmt.Println("  POST   /webhooks/notify                Webhook receiver (root endpoint)")

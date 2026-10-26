@@ -148,7 +148,7 @@ func setupPartitionFixture(t *testing.T) partitionFixture {
 }
 
 // countWhere counts rows of model narrowed by a single clause.
-func countWhere(t *testing.T, db *SQLite, model any, c clause) int {
+func countWhere(t *testing.T, db *SQLite, model any, c clause) int64 {
 	t.Helper()
 	count, err := db.GetDB().NewSelect().Model(model).Where(c.query, c.args...).Count(context.Background())
 	if err != nil {
@@ -166,7 +166,7 @@ func TestPartitionValueClause(t *testing.T) {
 		model  any
 		meta   *metadata.TypeMetadata
 		values []string
-		want   int
+		want   int64
 	}{
 		{"own field", (*partProject)(nil), f.projectMeta, []string{"emea"}, 1},
 		{"own field, several values", (*partProject)(nil), f.projectMeta, []string{"emea", "apac"}, 2},
@@ -253,7 +253,7 @@ func TestPartitionRestrict(t *testing.T) {
 	})
 	emea := context.WithValue(authorized, metadata.PartitionScopeKey, metadata.PartitionScope{"region": {Values: []string{"emea"}}})
 
-	count := func(ctx context.Context, model any, meta *metadata.TypeMetadata, path string) int {
+	count := func(ctx context.Context, model any, meta *metadata.TypeMetadata, path string) int64 {
 		t.Helper()
 		q := accessQuery(f.db.GetDB().NewSelect().Model(model), w.partitionRestrict(ctx, meta, columnRef{}, path), nil)
 		n, err := q.Count(context.Background())

@@ -1311,13 +1311,13 @@ func (w *Wrapper[T]) applyQueryPagination(query *bun.SelectQuery, opts *metadata
 	cursorMode := meta.Pagination == metadata.CursorPagination &&
 		(opts == nil || (opts.After != "" || opts.Before != "" || opts.Offset == 0))
 	if cursorMode && limit > 0 {
-		_ = query.Limit(limit + 1)
+		_ = query.Limit(int64(limit) + 1)
 	} else if limit > 0 {
-		_ = query.Limit(limit)
+		_ = query.Limit(int64(limit))
 	}
 
 	if offset > 0 {
-		_ = query.Offset(offset)
+		_ = query.Offset(int64(offset))
 	}
 
 	return requestedLimit
@@ -1348,10 +1348,7 @@ func (w *Wrapper[T]) applyCursorWhere(query *bun.SelectQuery, opts *metadata.Que
 		return nil, err
 	}
 
-	sortCols, err := w.effectiveSortColumns(opts, meta)
-	if err != nil {
-		return nil, err
-	}
+	sortCols := w.effectiveSortColumns(opts, meta)
 
 	if len(cursor.Values) != len(sortCols) {
 		return nil, fmt.Errorf("%w: expected %d sort values, got %d", apperrors.ErrInvalidCursor, len(sortCols), len(cursor.Values))
@@ -1433,7 +1430,7 @@ type sortColumn struct {
 
 // effectiveSortColumns returns the resolved column names and directions for the current sort,
 // excluding the PK tie-breaker (which is handled separately).
-func (w *Wrapper[T]) effectiveSortColumns(opts *metadata.QueryOptions, meta *metadata.TypeMetadata) ([]sortColumn, error) {
+func (w *Wrapper[T]) effectiveSortColumns(opts *metadata.QueryOptions, meta *metadata.TypeMetadata) []sortColumn {
 	var cols []sortColumn
 
 	if opts != nil && len(opts.Sort) > 0 {
@@ -1465,7 +1462,7 @@ func (w *Wrapper[T]) effectiveSortColumns(opts *metadata.QueryOptions, meta *met
 		}
 	}
 
-	return cols, nil
+	return cols
 }
 
 // buildCursorInfo generates CursorInfo from the fetched items.
@@ -1486,7 +1483,7 @@ func (w *Wrapper[T]) buildCursorInfo(items []*T, opts *metadata.QueryOptions, me
 		return info
 	}
 
-	sortCols, _ := w.effectiveSortColumns(opts, meta)
+	sortCols := w.effectiveSortColumns(opts, meta)
 
 	// Build next cursor from the last item
 	if hasMore || (opts != nil && opts.Before != "") {

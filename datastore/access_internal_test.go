@@ -33,7 +33,7 @@ func TestShareClause(t *testing.T) {
 		model any
 		meta  *metadata.TypeMetadata
 		share *metadata.Share
-		want  int
+		want  int64
 	}{
 		{"shared row", asUser("bob"), (*partProject)(nil), f.projectMeta, projectShare(), 1},
 		{"child of a shared row", asUser("bob"), (*partTask)(nil), f.taskMeta, projectShare(), 1},
@@ -100,7 +100,7 @@ func TestAccessQuery(t *testing.T) {
 	emea := w.partitionValueClause(context.Background(), f.projectMeta, "region", columnRef{}, []string{"emea"})
 	shared := w.shareClause(asUser("bob"), f.projectMeta, columnRef{}, projectShare())
 
-	count := func(restrict []clause, share *clause) int {
+	count := func(restrict []clause, share *clause) int64 {
 		t.Helper()
 		n, err := accessQuery(f.db.GetDB().NewSelect().Model((*partProject)(nil)), restrict, share).Count(context.Background())
 		if err != nil {

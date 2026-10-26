@@ -58,7 +58,7 @@ func auditItemID(ac metadata.AuditContext[TestAuditItem]) int {
 	return 0
 }
 
-func countRows(t *testing.T, db *datastore.SQLite, model any) int {
+func countRows(t *testing.T, db *datastore.SQLite, model any) int64 {
 	t.Helper()
 	n, err := db.GetDB().NewSelect().Model(model).Count(context.Background())
 	if err != nil {

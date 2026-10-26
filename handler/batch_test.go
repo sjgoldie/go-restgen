@@ -310,7 +310,7 @@ func TestBatchDelete_Success(t *testing.T) {
 	}
 
 	// Verify users are deleted
-	var count int
+	var count int64
 	count, err = db.NewSelect().Model((*TestUser)(nil)).Count(context.Background())
 	if err != nil {
 		t.Fatal("Failed to count users:", err)

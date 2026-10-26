@@ -291,7 +291,7 @@ func TestApplyFilter_WithTableName(t *testing.T) {
 		col       string
 		operator  string
 		vals      []interface{}
-		wantCount int
+		wantCount int64
 	}{
 		{"eq", "name", metadata.OpEq, []interface{}{"alice"}, 1},
 		{"empty op defaults to eq", "name", "", []interface{}{"bob"}, 1},

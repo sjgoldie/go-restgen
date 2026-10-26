@@ -14,7 +14,7 @@ func TestApplyParentFilters_MissingParentID(t *testing.T) {
 	f.taskMeta.Partitions = nil
 	w := &Wrapper[partTask]{Store: f.db}
 
-	count := func(t *testing.T, ctx context.Context) int {
+	count := func(t *testing.T, ctx context.Context) int64 {
 		t.Helper()
 		q := f.db.GetDB().NewSelect().Model((*partTask)(nil))
 		q, restrict, err := w.applyParentFiltersWithMeta(ctx, q, f.taskMeta)

@@ -189,7 +189,7 @@ func TestRelationChains_ForeignKeyOnParent(t *testing.T) {
 	w := &Wrapper[partProject]{Store: f.db}
 	db := f.db.GetDB()
 
-	projectsWhere := func(t *testing.T, ctx context.Context, query string, args ...any) int {
+	projectsWhere := func(t *testing.T, ctx context.Context, query string, args ...any) int64 {
 		t.Helper()
 		count, err := db.NewSelect().Model((*partProject)(nil)).Where(query, args...).Count(ctx)
 		if err != nil {

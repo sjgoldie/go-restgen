@@ -1995,7 +1995,7 @@ func TestCustomDelete(t *testing.T) {
 	}
 
 	// Verify it's actually deleted
-	var count int
+	var count int64
 	count, err = testDB.GetDB().NewSelect().Model((*TestUser)(nil)).Where("id = 103").Count(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to check user existence: %v", err)
